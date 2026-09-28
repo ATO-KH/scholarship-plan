@@ -1,0 +1,885 @@
+"use strict";
+let appConfig = { mode: "demo", providers: [], canvasConfigured: false },
+  csrfToken = null,
+  canvasConnected = false;
+const isDemo = () => appConfig.mode === "demo";
+const redact = (value) =>
+  JSON.parse(
+    JSON.stringify(value, (key, val) =>
+      /csrf|token|secret|base64/i.test(key) ? "[redacted]" : val,
+    ),
+  );
+const $ = (s) => document.querySelector(s),
+  esc = (s) =>
+    String(s ?? "").replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+    );
+let user,
+  rules,
+  submissions = [],
+  points = {},
+  roster = [],
+  filter = "all",
+  logs = [],
+  busy = false;
+const modal = $("#modal"),
+  main = $("#main"),
+  person = $("#persona");
+const money = (n) =>
+  Number.isInteger(n) ? String(n) : Number(n).toFixed(2).replace(/0$/, "");
+const date = (s) =>
+  new Date(s + "T12:00:00").toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+const checkpointDate = () =>
+  points.checkpointDate ||
+  rules.checkpoints.find((c) => c.date >= rules.today)?.date ||
+  rules.checkpoints.at(-1).date;
+const canvasDate = (timestamp) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: appConfig.semester?.timeZone || "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(timestamp));
+const status = (s) =>
+  `<span class="status ${s}">${s === "pending" ? "Pending review" : s[0].toUpperCase() + s.slice(1)}</span>`;
+const activity = (id) => rules.activities.find((a) => a.id === id);
+function toast(message) {
+  $("#toast").textContent = message;
+  $("#toast").classList.add("visible");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => $("#toast").classList.remove("visible"), 4000);
+}
+async function api(path, { method = "GET", body, raw = false } = {}) {
+  const start = performance.now();
+  let response, payload;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: "same-origin",
+      headers: {
+        ...(user ? { "X-ATO-Expected-User": user.id } : {}),
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+        ...(method === "POST"
+          ? { "Content-Type": "application/json", "X-ATO-Demo": "1" }
+          : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    payload = raw ? await response.text() : await response.json();
+    logs.unshift({
+      method,
+      path,
+      status: response.status,
+      ms: Math.round(performance.now() - start),
+      time: new Date().toLocaleTimeString(),
+      request: body ? redact(body) : null,
+      response: redact(payload),
+    });
+    logs = logs.slice(0, 50);
+    if (!response.ok)
+      throw Object.assign(Error(payload.error || "Request failed."), {
+        status: response.status,
+      });
+    return payload;
+  } catch (e) {
+    if (!response)
+      logs.unshift({
+        method,
+        path,
+        status: "Network error",
+        ms: Math.round(performance.now() - start),
+        time: new Date().toLocaleTimeString(),
+        request: body ? redact(body) : null,
+        response: { error: e.message },
+      });
+    throw e;
+  }
+}
+function heading(kicker, title, description, action = "") {
+  return `<div class="page-heading"><div><p class="eyebrow">${kicker}</p><h1>${title}</h1><p>${description}</p></div>${action}</div>`;
+}
+function newButton() {
+  return '<button class="button gold" data-action="new">+ New submission</button>';
+}
+function shield() {
+  return '<svg width="18" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6Z"/><path d="m8 12 3 3 5-6"/></svg>';
+}
+function navigation() {
+  const chair = user.role === "chair",
+    pending = submissions.filter((s) => s.status === "pending").length;
+  const links = chair
+    ? [
+        ["queue", "Review queue", pending],
+        ["members", "Member progress"],
+        ["roster", "Chapter roster"],
+        ["audit", "Review history"],
+        ["earn", "Point rules"],
+        ["api", "API activity"],
+        ["access", "Privacy & sign-in"],
+        ["setup", "Connections"],
+      ]
+    : [
+        ["overview", "Overview"],
+        ["submissions", "My submissions"],
+        ["earn", "Ways to earn points"],
+        ["canvas", "Import from Canvas"],
+        ["api", "API activity"],
+        ["access", "Privacy & sign-in"],
+        ["setup", "Connections"],
+      ];
+  $("#nav").innerHTML = links
+    .map(
+      ([id, name, count]) =>
+        `<a href="#${id}" class="${route() === id ? "active" : ""}">${name}${count ? `<span class="nav-count">${count}</span>` : ""}</a>`,
+    )
+    .join("");
+  $("#header-person").innerHTML =
+    `${esc(user.name)}<span>${chair ? "Scholarship chair" : "Member"}${isDemo() ? " · demo" : ""}</span>`;
+  $(".account-button .avatar").textContent = user.initials;
+  person.value = user.id;
+  $(".portal-label").textContent = chair
+    ? "CHAIR WORKSPACE"
+    : "SCHOLARSHIP PORTAL";
+}
+function route() {
+  let p =
+    location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
+  if (user?.role === "chair" && ["overview", "submissions"].includes(p))
+    p = "queue";
+  if (
+    user?.role === "member" &&
+    ["queue", "members", "roster", "audit"].includes(p)
+  )
+    p = "overview";
+  return p;
+}
+async function refresh() {
+  const requests = [api("/api/submissions")];
+  requests.push(api(user.role === "chair" ? "/api/members" : "/api/points"));
+  const [s, p] = await Promise.all(requests);
+  submissions = s.submissions;
+  if (user.role === "chair") roster = p.members;
+  else points = p;
+  render();
+}
+function rows(items, chair = false) {
+  if (!items.length)
+    return `<div class="empty"><h3>${filter === "pending" ? "YOU’RE ALL CAUGHT UP." : "NO SUBMISSIONS HERE YET."}</h3><p>${chair ? "Try another status to see previous decisions." : "Submit an activity to start building your points."}</p>${chair ? "" : newButton()}</div>`;
+  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th><th class="right">${chair ? "Review" : "Details"}</th></tr></thead><tbody>${items.map((s) => `<tr>${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td><strong>${esc(s.title)}</strong><small>${esc(activity(s.activity).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td><td class="right"><button class="table-link" data-action="detail" data-id="${s.id}">${chair && s.status === "pending" ? "Review" : "View"}</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+function overview() {
+  const percent = Math.round((points.approved / points.goal) * 100),
+    remaining = Math.max(0, points.goal - points.approved),
+    checkpoint = Math.max(0, points.checkpoint - points.approved);
+  main.innerHTML =
+    heading(
+      "YOUR SCHOLARSHIP, IN ONE PLACE",
+      "KEEP MOVING FORWARD.",
+      "Your effort adds up. Track it here.",
+      newButton(),
+    ) +
+    `<div class="overview-grid"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><div class="progress" role="progressbar" aria-label="Semester progress" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span style="width:${Math.min(percent, 100)}%"></span></div><div class="points-foot"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span><strong>${percent}%</strong></div></section><section class="panel checkpoint"><p class="eyebrow">NEXT CHECKPOINT</p><h2>${date(checkpointDate()).toUpperCase()}</h2><p>${points.checkpoint} approved points required</p><div class="checkpoint-status">${checkpoint ? checkpoint + " points to go" : "Checkpoint reached"}</div><p class="muted">Only approved submissions count toward your goal.</p></section></div><div class="stats-row"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">${isDemo() ? "Demo date" : "As of"}: ${esc(rules.today)}. *Pending estimates are not awarded points.</p>`;
+}
+function filters() {
+  return `<div class="filters" aria-label="Filter submissions">${["all", "pending", "approved", "denied"].map((f) => `<button class="filter ${f === filter ? "active" : ""}" data-action="filter" data-value="${f}" aria-pressed="${f === filter}">${f === "all" ? "All submissions" : f === "pending" ? "Pending review" : f[0].toUpperCase() + f.slice(1)} <span>(${submissions.filter((s) => f === "all" || s.status === f).length})</span></button>`).join("")}</div>`;
+}
+function submissionPage() {
+  main.innerHTML =
+    heading(
+      "YOUR RECORD",
+      "MY SUBMISSIONS",
+      "Every activity, decision, and point award in one place.",
+      newButton(),
+    ) +
+    filters() +
+    `<section class="panel recent">${rows(submissions.filter((s) => filter === "all" || s.status === filter))}</section><p class="footnote">*Estimates await chair approval. Denied submissions earn no points.</p>`;
+}
+function queue() {
+  const pending = submissions.filter((s) => s.status === "pending"),
+    approved = submissions.filter((s) => s.status === "approved");
+  main.innerHTML =
+    heading(
+      "SCHOLARSHIP CHAIR",
+      "REVIEW. RECOGNIZE. SUPPORT.",
+      "Review the evidence. Give every effort its due.",
+      '<button class="button ghost" data-action="export">Export submissions</button>',
+    ) +
+    `<div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting your review</b>${new Set(pending.map((s) => s.owner)).size} members with pending claims</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${approved.reduce((n, s) => n + s.awarded, 0)} points awarded</span></div><div class="mini-stat"><strong>${roster.filter((m) => m.approved < m.checkpoint).length}</strong><span><b>Below next checkpoint</b>${date(checkpointDate())} · no automatic sanctions</span></div></div><div class="notice info"><strong>One review updates the member’s record.</strong> Approve a claim to award points, or deny it with a reason. Members see your decision and note.</div>${filters()}<section class="panel recent"><div class="section-heading"><h2>${filter === "pending" ? "PENDING SUBMISSIONS" : "SUBMISSION REGISTER"}</h2><span class="muted">Fall 2026</span></div>${rows(
+      submissions.filter((s) => filter === "all" || s.status === filter),
+      true,
+    )}</section><p class="bottom-note">${shield()}Academic evidence is reserved for the Scholarship Chair.${isDemo() ? " Demo identities are freely switchable." : ""}</p><p class="footnote">*Estimated points. Fractional estimates require an explicit whole-point decision and explanation.</p>`;
+}
+function membersPage() {
+  main.innerHTML =
+    heading(
+      "CHAPTER PROGRESS",
+      "KNOW WHO NEEDS SUPPORT.",
+      "Chair view · individual points and checkpoint progress.",
+    ) +
+    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
+}
+function earnPage() {
+  main.innerHTML =
+    heading(
+      "2026 SCHOLARSHIP PLAN",
+      "MAKE YOUR EFFORT COUNT.",
+      "Base points from your chapter plan. Approved credit-load multipliers apply.",
+    ) +
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+}
+function accessPage() {
+  main.innerHTML =
+    heading(
+      "MEMBERSHIP & PRIVACY",
+      "YOUR ACCOUNT. YOUR RECORD.",
+      "Identity verification and per-request permissions protect access.",
+    ) +
+    `<div class="flow"><article><div class="step">01</div><h3>VERIFY UNIVERSITY IDENTITY</h3><p>Microsoft Entra ID or Google OpenID Connect verifies the signed-in account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain.</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server.</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Uploaded files are kept outside the public website directory. Downloads require an authenticated session. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>UNIVERSITY INTEGRATIONS</h2><p>Microsoft sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
+}
+
+function apiPage() {
+  main.innerHTML =
+    heading(
+      "REQUESTS & RESPONSES",
+      "SEE THE WORKFLOW IN ACTION.",
+      "HTTP requests handled by the private portal backend.",
+      '<button class="button gold" data-action="ping">Run a live request</button>',
+    ) +
+    `<div class="integration-grid"><section class="panel"><span class="status approved">Working backend</span><h3>SUBMISSIONS & EVIDENCE</h3><p>Server validation, private files, SQLite records, review history, and ownership checks.</p></section><section class="panel"><span class="status ${appConfig.providers.some((p) => p.configured) ? "approved" : "pending"}">${appConfig.providers.some((p) => p.configured) ? "Configured" : "Setup required"}</span><h3>MICROSOFT / GOOGLE</h3><p>${isDemo() ? "Demo mode is active. No university identity is being used." : "The server verifies your university identity before granting roster-based access."}</p></section><section class="panel"><span class="status ${canvasConnected ? "approved" : "pending"}">${canvasConnected ? "Connected" : appConfig.canvasConfigured ? "Available to connect" : "Setup required"}</span><h3>CANVAS</h3><p>${isDemo() ? "Sample import available. Live Canvas is disabled in demo mode." : "Read-only assignment import with each member’s own authorization."}</p></section></div><section class="panel"><div class="section-heading"><h2>REQUEST LOG</h2><button class="text-btn" data-action="clear-log">Clear log</button></div><p class="footnote">Token, secret, CSRF, and file payload fields are redacted. Academic fields belong to your authorized view.</p><div class="api-log">${logs.map((l, i) => `<button class="api-row" data-action="request-detail" data-index="${i}"><span class="http-method">${l.method}</span><code>${esc(l.path)}</code><span class="http-status ${l.status >= 400 ? "bad" : ""}">${l.status}</span><span>${l.ms} ms</span></button>`).join("")}</div></section>`;
+}
+
+function render() {
+  if (!user || !rules) return;
+  navigation();
+  (
+    ({
+      overview,
+      submissions: submissionPage,
+      queue,
+      members: membersPage,
+      earn: earnPage,
+      canvas: canvasPage,
+      access: accessPage,
+      api: apiPage,
+      setup: setupPage,
+      roster: rosterPage,
+      audit: auditPage,
+    })[route()] || overview
+  )();
+}
+function openModal(title, subtitle, body) {
+  $("#modal-content").innerHTML =
+    `<div class="modal-heading"><div><h2>${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ""}</div><button class="close" data-action="close" aria-label="Close dialog">×</button></div>${body}`;
+  if (!modal.open) modal.showModal();
+}
+function formError(message) {
+  let e = $("#form-error");
+  if (!e) {
+    e = document.createElement("div");
+    e.id = "form-error";
+    e.className = "error";
+    e.setAttribute("role", "alert");
+    $("#modal-content").append(e);
+  }
+  e.textContent = message;
+  e.scrollIntoView({ block: "nearest" });
+}
+function newSubmission() {
+  if (user.role !== "member") return;
+  openModal(
+    "SUBMIT YOUR EFFORT",
+    isDemo()
+      ? "Add a fictional activity for the Scholarship Chair to review."
+      : "Add an activity and evidence for the Scholarship Chair to review.",
+    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity">Activity type</label><select id="activity" name="activity">${rules.activities.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("")}</select></div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10)}" max="${rules.today}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept="application/pdf,image/png,image/jpeg">${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+  );
+  $("#activity").addEventListener("change", updateForm);
+  $("#evidence-file").addEventListener("change", uploadEvidence);
+  $("#claim-form").addEventListener("input", estimate);
+  $("#claim-form").addEventListener("submit", submitClaim);
+  updateForm();
+}
+function updateForm() {
+  const a = activity($("#activity").value);
+  $("#proof-hint").textContent = a.proof;
+  $("#dynamic-field").innerHTML = a.grade
+    ? '<label for="grade">Grade (%)</label><input id="grade" name="grade" type="number" min="0" max="100" step="0.01" value="95" required>'
+    : a.hours
+      ? '<label for="quantity">Hours completed</label><input id="quantity" name="quantity" type="number" min="0.01" max="24" step="0.01" value="1" required>'
+      : "";
+  estimate();
+}
+function estimate() {
+  const form = $("#claim-form");
+  if (!form) return;
+  const data = Object.fromEntries(new FormData(form)),
+    a = activity(data.activity),
+    g = Number(data.grade),
+    q = Number(data.quantity || 1);
+  let base =
+    a.id === "major"
+      ? g >= 95
+        ? 5
+        : g >= 90
+          ? 4
+          : g >= 85
+            ? 3
+            : g >= 80
+              ? 2
+              : 0
+      : a.grade
+        ? g >= 90
+          ? 2
+          : 0
+        : Number(a.points) * (a.hours ? q : 1);
+  const total = Math.round(base * points.multiplier * 100) / 100;
+  $("#estimate").textContent = money(total);
+}
+async function submitClaim(e) {
+  e.preventDefault();
+  if (busy) return;
+  busy = true;
+  const button = e.submitter;
+  button.disabled = true;
+  const data = Object.fromEntries(new FormData(e.target));
+  if (data.evidence && data.evidence !== "sample")
+    data.evidenceId = data.evidence;
+  data.confirm = data.confirm === "on";
+  if (data.grade) data.grade = Number(data.grade);
+  if (data.quantity) data.quantity = Number(data.quantity);
+  try {
+    await api("/api/submissions", { method: "POST", body: data });
+    modal.close();
+    filter = "pending";
+    location.hash = "submissions";
+    await refresh();
+    toast("Submission sent. Points will count after chair approval.");
+  } catch (err) {
+    formError(err.message);
+  } finally {
+    busy = false;
+    button.disabled = false;
+  }
+}
+async function detail(id) {
+  try {
+    const { submission: s } = await api(
+      "/api/submissions/" + encodeURIComponent(id),
+    );
+    const a = activity(s.activity),
+      canReview = user.role === "chair" && s.status === "pending";
+    openModal(
+      canReview ? "REVIEW SUBMISSION" : "SUBMISSION DETAILS",
+      `${esc(s.id)} · ${esc(s.memberName)}`,
+      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, 2026</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Protected download · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="100" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
+    );
+    if (canReview) $("#review-form").addEventListener("submit", review);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+async function review(e) {
+  e.preventDefault();
+  if (busy) return;
+  const decision = e.submitter.value,
+    form = e.target,
+    data = Object.fromEntries(new FormData(form));
+  busy = true;
+  form.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try {
+    await api(
+      "/api/submissions/" + encodeURIComponent(form.dataset.id) + "/review",
+      {
+        method: "POST",
+        body: {
+          decision,
+          points: data.points === "" ? null : Number(data.points),
+          note: data.note,
+        },
+      },
+    );
+    modal.close();
+    await refresh();
+    toast(
+      decision === "approved"
+        ? "Approved. The member’s point total has been updated."
+        : "Denied. The member can see your reason.",
+    );
+  } catch (err) {
+    formError(err.message);
+  } finally {
+    busy = false;
+    form.querySelectorAll("button").forEach((b) => (b.disabled = false));
+  }
+}
+async function evidence(id) {
+  try {
+    const { evidence: e } = await api(
+      "/api/submissions/" + encodeURIComponent(id) + "/evidence",
+    );
+    if (e.sample === false && e.downloadUrl) {
+      $("#evidence-preview").innerHTML =
+        `<div class="evidence-sheet"><h3>${esc(e.name)}</h3><p>${esc(e.mime)} · private academic evidence</p><a class="button ghost" href="${esc(e.downloadUrl)}" target="_blank" rel="noopener">Download evidence</a></div>`;
+    } else {
+      $("#evidence-preview").innerHTML =
+        `<div class="evidence-sheet"><div class="sample-stamp">${e.sample === false ? "CANVAS RECORD" : "FICTIONAL SAMPLE"}</div><h3>${esc(e.title)}</h3><p>${esc(e.course)} · ${esc(e.date)}</p><p><strong>${e.grade !== null && e.grade !== undefined ? "Grade: " + e.grade + "%" : esc(e.activity || "")}</strong></p><p class="muted">${esc(e.verification || "Imported record")}</p></div>`;
+    }
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function switchUser(id) {
+  person.disabled = true;
+  try {
+    const result = await api("/api/demo/session", {
+      method: "POST",
+      body: { persona: id },
+    });
+    user = result.user;
+    csrfToken = result.csrfToken || csrfToken;
+    canvasConnected = Boolean(result.canvasConnected);
+    logs = [];
+    filter = user.role === "chair" ? "pending" : "all";
+    submissions = [];
+    roster = [];
+    points = {};
+    main.innerHTML = '<p role="status">Loading the selected demo account…</p>';
+    await refresh();
+    location.hash = user.role === "chair" ? "queue" : "overview";
+    toast("Now viewing " + user.name + "’s demo account.");
+  } catch (e) {
+    toast(e.message);
+    person.value = user.id;
+  } finally {
+    person.disabled = false;
+  }
+}
+function identity(provider) {
+  if (!isDemo()) {
+    location.assign("/auth/" + provider.toLowerCase());
+    return;
+  }
+  openModal(
+    `${provider.toUpperCase()} SIGN-IN PREVIEW`,
+    "This demonstration does not connect to your university.",
+    `<div class="notice info"><strong>In the live version</strong><p>You would sign in on ${provider}’s own page. This portal would never ask for your university password.</p></div><ol><li>Verify the signed token and the allowed ${provider === "Microsoft" ? "university tenant" : "university domain"} on the server.</li><li>Match the verified identity to an approved chapter member.</li><li>Issue a secure session and apply member or chair permissions to every request.</li></ol><p>The demo uses a freely switchable sample identity instead. No ${provider} token or profile was requested.</p><div class="modal-actions"><button class="button gold" data-action="close">Back to demo</button></div>`,
+  );
+}
+async function handleAction(e) {
+  const b = e.target.closest("[data-action]");
+  if (!b) return;
+  const action = b.dataset.action;
+  if (action === "account" && !isDemo()) {
+    openModal(
+      "YOUR ACCOUNT",
+      esc(user.name),
+      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair" : "Chapter member"}</p><div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
+    );
+    return;
+  }
+  try {
+    if (action === "new") newSubmission();
+    else if (action === "close") modal.close();
+    else if (action === "detail") await detail(b.dataset.id);
+    else if (action === "evidence") await evidence(b.dataset.id);
+    else if (action === "filter") {
+      filter = b.dataset.value;
+      render();
+    } else if (action === "sample") {
+      $("#evidence").value = "sample";
+      $("#attachment").innerHTML =
+        '<div class="sample-file"><span>▤</span><div><strong>Sample evidence attached</strong><small>Fictional activity record · previewable by the chair</small></div></div>';
+    } else if (action === "account") {
+      openModal(
+        "DEMO ACCOUNT",
+        esc(user.name),
+        `<p>You are viewing the ${user.role === "chair" ? "Scholarship Chair" : "member"} workflow as a fictional user. Use “View as” in the sidebar to change roles.</p><p class="muted">University sign-in is not connected. No real password is needed.</p><div class="modal-actions"><button class="button ghost" data-action="identity" data-provider="Microsoft">Microsoft preview</button><button class="button gold" data-action="close">Close</button></div>`,
+      );
+    } else if (action === "identity") identity(b.dataset.provider);
+    else if (action === "reset") {
+      openModal(
+        "RESET THE DEMONSTRATION?",
+        "Only this demo session’s fictional records will be reset.",
+        `<p>This restores the sample submissions and point totals. It does not touch Google, Microsoft, or any chapter records.</p><div class="modal-actions"><button class="button ghost" data-action="close">Cancel</button><button class="button gold" data-action="confirm-reset">Reset demo</button></div>`,
+      );
+    } else if (action === "confirm-reset") {
+      await api("/api/demo/reset", { method: "POST", body: {} });
+      modal.close();
+      await refresh();
+      toast("Sample records restored.");
+    } else if (action === "ping") {
+      await api("/api/me");
+      apiPage();
+      toast("Live request completed. Select it to see the response.");
+    } else if (action === "clear-log") {
+      logs = [];
+      apiPage();
+    } else if (action === "request-detail") {
+      const l = logs[Number(b.dataset.index)];
+      openModal(
+        "API REQUEST",
+        `${l.method} ${esc(l.path)} · ${esc(l.status)} · ${l.ms} ms`,
+        `<h3>REQUEST BODY</h3><pre>${esc(l.request ? JSON.stringify(l.request, null, 2) : "No request body")}</pre><h3>RESPONSE BODY</h3><pre>${esc(typeof l.response === "string" ? l.response : JSON.stringify(l.response, null, 2))}</pre><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`,
+      );
+    } else if (action === "access-check") {
+      try {
+        await api(
+          "/api/submissions/" + (user.id === "alex" ? "S-2001" : "S-1001"),
+        );
+        toast("Unexpected: the request returned a record.");
+      } catch (err) {
+        toast("Access check: " + err.message + " (404)");
+      }
+      apiPage();
+    } else if (action === "load-canvas") {
+      await loadCanvas();
+    } else if (action === "canvas-submit") {
+      await importCanvas();
+    } else if (action === "export") {
+      const csv = await api("/api/export", { raw: true });
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = isDemo()
+        ? "ato-demo-submissions.csv"
+        : "ato-submissions.csv";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("CSV export downloaded.");
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+document.addEventListener("click", handleAction);
+person.addEventListener("change", () => switchUser(person.value));
+window.addEventListener("hashchange", render);
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) modal.close();
+});
+async function init() {
+  try {
+    appConfig = await api("/api/config");
+    const requested = new URL(location.href).searchParams.get("view");
+    let result;
+    try {
+      result = await api("/api/session");
+    } catch (e) {
+      if (e.status !== 401) throw e;
+      if (!isDemo()) {
+        loginPage();
+        return;
+      }
+      result = await api("/api/demo/session", { method: "POST", body: {} });
+    }
+    csrfToken = result.csrfToken;
+    if (
+      isDemo() &&
+      requested &&
+      ["alex", "jordan", "chair"].includes(requested) &&
+      requested !== result.user.id
+    )
+      result = await api("/api/demo/session", {
+        method: "POST",
+        body: { persona: requested },
+      });
+    user = result.user;
+    document.querySelector(".account-button").hidden = false;
+    csrfToken = result.csrfToken;
+    canvasConnected = Boolean(result.canvasConnected);
+    const clean = new URL(location.href);
+    clean.searchParams.delete("view");
+    history.replaceState(null, "", clean);
+    rules = await api("/api/rules");
+    filter = user.role === "chair" ? "pending" : "all";
+    document.querySelector(".demo-bar > span").innerHTML = isDemo()
+      ? "<strong>PRIVATE EDITION · DEMO</strong> Fictional data · real backend · identity not connected"
+      : "<strong>CHAPTER SCHOLARSHIP PORTAL</strong> Signed-in members · confidential academic records";
+    document.querySelector(".sidebar-bottom").style.display = isDemo()
+      ? ""
+      : "none";
+    document.querySelector('[data-action="reset"]').hidden = !isDemo();
+    await refresh();
+  } catch (e) {
+    main.innerHTML =
+      heading(
+        "PORTAL SERVICE",
+        "LET’S RECONNECT.",
+        "The service could not load your account.",
+      ) +
+      `<div class="error">${esc(e.message)}</div><button class="button gold" id="retry">Try again</button>`;
+    $("#retry").onclick = init;
+  }
+}
+function loginPage() {
+  user = null;
+  csrfToken = null;
+  document.querySelector(".account-button").hidden = true;
+  $("#nav").innerHTML = "";
+  document.querySelector(".sidebar-bottom").style.display = "none";
+  document.querySelector('[data-action="reset"]').hidden = true;
+  document.querySelector(".demo-bar > span").innerHTML =
+    "<strong>CHAPTER PORTAL</strong> University sign-in and chapter membership required";
+  main.innerHTML =
+    heading(
+      "WELCOME TO KAPPA ETA",
+      "YOUR WORK. YOUR PROGRESS.",
+      "Sign in with your approved university account.",
+    ) +
+    `<section class="panel" style="max-width:620px"><h2>SIGN IN TO SCHOLARSHIP</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>`;
+}
+
+function registerTools() {
+  if (!document.modelContext?.registerTool) return;
+  const lifecycle = new AbortController();
+  window.addEventListener("pagehide", () => lifecycle.abort(), { once: true });
+  const tool = {
+    name: "get_scholarship_demo_records",
+    title: "Read current scholarship demo records",
+    description:
+      "Read the visible demo persona’s submissions through the same API used by the interface. Does not change roles or records.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    async execute(input) {
+      if (!input || typeof input !== "object" || Object.keys(input).length)
+        throw Error("Expected an empty object.");
+      const result = await api("/api/submissions");
+      submissions = result.submissions;
+      if (route() === "api") apiPage();
+      return { persona: user.id, submissions: result.submissions };
+    },
+  };
+  try {
+    Promise.resolve(
+      document.modelContext.registerTool(tool, { signal: lifecycle.signal }),
+    ).catch(() => {});
+  } catch {}
+}
+init();
+
+function canvasPage() {
+  main.innerHTML =
+    heading(
+      "LESS MANUAL ENTRY",
+      "BRING YOUR WORK WITH YOU.",
+      "Import graded assignments, confirm the category, and submit them for review.",
+    ) +
+    `<div class="notice ${canvasConnected ? "info" : ""}"><strong>${isDemo() ? "Canvas sample mode" : canvasConnected ? "Canvas connected" : appConfig.canvasConfigured ? "Canvas authorization required" : "Canvas setup required"}</strong><p>${isDemo() ? "Fictional records only. No university API is contacted." : canvasConnected ? "Only your released, graded assignments are imported. Points still require chair approval." : "The university must approve a scoped Canvas OAuth developer key. Microsoft or Google sign-in does not grant Canvas access."}</p></div><section class="panel"><div class="section-heading"><h2>YOUR CANVAS ASSIGNMENTS</h2>${!isDemo() && !canvasConnected ? `<button class="button gold" data-action="connect-canvas" ${appConfig.canvasConfigured ? "" : "disabled"}>Connect Canvas</button>` : `<button class="button gold" data-action="load-canvas">${isDemo() ? "Load sample assignments" : "Load assignments"}</button>`}</div><div id="canvas-results"><p class="muted">Choose which assignments to submit. Canvas assignment groups do not determine whether an individual assignment is major or minor.</p></div></section><p class="footnote">The import uses the grade-posting date as the claim date. Confirm that interpretation with the chapter before using live records.</p>`;
+}
+
+async function loadCanvas() {
+  try {
+    const response = await api("/api/integrations/canvas/assignments");
+    $("#canvas-results").innerHTML =
+      `<div class="table-wrap"><table><thead><tr><th>Select</th><th>Assignment</th><th>Grade</th><th>Category</th><th>Grade posted</th></tr></thead><tbody>${response.assignments.map((a) => `<tr><td><input class="canvas-select" type="checkbox" value="${a.id}" data-course="${a.course_id}" aria-label="Select ${esc(a.name)}" ${a.imported ? "disabled" : ""}></td><td><strong>${esc(a.name)}</strong><small>${esc(a.course)}${a.imported ? " · Already imported" : ""}</small></td><td>${Number(a.percent).toFixed(2).replace(/\.00$/, "")}%<small>${a.submission.score} / ${a.points_possible}</small></td><td><select id="category-${a.id}" aria-label="Category for ${esc(a.name)}" ${a.imported ? "disabled" : ""}><option value="">Choose category</option><option value="major">Major assignment</option><option value="minor">Minor assignment</option><option value="lab">Lab report</option></select></td><td>${date(canvasDate(a.submission.posted_at))}</td></tr>`).join("")}</tbody></table></div><label class="checkbox-line"><input id="canvas-confirm" type="checkbox"><span>I have checked the individual assignment categories and have not claimed these activities elsewhere.</span></label><div id="canvas-error" role="alert"></div><div class="section-heading"><p class="footnote">${isDemo() ? "Sample records only. No Canvas credentials are needed." : "Only selected records are saved for chair review."}</p><button class="button gold" data-action="canvas-submit">Import selected for review</button></div>`;
+  } catch (e) {
+    toast(e.message);
+  }
+}
+async function importCanvas() {
+  const selected = [...document.querySelectorAll(".canvas-select:checked")].map(
+    (el) => ({
+      assignmentId: String(el.value),
+      courseId: String(el.dataset.course),
+      activity: $("#category-" + el.value).value,
+    }),
+  );
+  const err = $("#canvas-error");
+  err.className = "";
+  err.textContent = "";
+  if (
+    !selected.length ||
+    selected.some((s) => !s.activity) ||
+    !$("#canvas-confirm").checked
+  ) {
+    err.className = "error";
+    err.textContent =
+      "Select at least one assignment, choose each category, and confirm the statement.";
+    return;
+  }
+  const btn = $('[data-action="canvas-submit"]');
+  btn.disabled = true;
+  try {
+    const result = await api("/api/integrations/canvas/import", {
+      method: "POST",
+      body: { items: selected, confirm: true },
+    });
+    await refresh();
+    await loadCanvas();
+    toast(result.imported.length + " assignment(s) sent for review.");
+  } catch (e) {
+    err.className = "error";
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function uploadEvidence(e) {
+  const input = e.target,
+    form = input.closest("form"),
+    hidden = form.querySelector("#evidence"),
+    attachment = form.querySelector("#attachment"),
+    submit = form.querySelector('button[type="submit"]'),
+    owner = user.id,
+    file = input.files[0];
+  const current = () =>
+    form.isConnected && user?.id === owner && $("#claim-form") === form;
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    formError("Choose a file no larger than 5 MB.");
+    return;
+  }
+  submit.disabled = true;
+  input.disabled = true;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 32768)
+      binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    if (!current()) return;
+    const result = await api("/api/uploads", {
+      method: "POST",
+      body: { name: file.name, mime: file.type, base64: btoa(binary) },
+    });
+    if (!current()) return;
+    hidden.value = result.upload.id;
+    attachment.innerHTML =
+      '<div class="sample-file"><div><strong>' +
+      esc(result.upload.name) +
+      "</strong><small>Uploaded privately · " +
+      Math.ceil(result.upload.size / 1024) +
+      " KB</small></div></div>";
+    toast("Evidence uploaded. Submit the form to attach it to your claim.");
+  } catch (err) {
+    if (current()) formError(err.message);
+  } finally {
+    if (current()) {
+      submit.disabled = false;
+      input.disabled = false;
+    }
+  }
+}
+function setupPage() {
+  main.innerHTML =
+    heading(
+      "ACCOUNT CONNECTIONS",
+      "CONNECTED WITH PURPOSE.",
+      "Provider setup stays on the server. This view shows availability, not secrets.",
+    ) +
+    `<div class="rules-grid">${appConfig.providers.map((p) => `<section class="rule-card"><span class="status ${p.configured ? "approved" : "pending"}">${p.configured ? "Configured" : "Not configured"}</span><h3 style="margin-top:15px">${esc(p.name.toUpperCase())}</h3><p>University identity verification using OpenID Connect. ${isDemo() ? "The current session is a sample identity." : "Your chapter roster controls access after sign-in."}</p></section>`).join("")}<section class="rule-card"><span class="status ${canvasConnected ? "approved" : "pending"}">${canvasConnected ? "Connected" : appConfig.canvasConfigured ? "Ready to connect" : "Not configured"}</span><h3 style="margin-top:15px">CANVAS</h3><p>Read-only access to your released assignment grades. Tokens are encrypted on the server.</p>${user.role === "member" && !isDemo() ? `<button class="button ghost small" style="margin-top:14px" data-action="${canvasConnected ? "disconnect-canvas" : "connect-canvas"}" ${canvasConnected || appConfig.canvasConfigured ? "" : "disabled"}>${canvasConnected ? "Disconnect Canvas" : "Connect Canvas"}</button>` : ""}</section><section class="rule-card"><span class="status approved">Available</span><h3 style="margin-top:15px">PRIVATE EVIDENCE</h3><p>PDF, PNG, and JPEG uploads up to 5 MB. Each download checks the current member or chair role.</p></section></div>`;
+}
+async function rosterPage() {
+  main.innerHTML =
+    heading(
+      "MEMBERSHIP ADMINISTRATION",
+      "THE CHAPTER ROSTER.",
+      "Bind each member to a verified university identity.",
+      '<button class="button gold" data-action="add-member">Add member</button>',
+    ) +
+    '<section class="panel" id="roster-table"><p>Loading roster…</p></section>';
+  try {
+    const result = await api("/api/roster");
+    $("#roster-table").innerHTML =
+      `<div class="table-wrap"><table><thead><tr><th>Member</th><th>Identity provider</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small></td><td>${esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.tier || "—"} / ${m.credits || "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+  } catch (e) {
+    $("#roster-table").innerHTML =
+      '<div class="error">' + esc(e.message) + "</div>";
+  }
+}
+function addMember() {
+  openModal(
+    "ADD A CHAPTER MEMBER",
+    "Use the stable identity ID verified by the university provider.",
+    `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="120"></div><div class="field"><label for="member-email">Contact email</label><input id="member-email" name="email" type="email" required></div><div class="field"><label for="member-provider">Identity provider</label><select id="member-provider" name="provider"><option value="microsoft">Microsoft</option><option value="google">Google</option></select></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field span2"><label for="member-subject">Verified identity ID</label><input id="member-subject" name="subject" required maxlength="300"><small>Microsoft: tenant:oid:object-id. Google: verified sub claim. An email address is not an identity ID.</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Add member</button></div></form>`,
+  );
+  $("#roster-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    body.tier = Number(body.tier);
+    body.credits = Number(body.credits);
+    try {
+      await api("/api/roster", { method: "POST", body });
+      modal.close();
+      await rosterPage();
+      toast("Member added to the chapter roster.");
+    } catch (err) {
+      formError(err.message);
+    }
+  };
+}
+async function auditPage() {
+  main.innerHTML =
+    heading(
+      "CHAIR OVERSIGHT",
+      "A RECORD OF EVERY DECISION.",
+      "Review decisions, membership changes, and evidence access.",
+    ) +
+    '<section class="panel" id="audit-table"><p>Loading activity…</p></section>';
+  try {
+    const result = await api("/api/audit");
+    $("#audit-table").innerHTML =
+      `<div class="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th>Who</th><th>Record</th></tr></thead><tbody>${result.events.map((e) => `<tr><td>${esc(new Date(e.at).toLocaleString())}</td><td><strong>${esc(e.action)}</strong></td><td>${esc(e.actor || "System")}</td><td>${esc(e.subject || "")}</td></tr>`).join("")}</tbody></table></div>${result.events.length ? "" : '<p class="muted">No recorded actions yet.</p>'}`;
+  } catch (e) {
+    $("#audit-table").innerHTML =
+      '<div class="error">' + esc(e.message) + "</div>";
+  }
+}
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-action]");
+  if (!b) return;
+  try {
+    if (b.dataset.action === "logout") {
+      await api("/api/logout", { method: "POST", body: {} });
+      modal.close();
+      logs = [];
+      loginPage();
+    } else if (b.dataset.action === "add-member") addMember();
+    else if (b.dataset.action === "deactivate-member") {
+      openModal(
+        "DEACTIVATE MEMBER?",
+        "This blocks future portal access and keeps the review record.",
+        `<div class="modal-actions"><button class="button ghost" data-action="close">Cancel</button><button class="button danger" data-action="confirm-deactivate" data-id="${esc(b.dataset.id)}">Deactivate</button></div>`,
+      );
+    } else if (b.dataset.action === "confirm-deactivate") {
+      await api(
+        "/api/roster/" + encodeURIComponent(b.dataset.id) + "/deactivate",
+        { method: "POST", body: {} },
+      );
+      modal.close();
+      await rosterPage();
+    } else if (b.dataset.action === "connect-canvas") {
+      const result = await api("/api/integrations/canvas/connect", {
+        method: "POST",
+        body: {},
+      });
+      location.assign(result.url);
+    } else if (b.dataset.action === "disconnect-canvas") {
+      await api("/api/integrations/canvas/disconnect", {
+        method: "POST",
+        body: {},
+      });
+      canvasConnected = false;
+      setupPage();
+      toast("Canvas disconnected. Saved submissions remain in your record.");
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+});

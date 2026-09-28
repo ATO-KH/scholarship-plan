@@ -1,0 +1,19 @@
+{
+  "name": "ato-scholarship-portal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/private.mjs",
+    "demo": "node --env-file-if-exists=.env server/private.mjs",
+    "test": "node --test tests/api.test.mjs private-tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "description": "Private scholarship portal with identity, membership, evidence, and Canvas integration support",
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "packageManager": "pnpm@11.19.0"
+}
