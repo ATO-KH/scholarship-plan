@@ -374,10 +374,10 @@ main {
 .auth-cross-arm {
   animation: auth-cross-drift 2.6s infinite;
 }
-.auth-cross-arm-top { --drift-x: 0px; --drift-y: -7px; }
-.auth-cross-arm-right { --drift-x: 7px; --drift-y: 0px; }
-.auth-cross-arm-bottom { --drift-x: 0px; --drift-y: 7px; }
-.auth-cross-arm-left { --drift-x: -7px; --drift-y: 0px; }
+.auth-cross-arm-top { --drift-x: 0px; --drift-y: -3px; }
+.auth-cross-arm-right { --drift-x: 3px; --drift-y: 0px; }
+.auth-cross-arm-bottom { --drift-x: 0px; --drift-y: 3px; }
+.auth-cross-arm-left { --drift-x: -3px; --drift-y: 0px; }
 .auth-loading p {
   margin: 0;
   font: 500 20px var(--display);
