@@ -22,7 +22,7 @@ Keep database passwords, identity client secrets, Storage keys, Canvas secrets, 
 
 ## 2. Create and migrate the private database
 
-In Supabase's **Connect** dialog, copy the actual connection details; do not construct the pooler hostname from the region. Use the transaction-pooler connection on port **6543** for Vercel's `DATABASE_URL`. URL-encode special characters in the database password. The application uses one PostgreSQL connection per warm instance and unnamed parameterized queries. Supabase recommends transaction pooling for serverless applications. [Connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres)
+In Supabase's **Connect** dialog, copy the actual connection details; do not construct the pooler hostname from the region. Use the transaction-pooler connection on port **6543** for Vercel's `DATABASE_URL`. You can omit the password from that URL and enter the raw password separately as a Production-only Secret named `DATABASE_PASSWORD`; this avoids manual URL encoding. Alternatively, keep the password in `DATABASE_URL` with special characters URL-encoded. Set only one password source. The application uses one PostgreSQL connection per warm instance and unnamed parameterized queries. Supabase recommends transaction pooling for serverless applications. [Connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres)
 
 The driver requires verified TLS. If the connection needs Supabase's database root certificate, set `DATABASE_CA_CERT` to that certificate's PEM text; literal `\n` line breaks are accepted. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`. `DATABASE_SSL=disable` is permitted only for explicit local loopback tests and is rejected in Vercel.
 
@@ -33,7 +33,7 @@ pnpm install --frozen-lockfile
 pnpm db:migrate
 ```
 
-The command reads `DATABASE_URL` from that environment or a local ignored `.env`. For the migration, use a direct PostgreSQL connection when available, or the session pooler when the operator network requires it. Restore the **transaction** pooler URL in Vercel afterward. Never put a password-bearing connection string in the command text or shell history. The migration requires a database role allowed to create the schema and perform its grants/revokes. The server checks schema readiness on startup; it does not run production migrations on every request.
+The command reads `DATABASE_URL` and optional `DATABASE_PASSWORD` from that environment or a local ignored `.env`. For the migration, use a direct PostgreSQL connection when available, or the session pooler when the operator network requires it. Restore the **transaction** pooler URL in Vercel afterward. Never put a password-bearing connection string or raw password in the command text or shell history. The migration requires a database role allowed to create the schema and perform its grants/revokes. The server checks schema readiness on startup; it does not run production migrations on every request.
 
 The migration creates the `scholarship_private` schema, enables deny-by-default Row Level Security on its tables, and revokes schema/table/sequence access from `PUBLIC` and, when present, Supabase's `anon` and `authenticated` roles. It applies matching default-privilege revokes. Keep this schema out of Supabase's exposed Data API schemas. The portal uses server-side SQL and ownership checks; these revokes do not restrict the privileged server database account itself. Do not add broad browser grants or public access policies to work around a configuration problem.
 

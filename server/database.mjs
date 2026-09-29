@@ -67,6 +67,15 @@ export function databaseConnectionOptions(env) {
   }
   if (!["postgres:", "postgresql:"].includes(url.protocol))
     throw Error("DATABASE_URL must use PostgreSQL.");
+  const embeddedPassword = url.password
+    ? decodeURIComponent(url.password)
+    : undefined;
+  const separatePassword = env.DATABASE_PASSWORD || undefined;
+  if (embeddedPassword && separatePassword)
+    throw Error("Set the database password in either DATABASE_URL or DATABASE_PASSWORD, not both.");
+  const password = embeddedPassword || separatePassword;
+  if (!password)
+    throw Error("A PostgreSQL password is required in DATABASE_URL or DATABASE_PASSWORD.");
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   const localOnly = env.DATABASE_SSL === "disable";
   if (localOnly && (!loopback || env.VERCEL || env.VERCEL_ENV))
@@ -85,7 +94,7 @@ export function databaseConnectionOptions(env) {
     host: url.hostname.replace(/^\[|\]$/g, ""),
     port: Number(url.port || 5432),
     user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
+    password,
     database: decodeURIComponent(url.pathname.slice(1)),
     ssl: localOnly
       ? false

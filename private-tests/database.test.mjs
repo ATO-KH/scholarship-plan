@@ -51,6 +51,22 @@ test("URL TLS overrides cannot disable verified remote PostgreSQL TLS", () => {
   );
 });
 
+test("a separate database password preserves special characters and rejects ambiguous configuration", () => {
+  const url = "postgresql://postgres.project@pooler.example.test:6543/postgres";
+  assert.equal(
+    databaseConnectionOptions({ DATABASE_URL: url, DATABASE_PASSWORD: "a@b:c#d/e" }).password,
+    "a@b:c#d/e",
+  );
+  assert.throws(
+    () => databaseConnectionOptions({ DATABASE_URL: url }),
+    /PostgreSQL password is required/,
+  );
+  assert.throws(
+    () => databaseConnectionOptions({ DATABASE_URL: url.replace("@pooler", ":embedded@pooler"), DATABASE_PASSWORD: "separate" }),
+    /either DATABASE_URL or DATABASE_PASSWORD/,
+  );
+});
+
 test("hosted previews and missing hosted databases never fall back to local state", async () => {
   await assert.rejects(
     openDatabase({
