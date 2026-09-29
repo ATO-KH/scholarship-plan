@@ -986,7 +986,14 @@ function registerTools() {
     ).catch(() => {});
   } catch {}
 }
-init();
+if (new URLSearchParams(location.search).get("preview") === "spinner") {
+  $("#auth-loading-message").textContent = "Animation preview";
+  const link = document.createElement("a");
+  link.href = "/";
+  link.className = "text-btn";
+  link.textContent = "Open portal";
+  $("#auth-loading .auth-loading-content").append(link);
+} else init();
 
 function canvasPage() {
   main.innerHTML =

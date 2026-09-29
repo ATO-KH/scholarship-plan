@@ -368,7 +368,7 @@ main {
 }
 .auth-cross-rotor {
   transform-box: view-box;
-  transform-origin: center;
+  transform-origin: 49.702% 50%;
   animation: auth-cross-spin 2.6s infinite;
 }
 .auth-cross-arm {
