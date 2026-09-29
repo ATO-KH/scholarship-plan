@@ -14,7 +14,7 @@ The deployment configuration excludes local environment files, Vercel caches, Gi
 
 Browser assets live in `web/`. Do not rename that directory to `dist/`, `build/`, or `output/`: Vercel's Node builder searches those directories after the build command and can mistake the browser's `app.js` for the compiled server. Verify the packaged server handler and asset inventory after changing deployment settings; a successful build alone does not prove that the correct program was packaged.
 
-Vercel Hobby currently rejects Git integration with a private organization repository. Keep the source private. Use an authorized personal private repository or direct CLI deployments to the linked project; direct deployments do not enable automatic deployment on Git pushes. Confirm the linked account and project before deploying, and complete the database, storage, and identity setup below first.
+The current project is deployed through the Vercel CLI from the linked workspace. Repository visibility does not configure automatic Git deployments; that is a separate Vercel project setting. Confirm the linked account and project before deploying, and complete the database, storage, and identity setup below first.
 
 Choose the final HTTPS hostname first. Set `PUBLIC_ORIGIN` to that exact origin, such as `https://scholarship.example.edu`, without a path, query, or credentials. Register the same origin's identity and Canvas callback URLs. A different temporary hostname is not interchangeable with the configured origin.
 

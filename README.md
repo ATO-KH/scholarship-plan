@@ -2,7 +2,7 @@
 
 The fuller server-backed version of the Kappa Eta scholarship workflow. The live portal hosts an isolated fictional sandbox at [the demo](https://scholarship-ato-kh.vercel.app/demo/); the separate public proof of concept remains at [ato-scholarship-demo](https://github.com/matasvai/ato-scholarship-demo).
 
-This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
+This repository contains application code and fictional sample fixtures. Live credentials, the chapter roster, uploaded evidence, and real academic records are not committed. Repository visibility does not grant access to the deployed portal; chapter accounts control that access.
 
 The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://scholarship-ato-kh.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. Chapter-managed sign-in is the production direction. The Chair office account can be piloted once its exact Supabase identity is deployed; member invitations still require working email delivery and roster eligibility. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Existing Forms/Sheets records are not automatically migrated.
 
