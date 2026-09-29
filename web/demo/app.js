@@ -559,7 +559,7 @@ async function handleAction(e) {
       openModal(
         "RESET THE DEMONSTRATION?",
         "Only this demo session’s fictional records will be reset.",
-        `<p>This restores the sample submissions and point totals. It does not touch Google, Microsoft, or any chapter records.</p><div class="modal-actions"><button class="button ghost" data-action="close">Cancel</button><button class="button gold" data-action="confirm-reset">Reset demo</button></div>`,
+        `<p>This restores the sample submissions and point totals. It does not affect chapter accounts or records.</p><div class="modal-actions"><button class="button ghost" data-action="close">Cancel</button><button class="button gold" data-action="confirm-reset">Reset demo</button></div>`,
       );
     } else if (action === "confirm-reset") {
       await api("/api/demo/reset", { method: "POST", body: {} });
@@ -768,7 +768,7 @@ async function startApp() {
       if (!("serviceWorker" in navigator))
         throw Error("This browser does not support the hosted demo.");
       await navigator.serviceWorker.register(
-        new URL("demo-worker.js", SITE_BASE),
+        new URL("demo-worker.js?v=2026-09-29", SITE_BASE),
         { scope: SITE_BASE.pathname, type: "module" },
       );
       await navigator.serviceWorker.ready;
