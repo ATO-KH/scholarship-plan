@@ -13,6 +13,19 @@ CREATE TABLE IF NOT EXISTS scholarship_private.canvas_leases (workspace TEXT NOT
 CREATE TABLE IF NOT EXISTS scholarship_private.audit (id BIGSERIAL PRIMARY KEY, workspace TEXT NOT NULL, at TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON scholarship_private.sessions(expires);
 CREATE INDEX IF NOT EXISTS audit_workspace ON scholarship_private.audit(workspace,id);
+-- The portal uses the owning postgres connection; browser roles have no policies.
+-- RLS is an additional deny-by-default guard if the schema is ever exposed.
+ALTER TABLE scholarship_private.schema_migrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.chapters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.identities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.uploads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.integrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.canvas_generations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.canvas_leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scholarship_private.audit ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON ALL TABLES IN SCHEMA scholarship_private FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA scholarship_private FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA scholarship_private REVOKE ALL ON TABLES FROM PUBLIC;
