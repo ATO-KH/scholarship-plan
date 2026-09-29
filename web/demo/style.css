@@ -381,21 +381,41 @@ main {
   color: #d7e2f0;
 }
 .progress {
+  position: relative;
   height: 7px;
   background: rgba(255, 255, 255, 0.17);
   margin: 23px 0 13px;
 }
-.progress span {
+.progress .progress-approved,
+.progress .progress-pending {
+  position: absolute;
+  top: 0;
   display: block;
   height: 100%;
-  background: var(--gold);
   max-width: 100%;
+}
+.progress .progress-approved {
+  left: 0;
+  background: var(--gold);
+}
+.progress .progress-pending {
+  background: radial-gradient(circle, var(--gold) 1.5px, transparent 1.8px) left center / 7px 7px repeat-x;
 }
 .points-foot {
   display: flex;
   justify-content: space-between;
+  gap: 12px;
   font-size: 14px;
   color: #e2e9f2;
+}
+.points-foot-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.pending-count {
+  color: var(--gold);
+  white-space: nowrap;
 }
 .checkpoint {
   padding-top: 31px;
