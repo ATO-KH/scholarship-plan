@@ -121,7 +121,7 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   }
 }
 function heading(kicker, title, description, action = "") {
-  return `<div class="page-heading"><div><p class="eyebrow">${kicker}</p><h1>${title}</h1><p>${description}</p></div>${action}</div>`;
+  return `<div class="page-heading"><div>${kicker ? `<p class="eyebrow">${kicker}</p>` : ""}<h1>${title}</h1>${description ? `<p>${description}</p>` : ""}</div>${action}</div>`;
 }
 function newButton() {
   return '<button class="button gold" data-action="new">+ New submission</button>';
@@ -200,9 +200,9 @@ function overview() {
     checkpoint = Math.max(0, points.checkpoint - points.approved);
   main.innerHTML =
     heading(
-      "YOUR SCHOLARSHIP, IN ONE PLACE",
-      "KEEP MOVING FORWARD.",
-      "Your effort adds up. Track it here.",
+      "",
+      "Overview",
+      "",
       newButton(),
     ) +
     `<div class="overview-grid"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><div class="progress" role="progressbar" aria-label="Semester progress" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span style="width:${Math.min(percent, 100)}%"></span></div><div class="points-foot"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span><strong>${percent}%</strong></div></section><section class="panel checkpoint"><p class="eyebrow">NEXT CHECKPOINT</p><h2>${date(checkpointDate()).toUpperCase()}</h2><p>${points.checkpoint} approved points required</p><div class="checkpoint-status">${checkpoint ? checkpoint + " points to go" : "Checkpoint reached"}</div><p class="muted">Only approved submissions count toward your goal.</p></section></div><div class="stats-row"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">${isDemo() ? "Demo date" : "As of"}: ${esc(rules.today)}. *Pending estimates are not awarded points.</p>`;
@@ -213,9 +213,9 @@ function filters() {
 function submissionPage() {
   main.innerHTML =
     heading(
-      "YOUR RECORD",
-      "MY SUBMISSIONS",
-      "Every activity, decision, and point award in one place.",
+      "",
+      "My submissions",
+      "",
       newButton(),
     ) +
     filters() +
@@ -226,9 +226,9 @@ function queue() {
     approved = submissions.filter((s) => s.status === "approved");
   main.innerHTML =
     heading(
-      "SCHOLARSHIP CHAIR",
-      "REVIEW. RECOGNIZE. SUPPORT.",
-      "Review the evidence. Give every effort its due.",
+      "",
+      "Review queue",
+      "Approve or deny pending submissions.",
       '<button class="button ghost" data-action="export">Export submissions</button>',
     ) +
     `<div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting your review</b>${new Set(pending.map((s) => s.owner)).size} members with pending claims</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${approved.reduce((n, s) => n + s.awarded, 0)} points awarded</span></div><div class="mini-stat"><strong>${roster.filter((m) => m.approved < m.checkpoint).length}</strong><span><b>Below next checkpoint</b>${date(checkpointDate())} · no automatic sanctions</span></div></div><div class="notice info"><strong>One review updates the member’s record.</strong> Approve a claim to award points, or deny it with a reason. Members see your decision and note.</div>${filters()}<section class="panel recent"><div class="section-heading"><h2>${filter === "pending" ? "PENDING SUBMISSIONS" : "SUBMISSION REGISTER"}</h2><span class="muted">${esc(rules.semester?.name || "Current semester")}</span></div>${rows(
@@ -239,27 +239,27 @@ function queue() {
 function membersPage() {
   main.innerHTML =
     heading(
-      "CHAPTER PROGRESS",
-      "KNOW WHO NEEDS SUPPORT.",
-      "Chair view · individual points and checkpoint progress.",
+      "",
+      "Member points",
+      "Approved points and checkpoint targets for each member.",
     ) +
     `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
 }
 function earnPage() {
   main.innerHTML =
     heading(
-      "2026 SCHOLARSHIP PLAN",
-      "MAKE YOUR EFFORT COUNT.",
-      "Base points from your chapter plan. Approved credit-load multipliers apply.",
+      "",
+      "Point rules",
+      "Point values, claim limits, and checkpoint targets.",
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 function accessPage() {
   main.innerHTML =
     heading(
-      "MEMBERSHIP & PRIVACY",
-      "YOUR ACCOUNT. YOUR RECORD.",
-      "Identity verification and per-request permissions protect access.",
+      "",
+      "Privacy and access",
+      "How sign-in and record access work.",
     ) +
     `<div class="flow"><article><div class="step">01</div><h3>VERIFY UNIVERSITY IDENTITY</h3><p>Microsoft Entra ID or Google OpenID Connect verifies the signed-in account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain.</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server.</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>UNIVERSITY INTEGRATIONS</h2><p>Microsoft sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
 }
@@ -267,9 +267,9 @@ function accessPage() {
 function apiPage() {
   main.innerHTML =
     heading(
-      "REQUESTS & RESPONSES",
-      "SEE THE WORKFLOW IN ACTION.",
-      "HTTP requests handled by the private portal backend.",
+      "",
+      "API activity",
+      "Requests handled by the portal backend.",
       '<button class="button gold" data-action="ping">Run a live request</button>',
     ) +
     `<div class="integration-grid"><section class="panel"><span class="status approved">Working backend</span><h3>SUBMISSIONS & EVIDENCE</h3><p>Server validation, private files, shared records, review history, and ownership checks.</p></section><section class="panel"><span class="status ${appConfig.providers.some((p) => p.configured) ? "approved" : "pending"}">${appConfig.providers.some((p) => p.configured) ? "Configured" : "Setup required"}</span><h3>MICROSOFT / GOOGLE</h3><p>${isDemo() ? "Demo mode is active. No university identity is being used." : "The server verifies your university identity before granting roster-based access."}</p></section><section class="panel"><span class="status ${canvasConnected ? "approved" : "pending"}">${canvasConnected ? "Connected" : appConfig.canvasConfigured ? "Available to connect" : "Setup required"}</span><h3>CANVAS</h3><p>${isDemo() ? "Sample import available. Live Canvas is disabled in demo mode." : "Read-only assignment import with each member’s own authorization."}</p></section></div><section class="panel"><div class="section-heading"><h2>REQUEST LOG</h2><button class="text-btn" data-action="clear-log">Clear log</button></div><p class="footnote">Token, secret, CSRF, and file payload fields are redacted. Academic fields belong to your authorized view.</p><div class="api-log">${logs.map((l, i) => `<button class="api-row" data-action="request-detail" data-index="${i}"><span class="http-method">${l.method}</span><code>${esc(l.path)}</code><span class="http-status ${l.status >= 400 ? "bad" : ""}">${l.status}</span><span>${l.ms} ms</span></button>`).join("")}</div></section>`;
@@ -617,6 +617,7 @@ async function init() {
         body: { persona: requested },
       });
     user = result.user;
+    document.body.classList.remove("portal-loading", "signed-out");
     document.querySelector(".account-button").hidden = false;
     csrfToken = result.csrfToken;
     canvasConnected = Boolean(result.canvasConnected);
@@ -634,10 +635,12 @@ async function init() {
     document.querySelector('[data-action="reset"]').hidden = !isDemo();
     await refresh();
   } catch (e) {
+    document.body.classList.remove("portal-loading");
+    document.body.classList.add("signed-out");
     main.innerHTML =
       heading(
-        "PORTAL SERVICE",
-        "LET’S RECONNECT.",
+        "",
+        "Service unavailable",
         "The service could not load your account.",
       ) +
       `<div class="error">${esc(e.message)}</div><button class="button gold" id="retry">Try again</button>`;
@@ -645,6 +648,8 @@ async function init() {
   }
 }
 function loginPage() {
+  document.body.classList.remove("portal-loading");
+  document.body.classList.add("signed-out");
   sessionEpoch++;
   logs = [];
   submissions = [];
@@ -654,6 +659,7 @@ function loginPage() {
   modal.close();
   user = null;
   csrfToken = null;
+  $(".term").textContent = appConfig.semester?.name || "Current semester";
   document.querySelector(".account-button").hidden = true;
   $("#nav").innerHTML = "";
   document.querySelector(".sidebar-bottom").style.display = "none";
@@ -662,11 +668,11 @@ function loginPage() {
     "<strong>CHAPTER PORTAL</strong> University sign-in and chapter membership required";
   main.innerHTML =
     heading(
-      "WELCOME TO KAPPA ETA",
-      "YOUR WORK. YOUR PROGRESS.",
-      "Sign in with your approved university account.",
+      "",
+      "Sign in",
+      "Use your approved university account.",
     ) +
-    `<section class="panel" style="max-width:620px"><h2>SIGN IN TO SCHOLARSHIP</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>`;
+    `<section class="panel login-panel"><h2>University sign-in</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>`;
 }
 
 function registerTools() {
@@ -704,8 +710,8 @@ init();
 function canvasPage() {
   main.innerHTML =
     heading(
-      "LESS MANUAL ENTRY",
-      "BRING YOUR WORK WITH YOU.",
+      "",
+      "Canvas import",
       "Import graded assignments, confirm the category, and submit them for review.",
     ) +
     `<div class="notice ${canvasConnected ? "info" : ""}"><strong>${isDemo() ? "Canvas sample mode" : canvasConnected ? "Canvas connected" : appConfig.canvasConfigured ? "Canvas authorization required" : "Canvas setup required"}</strong><p>${isDemo() ? "Fictional records only. No university API is contacted." : canvasConnected ? "Only your released, graded assignments are imported. Points still require chair approval." : "The university must approve a scoped Canvas OAuth developer key. Microsoft or Google sign-in does not grant Canvas access."}</p></div><section class="panel"><div class="section-heading"><h2>YOUR CANVAS ASSIGNMENTS</h2>${!isDemo() && !canvasConnected ? `<button class="button gold" data-action="connect-canvas" ${appConfig.canvasConfigured ? "" : "disabled"}>Connect Canvas</button>` : `<button class="button gold" data-action="load-canvas">${isDemo() ? "Load sample assignments" : "Load assignments"}</button>`}</div><div id="canvas-results"><p class="muted">Choose which assignments to submit. Canvas assignment groups do not determine whether an individual assignment is major or minor.</p></div></section><p class="footnote">The import uses the grade-posting date as the claim date. Confirm that interpretation with the chapter before using live records.</p>`;
@@ -848,18 +854,18 @@ async function uploadEvidence(e) {
 function setupPage() {
   main.innerHTML =
     heading(
-      "ACCOUNT CONNECTIONS",
-      "CONNECTED WITH PURPOSE.",
-      "Provider setup stays on the server. This view shows availability, not secrets.",
+      "",
+      "Connections",
+      "Status of sign-in, Canvas, and evidence storage.",
     ) +
     `<div class="rules-grid">${appConfig.providers.map((p) => `<section class="rule-card"><span class="status ${p.configured ? "approved" : "pending"}">${p.configured ? "Configured" : "Not configured"}</span><h3 style="margin-top:15px">${esc(p.name.toUpperCase())}</h3><p>University identity verification using OpenID Connect. ${isDemo() ? "The current session is a sample identity." : "Your chapter roster controls access after sign-in."}</p></section>`).join("")}<section class="rule-card"><span class="status ${canvasConnected ? "approved" : "pending"}">${canvasConnected ? "Connected" : appConfig.canvasConfigured ? "Ready to connect" : "Not configured"}</span><h3 style="margin-top:15px">CANVAS</h3><p>Read-only access to your released assignment grades. Tokens are encrypted on the server.</p>${user.role === "member" && !isDemo() ? `<button class="button ghost small" style="margin-top:14px" data-action="${canvasConnected ? "disconnect-canvas" : "connect-canvas"}" ${canvasConnected || appConfig.canvasConfigured ? "" : "disabled"}>${canvasConnected ? "Disconnect Canvas" : "Connect Canvas"}</button>` : ""}</section><section class="rule-card"><span class="status approved">Available</span><h3 style="margin-top:15px">PRIVATE EVIDENCE</h3><p>PDF, PNG, and JPEG uploads up to 5 MB. The server checks member or chair access before issuing a download.</p></section></div>`;
 }
 async function rosterPage() {
   main.innerHTML =
     heading(
-      "MEMBERSHIP ADMINISTRATION",
-      "THE CHAPTER ROSTER.",
-      "Bind each member to a verified university identity.",
+      "",
+      "Roster",
+      "Manage member identities and access.",
       '<button class="button gold" data-action="add-member">Add member</button>',
     ) +
     '<section class="panel" id="roster-sync"><p>Checking sheet connection…</p></section><section class="panel recent" id="roster-table"><p>Loading roster…</p></section>';
@@ -900,8 +906,8 @@ async function semesterPage() {
   const owner = user.id;
   main.innerHTML =
     heading(
-      "SEMESTER ADMINISTRATION",
-      "START THE NEXT CHAPTER.",
+      "",
+      "Semester reset",
       "Clear the old semester’s academic records while keeping member accounts.",
     ) +
     '<section class="panel" id="semester-panel"><p>Loading semester…</p></section>';
@@ -1042,9 +1048,9 @@ function addMember() {
 async function auditPage() {
   main.innerHTML =
     heading(
-      "CHAIR OVERSIGHT",
-      "A RECORD OF EVERY DECISION.",
-      "Review decisions, membership changes, and evidence access.",
+      "",
+      "Review history",
+      "Decisions, membership changes, and evidence access.",
     ) +
     '<section class="panel" id="audit-table"><p>Loading activity…</p></section>';
   const destination = $("#audit-table");

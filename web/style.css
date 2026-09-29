@@ -270,20 +270,6 @@ nav a:hover {
   font-size: 11px;
   display: block;
 }
-.chapter-mark {
-  font: 500 16px var(--display);
-  letter-spacing: 1.5px;
-  color: var(--navy);
-  padding-top: 25px;
-  border-top: 1px solid var(--line);
-}
-.chapter-mark span {
-  display: block;
-  font: 12px var(--sans);
-  letter-spacing: 0;
-  margin-top: 7px;
-  color: var(--muted);
-}
 main {
   padding: 37px 42px 60px;
   max-width: 1500px;
@@ -304,6 +290,29 @@ main {
 .page-heading .eyebrow {
   color: var(--muted);
   margin-bottom: 11px;
+}
+.portal-loading .workspace,
+.signed-out .workspace {
+  display: block;
+}
+.portal-loading .sidebar,
+.signed-out .sidebar {
+  display: none;
+}
+.portal-loading main,
+.signed-out main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding-top: clamp(48px, 10vh, 110px);
+}
+.portal-loading .page-heading,
+.signed-out .page-heading {
+  justify-content: center;
+  text-align: center;
+}
+.login-panel {
+  max-width: 620px;
+  margin: 0 auto;
 }
 .button {
   display: inline-flex;
@@ -1004,8 +1013,7 @@ dialog::backdrop {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .portal-label,
-  .chapter-mark {
+  .portal-label {
     display: none;
   }
   nav {

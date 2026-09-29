@@ -20,12 +20,11 @@
     />
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body>
+  <body class="portal-loading">
     <div class="demo-bar">
       <span
-        ><strong>PRIVATE EDITION</strong> Fictional data · real demo API ·
-        sign-in is simulated</span
-      ><button data-action="reset" class="text-btn">Reset demo</button>
+        ><strong>SCHOLARSHIP PORTAL</strong> Loading…</span
+      ><button data-action="reset" class="text-btn" hidden>Reset demo</button>
     </div>
     <header class="masthead">
       <a class="brand" href="#overview" aria-label="ATO Scholarship home"
@@ -35,23 +34,18 @@
         ></a
       >
       <div class="header-right">
-        <span class="term">FALL 2026</span
-        ><button class="account-button" data-action="account">
-          <span class="avatar">AB</span
-          ><span id="header-person">Alex Brooks<span>Member demo</span></span>
+        <span class="term">Current semester</span
+        ><button class="account-button" data-action="account" hidden>
+          <span class="avatar"></span
+          ><span id="header-person"></span>
         </button>
       </div>
     </header>
     <div class="workspace">
       <aside class="sidebar">
         <div class="portal-label">SCHOLARSHIP PORTAL</div>
-        <nav id="nav" aria-label="Main navigation">
-          <a href="#overview" class="active">Overview</a
-          ><a href="#submissions">My submissions</a
-          ><a href="#earn">Ways to earn points</a
-          ><a href="#access">Privacy & sign-in</a>
-        </nav>
-        <div class="sidebar-bottom">
+        <nav id="nav" aria-label="Main navigation"></nav>
+        <div class="sidebar-bottom" style="display:none">
           <span class="eyebrow">EXPLORE THE DEMO</span
           ><label for="persona">View as</label
           ><select id="persona">
@@ -59,50 +53,16 @@
             <option value="jordan">Jordan Ellis · Member</option>
             <option value="chair">Scholarship chair</option>
           </select>
-          <p>Switch roles to try both sides of a submission.</p>
-          <div class="chapter-mark">
-            LOVE & RESPECT<span>Scholarship. Brotherhood. Growth.</span>
-          </div>
+          <p>Switch roles to test member and chair views.</p>
         </div>
       </aside>
       <main id="main">
         <div class="page-heading">
           <div>
-            <p class="eyebrow">YOUR SCHOLARSHIP, IN ONE PLACE</p>
-            <h1>KEEP MOVING FORWARD.</h1>
-            <p>Your effort adds up. Track it here.</p>
+            <h1>Loading portal</h1>
+            <p>Checking sign-in…</p>
           </div>
-          <button class="button gold" data-action="new">
-            + New submission
-          </button>
         </div>
-        <div class="overview-grid">
-          <section class="points-panel">
-            <p class="eyebrow">APPROVED POINTS</p>
-            <div class="points-number">18 <span>/ 55</span></div>
-            <p>Semester goal · Tier 2</p>
-            <div class="progress"><span style="width: 32.7%"></span></div>
-            <div class="points-foot">
-              <span>37 points to your semester goal</span><strong>33%</strong>
-            </div>
-          </section>
-          <section class="panel checkpoint">
-            <p class="eyebrow">NEXT CHECKPOINT</p>
-            <h2>OCTOBER 10</h2>
-            <p>28 approved points required</p>
-            <div class="checkpoint-status">10 points to go</div>
-            <p class="muted">
-              Only approved submissions count toward your goal.
-            </p>
-          </section>
-        </div>
-        <section class="panel recent">
-          <div class="section-heading">
-            <h2>RECENT SUBMISSIONS</h2>
-            <a href="#submissions">View all</a>
-          </div>
-          <p>Loading your demo submissions…</p>
-        </section>
       </main>
     </div>
     <div id="toast" role="status" aria-live="polite"></div>
