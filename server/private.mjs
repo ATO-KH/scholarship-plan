@@ -8,6 +8,14 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { openDatabase } from "./database.mjs";
+import {
+  chapterAuthConfigured,
+  verifyPassword,
+  inviteAccount,
+  sendPasswordReset,
+  userForAccountToken,
+  setPasswordWithToken,
+} from "./chapter-auth.mjs";
 import { rosterStatus, fetchRosterSnapshot } from "./roster.mjs";
 import {
   storageStatus,
@@ -56,6 +64,9 @@ const mode = env.APP_MODE || "demo";
 if (!["demo", "production"].includes(mode))
   throw Error("APP_MODE must be demo or production.");
 const production = mode === "production";
+const authMode = env.AUTH_MODE || "microsoft";
+if (!["microsoft", "chapter"].includes(authMode))
+  throw Error("AUTH_MODE must be microsoft or chapter.");
 const port = Number(env.PORT || 4175);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
   throw Error("PORT must be a valid port.");
@@ -156,6 +167,7 @@ const identityCookie = production ? "__Host-ato_identity" : "ato_identity";
 const SESSION_LIFETIME = 8 * 60 * 60 * 1000;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const token = () => randomBytes(32).toString("hex");
+const loginAlias = () => `KH-${randomBytes(5).toString("hex").toUpperCase()}`;
 function equal(a, b) {
   return (
     typeof a === "string" &&
@@ -379,6 +391,51 @@ async function insertMember(workspace, m) {
       m.tier ?? null,
       m.credits ?? null,
     );
+}
+async function identityMember(workspace, provider, subject) {
+  return db
+    .prepare(
+      "SELECT member_id FROM identities WHERE workspace=? AND provider=? AND subject=?",
+    )
+    .get(workspace, provider, subject);
+}
+async function accountForIdentifier(identifier) {
+  const normalized = identifier.trim().toLowerCase();
+  if (normalized.includes("@")) {
+    const row = await db
+      .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
+      .get("chapter", normalized);
+    return row ? member("chapter", row.id) : null;
+  }
+  const row = await identityMember("chapter", "login", normalized);
+  return row ? member("chapter", row.member_id) : null;
+}
+async function authAttempt(kind, identifier, maxAttempts) {
+  const id = sha(`${kind}:${identifier.trim().toLowerCase()}`);
+  await atomic(async () => {
+    await db
+      .prepare(
+        "INSERT INTO transactions(id,kind,session_id,data,expires) VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+      )
+      .run(id, kind, null, "0", Date.now() + 900_000);
+    const row = await db
+      .prepare("SELECT data,expires FROM transactions WHERE id=? FOR UPDATE")
+      .get(id);
+    const attempts = row.expires > Date.now() ? Number(row.data) : 0;
+    if (attempts >= maxAttempts)
+      fail(429, "Too many attempts. Try again later.");
+    await db
+      .prepare("UPDATE transactions SET data=?,expires=? WHERE id=?")
+      .run(
+        String(attempts + 1),
+        row.expires > Date.now() ? row.expires : Date.now() + 900_000,
+        id,
+      );
+  });
+}
+async function clearAuthAttempts(kind, identifier) {
+  await db.prepare("DELETE FROM transactions WHERE id=?")
+    .run(sha(`${kind}:${identifier.trim().toLowerCase()}`));
 }
 async function stateOf(workspace) {
   return JSON.parse(
@@ -690,6 +747,19 @@ function validateRoster(input) {
     credits: input.credits,
   };
 }
+function validateChapterMember(input) {
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+  const badge = typeof input.badge === "string" ? input.badge.trim().toLowerCase() : "";
+  if (
+    !name || name.length > 100 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 ||
+    (badge && !/^[a-z0-9][a-z0-9-]{0,31}$/.test(badge)) ||
+    !Number.isInteger(input.tier) || input.tier < 1 || input.tier > 5 ||
+    !Number.isFinite(input.credits) || input.credits < 0 || input.credits > 30
+  ) fail(422, "Enter a name, valid email, optional badge number, tier and credits.");
+  return { name, email, badge, tier: input.tier, credits: input.credits };
+}
 async function coordinatedCanvasRefresh(
   session,
   user,
@@ -866,13 +936,105 @@ const server = http.createServer(async (req, res) => {
           : {};
       return json(res, 200, {
         mode,
-        providers: identityProviders(env),
+        providers: authMode === "chapter" ? [] : identityProviders(env),
+        chapterAuth: {
+          enabled: authMode === "chapter",
+          configured: chapterAuthConfigured(env),
+        },
         canvasConfigured: canvasConfigured(),
         uploadMode: directUploads ? "direct" : "local",
         semester: semesterSettings(state),
       });
     }
     if (production && path.startsWith("/api/demo/")) fail(404, "Not found.");
+    if (production && authMode === "chapter" && path === "/api/auth/login" && req.method === "POST") {
+      requireOrigin(req);
+      if (!chapterAuthConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      const input = await readBody(req);
+      const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
+      const password = typeof input.password === "string" ? input.password : "";
+      if (!identifier || identifier.length > 254 || !password || password.length > 1024)
+        fail(422, "Enter your email or member ID and password.");
+      await authAttempt("login_attempt", identifier, 10);
+      const candidate = await accountForIdentifier(identifier);
+      const bootstrapEmail = env.BOOTSTRAP_EMAIL?.trim().toLowerCase();
+      const email = candidate?.email ||
+        (identifier.toLowerCase() === bootstrapEmail ? bootstrapEmail :
+          `${sha(identifier).slice(0, 24)}@invalid.example`);
+      const verified = await verifyPassword(env, email, password);
+      if (!verified || verified.email !== email)
+        fail(401, "Invalid sign-in details.");
+      const issued = await atomic(async () => {
+        await lockWorkspace("chapter");
+        let binding = await identityMember("chapter", "supabase", verified.id);
+        if (
+          !binding && !candidate &&
+          equal(env.BOOTSTRAP_AUTH_USER_ID, verified.id) &&
+          equal(env.BOOTSTRAP_EMAIL?.trim().toLowerCase(), verified.email) &&
+          !(await db.prepare("SELECT id FROM members WHERE workspace='chapter' AND role='chair'").get())
+        ) {
+          const id = randomUUID();
+          await insertMember("chapter", {
+            id,
+            name: env.BOOTSTRAP_NAME?.trim().slice(0, 100) || "Scholarship Chair",
+            email: verified.email,
+            role: "chair",
+          });
+          await db.prepare("INSERT INTO identities VALUES (?,?,?,?)")
+            .run("chapter", "supabase", verified.id, id);
+          await audit("chapter", "system", "chair.bootstrap", id, "Exact configured Supabase Auth user ID.");
+          binding = { member_id: id };
+        }
+        const user = binding && await member("chapter", binding.member_id);
+        if (!user?.active || (candidate && candidate.id !== user.id) || user.email !== verified.email)
+          fail(401, "Invalid sign-in details.");
+        await audit("chapter", user.name, "session.login", user.id, "chapter");
+        return issueSession("chapter", user.id, (await currentSession(req))?.id);
+      });
+      await clearAuthAttempts("login_attempt", identifier);
+      return json(res, 200,
+        await sessionPayload(issued.session, await member("chapter", issued.session.member_id)),
+        { "Set-Cookie": issued.cookie });
+    }
+    if (production && authMode === "chapter" && path === "/api/auth/request-reset" && req.method === "POST") {
+      requireOrigin(req);
+      if (!chapterAuthConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      const input = await readBody(req);
+      const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
+      if (!identifier || identifier.length > 254) fail(422, "Enter your email or member ID.");
+      await authAttempt("reset_attempt", identifier, 3);
+      const candidate = await accountForIdentifier(identifier);
+      const linked = candidate && await db
+        .prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
+        .get("chapter", "supabase", candidate.id);
+      if (candidate?.active && linked) {
+        try {
+          await sendPasswordReset(env, candidate.email, `${origin}/account/reset`);
+        } catch {
+          // Public reset requests never reveal account presence or mail status.
+        }
+      }
+      return json(res, 200, { message: "If the account is active, a reset link will be sent." });
+    }
+    if (production && authMode === "chapter" && path === "/api/auth/complete" && req.method === "POST") {
+      requireOrigin(req);
+      if (!chapterAuthConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      const input = await readBody(req);
+      if (typeof input.accessToken !== "string" || input.accessToken.length > 8192 ||
+          typeof input.password !== "string" || input.password.length < 12 || input.password.length > 1024)
+        fail(422, "Choose a password of at least 12 characters.");
+      const account = await userForAccountToken(env, input.accessToken);
+      if (!account) fail(401, "This account link has expired. Request a new one.");
+      const binding = await identityMember("chapter", "supabase", account.id);
+      const user = binding && await member("chapter", binding.member_id);
+      if ((!user?.active || user.email !== account.email) &&
+          !(equal(env.BOOTSTRAP_AUTH_USER_ID, account.id) &&
+            equal(env.BOOTSTRAP_EMAIL?.trim().toLowerCase(), account.email)))
+        fail(403, "This account is not approved for the portal.");
+      if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id)))
+        fail(401, "This account link has expired. Request a new one.");
+      return json(res, 200, { message: "Password set. Sign in to continue." });
+    }
     if (path === "/api/demo/session" && req.method === "POST" && !production) {
       requireOrigin(req);
       if (req.headers["x-ato-demo"] !== "1")
@@ -907,7 +1069,7 @@ const server = http.createServer(async (req, res) => {
       /^\/auth\/(microsoft|google)(\/callback)?$/,
     );
     if (identityRoute && req.method === "GET") {
-      if (identityRoute[1] !== "microsoft") fail(404, "Not found.");
+      if (identityRoute[1] !== "microsoft" || authMode !== "microsoft") fail(404, "Not found.");
       if (!production)
         fail(
           403,
@@ -1701,17 +1863,59 @@ const server = http.createServer(async (req, res) => {
           members: await Promise.all(
             (await listMembers(session.workspace)).map(async (m) => ({
               ...m,
-              identities: await db
+              identities: (await db
                 .prepare(
                   "SELECT provider,subject FROM identities WHERE workspace=? AND member_id=?",
                 )
-                .all(session.workspace, m.id),
+                .all(session.workspace, m.id)).filter((item) => item.provider !== "supabase"),
             })),
           ),
         });
       }
       if (path === "/api/roster" && req.method === "POST") {
         chair(user);
+        if (production && authMode === "chapter") {
+          if (!chapterAuthConfigured(env)) fail(503, "Chapter invitations are not ready.");
+          const invited = validateChapterMember(input);
+          const existing = await db
+            .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
+            .get(session.workspace, invited.email);
+          if (existing) fail(409, "A member already uses this email address.");
+          if (invited.badge && await identityMember(session.workspace, "login", invited.badge))
+            fail(409, "A member already uses this badge number.");
+          const authUserId = await inviteAccount(env, invited.email, `${origin}/account/setup`);
+          let created;
+          try {
+            created = await atomic(async () => {
+              await lockWorkspace(session.workspace);
+              await assertActiveSession(session, user);
+              if (await db.prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
+                .get(session.workspace, invited.email))
+                fail(409, "A member already uses this email address.");
+              if (invited.badge && await identityMember(session.workspace, "login", invited.badge))
+                fail(409, "A member already uses this badge number.");
+              let alias;
+              do { alias = loginAlias().toLowerCase(); }
+              while (await identityMember(session.workspace, "login", alias));
+              const id = randomUUID();
+              await insertMember(session.workspace, { ...invited, id, role: "member" });
+              for (const [provider, subject] of [
+                ["supabase", authUserId], ["login", alias],
+                ...(invited.badge ? [["login", invited.badge]] : []),
+              ]) await db.prepare("INSERT INTO identities VALUES (?,?,?,?)")
+                .run(session.workspace, provider, subject, id);
+              await audit(session.workspace, user.name, "roster.invite", id,
+                `chapter account; tier ${invited.tier}; credits ${invited.credits}`);
+              return { member: await member(session.workspace, id), loginId: alias.toUpperCase() };
+            });
+          } catch (error) {
+            // Auth and the chapter database cannot share one transaction. An
+            // invitation may already be in flight; never delete an Auth user
+            // here because it might have existed before this request.
+            fail(503, "The invitation may have been sent, but the portal account was not saved. Contact the portal administrator before retrying.");
+          }
+          return json(res, 201, created);
+        }
         const invited = validateRoster(input);
         const created = await atomic(async () => {
           await lockWorkspace(session.workspace);
@@ -1746,6 +1950,18 @@ const server = http.createServer(async (req, res) => {
           return await member(session.workspace, id);
         });
         return json(res, 201, { member: created });
+      }
+      const resetMember = path.match(/^\/api\/roster\/([^/]+)\/reset-password$/);
+      if (resetMember && req.method === "POST" && production && authMode === "chapter") {
+        chair(user);
+        const target = await member(session.workspace, resetMember[1]);
+        if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+        const linked = await db.prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
+          .get(session.workspace, "supabase", target.id);
+        if (!linked) fail(409, "This member has no chapter login yet.");
+        await sendPasswordReset(env, target.email, `${origin}/account/reset`);
+        await audit(session.workspace, user.name, "account.reset_requested", target.id);
+        return json(res, 200, { message: "Password reset email requested." });
       }
       const deactivate = path.match(/^\/api\/roster\/([^/]+)\/deactivate$/);
       if (deactivate && req.method === "POST") {
@@ -2045,6 +2261,8 @@ const server = http.createServer(async (req, res) => {
     const mapping = {
       "/": "index.html",
       "/index.html": "index.html",
+      "/account/setup": "index.html",
+      "/account/reset": "index.html",
       "/style.css": "style.css",
       "/app.js": "app.js",
     };

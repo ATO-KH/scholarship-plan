@@ -2,6 +2,8 @@
 
 This is the deployment procedure for the implemented private portal. A Vercel production deployment and Supabase project exist, but the university app registration and roster service account are not configured. Live university sign-in, Canvas, Google Sheets, and complete hosted evidence workflows still require acceptance testing.
 
+The chapter-managed login code is staged behind `AUTH_MODE=chapter`. The live site has **not** switched to it. Do not enable it until the chair account, invitation emails, password recovery, and member authorization pass the pilot below. The requested 16-word recovery key is not implemented yet.
+
 The hosted architecture is Vercel's Node server entrypoint, Supabase PostgreSQL for application state, and a private Supabase Storage bucket for evidence. Local demo mode continues to use disposable SQLite and local fictional files. No member records or credentials belong in the repository.
 
 ## 1. Prepare the accounts and production boundary
@@ -73,6 +75,16 @@ Set `BOOTSTRAP_PROVIDER=microsoft` and `BOOTSTRAP_SUBJECT=TENANT_GUID:oid:OBJECT
 The first successful login of that exact identity creates the chair **only if no chair already exists**. Merely changing the bootstrap environment does not promote another account once a chair is present. Preserve a documented operator recovery procedure for the trusted roster and directory binding. The Microsoft fallback subject, if no `oid` is issued, is `TENANT_GUID:sub:SUBJECT`; verify the actual provider output before provisioning it. See [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference).
 
 Microsoft is the only portal sign-in provider. University approval may be required for app registration or consent. Provider setup is not completed by committing these placeholders. The scholarship chair controls portal membership and review access; Microsoft controls account passwords and the university's sign-in policy.
+
+### Staged chapter-managed login pilot
+
+The alternate `AUTH_MODE=chapter` uses Supabase Auth to verify email/password credentials and the portal's own membership database to authorize records. The chapter chair can invite a member, send a reset email, and deactivate access. Members may sign in using their verified email, assigned `KH-...` portal sign-in ID, or a chair-entered badge number. The immutable Portal Member ID remains the sheet eligibility key and never changes when a badge is assigned. No public self-registration or predictable temporary password is used.
+
+Before enabling this mode, configure a custom SMTP sender in Supabase Auth and test delivery to an ordinary member address. Supabase's default sender is for limited testing and cannot deliver to arbitrary chapter members. Keep public signups disabled and email confirmation enabled. Set Supabase Auth's Site URL to the production origin and allowlist only `${PUBLIC_ORIGIN}/account/setup` and `${PUBLIC_ORIGIN}/account/reset` for this flow. The production project's current Site URL and these two redirect URLs have been configured; SMTP has not. [Supabase invitations](https://supabase.com/docs/guides/auth/users), [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp).
+
+Add `SUPABASE_PUBLISHABLE_KEY` in Vercel Production. Keep `SUPABASE_SECRET_KEY` server-side; the browser never receives it. Invite the first chair to Supabase Auth through its dashboard after SMTP works. Copy the **exact Auth user UUID** into `BOOTSTRAP_AUTH_USER_ID`, and set `BOOTSTRAP_EMAIL` to the same confirmed email. The first successful login of that exact pair creates the chair only if no chair exists. Do not infer it from an email pattern or the first visitor. Reconcile the existing Supabase Auth users before deciding whether any can be used; they are not automatically portal members.
+
+Pilot with one chair and one fictional member: confirm invite delivery, password setup, login by all assigned aliases, own-record isolation, chair-only controls, reset delivery, deactivation of an existing session, and roster-sheet eligibility. Then set `AUTH_MODE=chapter` in Production and redeploy. The 16-word recovery-key feature must be implemented and separately tested before it is promised to members. The public fictional demo remains at [member view](https://matasvai.github.io/ato-scholarship-demo/?view=alex#overview) and [chair view](https://matasvai.github.io/ato-scholarship-demo/?view=chair#queue); it does not use live accounts or academic data.
 
 ## 5. Connect the roster eligibility sheet
 

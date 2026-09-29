@@ -4,7 +4,7 @@ The fuller server-backed version of the Kappa Eta scholarship workflow. The sepa
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
-The hosted implementation runs at [scholarship-plan.vercel.app](https://scholarship-plan.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. See the [deployment and operator runbook](DEPLOYMENT.md) for university identity setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. University sign-in and live end-to-end acceptance are still required; existing Forms/Sheets records are not automatically migrated.
+The hosted implementation runs at [scholarship-plan.vercel.app](https://scholarship-plan.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. A chapter-managed Supabase Auth login is implemented behind `AUTH_MODE=chapter`; the live site has not switched to it. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Live invitation and password-reset acceptance are still required; existing Forms/Sheets records are not automatically migrated.
 
 ## What is implemented
 
@@ -12,8 +12,8 @@ The hosted implementation runs at [scholarship-plan.vercel.app](https://scholars
 - Scholarship Chair review queue, approval/denial, CSV export, member progress, roster controls, and audit history.
 - Private PDF/JPEG/PNG evidence uploads and authenticated downloads.
 - Server-side ownership and chair-role checks, session cookies, and CSRF validation.
-- Microsoft Entra ID authorization-code sign-in with PKCE and signed-token verification.
-- Chapter membership bound to a stable verified provider identity, not a user-entered email or role.
+- Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets; existing Microsoft Entra ID login remains available as the default configuration.
+- Chapter membership bound to a stable verified provider identity, not a user-entered role.
 - Canvas OAuth connection, encrypted token storage, refresh handling, and read-only import of the consenting member's released numeric grades.
 - Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.
 - A demo mode for testing without university accounts and a production mode with no demo identity switch.
@@ -51,7 +51,7 @@ The local version uses Node's built-in SQLite module. The hosted version uses Po
 
 **Canvas:** connect through the university's OAuth authorization page → select released assignments → confirm each activity category → import as pending claims → chair reviews. The portal never changes Canvas grades or submits coursework.
 
-**Roster:** the chair adds members using their stable verified Microsoft identity ID, then copies each portal-issued member ID into the eligibility sheet. The sheet reads only `Portal Member ID` and `Active`; names, badge numbers, and guessed email addresses do not authorize access. Deactivation blocks further portal access. The initial chair is configured on the server, not selected by the first visitor. Microsoft handles the account password; the chair controls portal membership and point reviews.
+**Roster:** in chapter-account mode, the chair enters a member's verified email and optional badge number; an invitation lets that member set a password. The portal assigns a separate, immutable Portal Member ID for the eligibility sheet and a `KH-...` sign-in alias. The sheet reads only `Portal Member ID` and `Active`; names, badge numbers, and guessed email addresses do not authorize access. Deactivation blocks further portal access. The initial chair is bound to one exact Supabase Auth user ID and email on the server, not selected by the first visitor.
 
 **Semester:** preview the records to be removed, provide the next semester's explicit dates, and type the confirmation. Old academic access is removed immediately; the new semester opens after durable evidence cleanup finishes. Member accounts remain. This does not erase separately retained backups or downloaded copies.
 
@@ -105,7 +105,7 @@ Follow [DEPLOYMENT.md](DEPLOYMENT.md) and [.env.vercel.example](.env.vercel.exam
 - JSON and CSV responses have a 4 MiB guard. Large histories need pagination or a separate export mechanism before expanding beyond the pilot.
 - Back up database state, Storage object bytes, and the Canvas encryption key separately. A database backup does not include uploaded evidence bytes.
 
-Production starts without sample members and rejects demo-persona switching. This repository is deployment preparation; it is not evidence that accounts, credentials, or a live service have been created.
+Production starts without sample members and rejects demo-persona switching. Its sign-in screen links to a separate [fictional member sandbox](https://matasvai.github.io/ato-scholarship-demo/?view=alex#overview) and [fictional chair sandbox](https://matasvai.github.io/ato-scholarship-demo/?view=chair#queue). Neither sandbox needs a password or touches live academic records. This repository is deployment preparation; it is not evidence that chapter accounts or a live chapter login have been created.
 
 ## API surfaces
 

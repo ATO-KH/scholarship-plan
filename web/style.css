@@ -314,6 +314,14 @@ main {
   max-width: 620px;
   margin: 0 auto;
 }
+.sandbox-panel {
+  margin-top: 16px;
+}
+.sandbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .button {
   display: inline-flex;
   justify-content: center;

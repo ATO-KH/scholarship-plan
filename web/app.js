@@ -2,12 +2,13 @@
 let appConfig = { mode: "demo", providers: [], canvasConfigured: false },
   sessionEpoch = 0,
   csrfToken = null,
-  canvasConnected = false;
+  canvasConnected = false,
+  accountToken = null;
 const isDemo = () => appConfig.mode === "demo";
 const redact = (value) =>
   JSON.parse(
     JSON.stringify(value, (key, val) =>
-      /csrf|token|secret|base64|authorization|uploadUrl|downloadUrl|signedUrl/i.test(
+      /csrf|token|secret|password|recovery|base64|authorization|uploadUrl|downloadUrl|signedUrl/i.test(
         key,
       ) ||
       (typeof val === "string" &&
@@ -255,13 +256,14 @@ function earnPage() {
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 function accessPage() {
+  const chapter = appConfig.chapterAuth?.enabled;
   main.innerHTML =
     heading(
       "",
       "Privacy and access",
       "How sign-in and record access work.",
     ) +
-    `<div class="flow"><article><div class="step">01</div><h3>VERIFY UNIVERSITY IDENTITY</h3><p>Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain.</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server.</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>UNIVERSITY INTEGRATIONS</h2><p>Microsoft sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
+    `<div class="flow"><article><div class="step">01</div><h3>${chapter ? "VERIFY CHAPTER ACCOUNT" : "VERIFY UNIVERSITY IDENTITY"}</h3><p>${chapter ? "The member signs in with an approved badge number, portal ID, or email and a personal password verified by Supabase Auth." : "Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain."}</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>${chapter ? "The chair creates accounts and can deactivate access. The current chapter roster remains a separate eligibility check." : "The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server."}</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>CANVAS IS SEPARATE</h2><p>Portal sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
 }
 
 function apiPage() {
@@ -272,7 +274,7 @@ function apiPage() {
       "Requests handled by the portal backend.",
       '<button class="button gold" data-action="ping">Run a live request</button>',
     ) +
-    `<div class="integration-grid"><section class="panel"><span class="status approved">Working backend</span><h3>SUBMISSIONS & EVIDENCE</h3><p>Server validation, private files, shared records, review history, and ownership checks.</p></section><section class="panel"><span class="status ${appConfig.providers.some((p) => p.configured) ? "approved" : "pending"}">${appConfig.providers.some((p) => p.configured) ? "Configured" : "Setup required"}</span><h3>MICROSOFT SIGN-IN</h3><p>${isDemo() ? "Demo mode is active. No university identity is being used." : "The server verifies your university identity before granting roster-based access."}</p></section><section class="panel"><span class="status ${canvasConnected ? "approved" : "pending"}">${canvasConnected ? "Connected" : appConfig.canvasConfigured ? "Available to connect" : "Setup required"}</span><h3>CANVAS</h3><p>${isDemo() ? "Sample import available. Live Canvas is disabled in demo mode." : "Read-only assignment import with each member’s own authorization."}</p></section></div><section class="panel"><div class="section-heading"><h2>REQUEST LOG</h2><button class="text-btn" data-action="clear-log">Clear log</button></div><p class="footnote">Token, secret, CSRF, and file payload fields are redacted. Academic fields belong to your authorized view.</p><div class="api-log">${logs.map((l, i) => `<button class="api-row" data-action="request-detail" data-index="${i}"><span class="http-method">${l.method}</span><code>${esc(l.path)}</code><span class="http-status ${l.status >= 400 ? "bad" : ""}">${l.status}</span><span>${l.ms} ms</span></button>`).join("")}</div></section>`;
+    `<div class="integration-grid"><section class="panel"><span class="status approved">Working backend</span><h3>SUBMISSIONS & EVIDENCE</h3><p>Server validation, private files, shared records, review history, and ownership checks.</p></section><section class="panel"><span class="status ${(appConfig.chapterAuth?.enabled ? appConfig.chapterAuth.configured : appConfig.providers.some((p) => p.configured)) ? "approved" : "pending"}">${(appConfig.chapterAuth?.enabled ? appConfig.chapterAuth.configured : appConfig.providers.some((p) => p.configured)) ? "Configured" : "Setup required"}</span><h3>${appConfig.chapterAuth?.enabled ? "CHAPTER SIGN-IN" : "MICROSOFT SIGN-IN"}</h3><p>${isDemo() ? "Demo mode uses fictional identities." : appConfig.chapterAuth?.enabled ? "Supabase Auth verifies passwords; chapter membership controls portal access." : "The server verifies your university identity before granting roster-based access."}</p></section><section class="panel"><span class="status ${canvasConnected ? "approved" : "pending"}">${canvasConnected ? "Connected" : appConfig.canvasConfigured ? "Available to connect" : "Setup required"}</span><h3>CANVAS</h3><p>${isDemo() ? "Sample import available. Live Canvas is disabled in demo mode." : "Read-only assignment import with each member’s own authorization."}</p></section></div><section class="panel"><div class="section-heading"><h2>REQUEST LOG</h2><button class="text-btn" data-action="clear-log">Clear log</button></div><p class="footnote">Passwords, tokens, secrets, CSRF values, and file payloads are redacted. Academic fields belong to your authorized view.</p><div class="api-log">${logs.map((l, i) => `<button class="api-row" data-action="request-detail" data-index="${i}"><span class="http-method">${l.method}</span><code>${esc(l.path)}</code><span class="http-status ${l.status >= 400 ? "bad" : ""}">${l.status}</span><span>${l.ms} ms</span></button>`).join("")}</div></section>`;
 }
 
 function render() {
@@ -593,6 +595,13 @@ modal.addEventListener("click", (e) => {
 async function init() {
   try {
     appConfig = await api("/api/config");
+    if (appConfig.chapterAuth?.enabled && location.pathname.startsWith("/account/")) {
+      const fragment = new URLSearchParams(location.hash.slice(1));
+      accountToken = fragment.get("access_token");
+      history.replaceState(null, "", location.pathname);
+      accountSetupPage();
+      return;
+    }
     const requested = new URL(location.href).searchParams.get("view");
     let result;
     try {
@@ -665,14 +674,73 @@ function loginPage() {
   document.querySelector(".sidebar-bottom").style.display = "none";
   document.querySelector('[data-action="reset"]').hidden = true;
   document.querySelector(".demo-bar > span").innerHTML =
-    "<strong>CHAPTER PORTAL</strong> University sign-in and chapter membership required";
+    "<strong>CHAPTER PORTAL</strong> Approved chapter membership required";
+  if (appConfig.chapterAuth?.enabled) {
+    main.innerHTML = heading("", "Sign in", "Use your chapter account.") +
+      `<section class="panel login-panel"><h2>Chapter sign-in</h2><p>Enter your badge number, portal ID, or approved email.</p><form id="chapter-login"><div class="field"><label for="login-id">Badge number or email</label><input id="login-id" name="identifier" autocomplete="username" required maxlength="254"></div><div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Sign in</button></form><button class="text-btn" id="forgot-password" type="button">Forgot password?</button>${appConfig.chapterAuth.configured ? "" : '<p class="footnote">Chapter sign-in is being prepared. No live accounts are available yet.</p>'}</section>` + sandboxLinks();
+    $("#chapter-login").onsubmit = async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(event.target));
+      try {
+        await api("/api/auth/login", { method: "POST", body: values });
+        await init();
+      } catch (error) { $("#form-error").textContent = error.message; }
+    };
+    $("#forgot-password").onclick = () => {
+      const panel = $(".login-panel");
+      panel.innerHTML = `<h2>Reset password</h2><p>Enter your badge number, portal ID, or approved email. If your account is active, we’ll email a reset link.</p><form id="reset-request"><div class="field"><label for="reset-id">Badge number or email</label><input id="reset-id" name="identifier" autocomplete="username" required maxlength="254"></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Send reset link</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
+      $("#back-login").onclick = loginPage;
+      $("#reset-request").onsubmit = async (event) => {
+        event.preventDefault();
+        try {
+          const result = await api("/api/auth/request-reset", { method: "POST", body: Object.fromEntries(new FormData(event.target)) });
+          panel.innerHTML = `<h2>Check your email</h2><p>${esc(result.message)}</p><button class="button ghost" id="back-login" type="button">Back to sign in</button>`;
+          $("#back-login").onclick = loginPage;
+        } catch (error) { $("#form-error").textContent = error.message; }
+      };
+    };
+    return;
+  }
   main.innerHTML =
     heading(
       "",
       "Sign in",
       "Use your approved university account.",
     ) +
-    `<section class="panel login-panel"><h2>University sign-in</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>`;
+    `<section class="panel login-panel"><h2>University sign-in</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>` + sandboxLinks();
+}
+
+function sandboxLinks() {
+  return `<section class="panel login-panel sandbox-panel"><h2>Explore the demo</h2><p>Try fictional accounts without a password. Demo records are separate from the chapter portal.</p><div class="sandbox-actions"><a class="button ghost" href="https://matasvai.github.io/ato-scholarship-demo/?view=alex#overview">Member view</a><a class="button ghost" href="https://matasvai.github.io/ato-scholarship-demo/?view=chair#queue">Scholarship Chair view</a></div></section>`;
+}
+
+function accountSetupPage() {
+  document.body.classList.remove("portal-loading");
+  document.body.classList.add("signed-out");
+  user = null;
+  csrfToken = null;
+  document.querySelector(".account-button").hidden = true;
+  $("#nav").innerHTML = "";
+  document.querySelector(".sidebar-bottom").style.display = "none";
+  document.querySelector('[data-action="reset"]').hidden = true;
+  main.innerHTML = heading("", "Set your password", "This link can be used only for account setup or recovery.") +
+    `<section class="panel login-panel">${accountToken ? '<form id="account-setup"><div class="field"><label for="new-password">New password</label><input id="new-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Save password</button></form>' : '<p>That account link is missing or has expired. Ask the chair for a new invitation or request a password reset.</p><a class="button ghost" href="/">Go to sign in</a>'}</section>`;
+  if (!accountToken) return;
+  $("#account-setup").onsubmit = async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.target));
+    if (values.password !== values.confirm) {
+      $("#form-error").textContent = "Passwords do not match.";
+      return;
+    }
+    try {
+      await api("/api/auth/complete", { method: "POST", body: { accessToken: accountToken, password: values.password } });
+      accountToken = null;
+      history.replaceState(null, "", "/");
+      loginPage();
+      toast("Password saved. Sign in to continue.");
+    } catch (error) { $("#form-error").textContent = error.message; }
+  };
 }
 
 function registerTools() {
@@ -874,7 +942,7 @@ async function rosterPage() {
   try {
     const result = await api("/api/roster");
     if (!destination.isConnected) return;
-    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>Identity provider</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.tier || "—"} / ${m.credits || "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.tier || "—"} / ${m.credits || "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
   } catch (e) {
     if (destination.isConnected)
       destination.innerHTML = '<div class="error">' + esc(e.message) + "</div>";
@@ -885,7 +953,7 @@ async function loadRosterSync() {
   try {
     const result = await api("/api/admin/roster-sync");
     if (!panel.isConnected) return;
-    panel.innerHTML = `<div class="section-heading"><h2>ROSTER SHEET</h2><span class="status ${result.fresh ? "approved" : "pending"}">${result.fresh ? "Up to date" : result.required ? "Refresh required" : "Not connected"}</span></div><p>Copy each Portal Member ID below into the sheet, then use TRUE or FALSE in its Active column. University sign-in identifies the member; the sheet controls continuing access.</p><p class="muted">${result.fetchedAt ? `Last successful refresh: ${esc(new Date(result.fetchedAt).toLocaleString())}. ${result.activeCount} active IDs.` : "Connect the sheet in the hosting settings to enable automatic eligibility checks."} Members need a successful refresh at least every 15 minutes. Chair access remains available for recovery.</p>${result.lastError ? `<p class="error">${esc(result.lastError)}</p>` : ""}<button class="button ghost" id="sync-roster" ${result.configured ? "" : "disabled"}>Refresh roster now</button>`;
+    panel.innerHTML = `<div class="section-heading"><h2>ROSTER SHEET</h2><span class="status ${result.fresh ? "approved" : "pending"}">${result.fresh ? "Up to date" : result.required ? "Refresh required" : "Not connected"}</span></div><p>Copy each Portal Member ID below into the sheet, then use TRUE or FALSE in its Active column. Chapter sign-in identifies the member; the sheet controls continuing access.</p><p class="muted">${result.fetchedAt ? `Last successful refresh: ${esc(new Date(result.fetchedAt).toLocaleString())}. ${result.activeCount} active IDs.` : "Connect the sheet in the hosting settings to enable automatic eligibility checks."} Members need a successful refresh at least every 15 minutes. Chair access remains available for recovery.</p>${result.lastError ? `<p class="error">${esc(result.lastError)}</p>` : ""}<button class="button ghost" id="sync-roster" ${result.configured ? "" : "disabled"}>Refresh roster now</button>`;
     $("#sync-roster").onclick = async (event) => {
       event.target.disabled = true;
       try {
@@ -1025,6 +1093,23 @@ async function updateSemesterState() {
   await refresh();
 }
 function addMember() {
+  if (appConfig.chapterAuth?.enabled) {
+    openModal("ADD A CHAPTER MEMBER", "An invitation will be emailed. The member chooses their own password.",
+      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
+    $("#roster-form").onsubmit = async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target));
+      body.tier = Number(body.tier);
+      body.credits = Number(body.credits);
+      try {
+        const result = await api("/api/roster", { method: "POST", body });
+        modal.close();
+        await rosterPage();
+        toast(`Invitation sent. Sign-in ID: ${result.loginId}`);
+      } catch (error) { formError(error.message); }
+    };
+    return;
+  }
   openModal(
     "ADD A CHAPTER MEMBER",
     "Use the stable identity ID verified by the university provider.",
@@ -1074,6 +1159,14 @@ document.addEventListener("click", async (e) => {
       logs = [];
       loginPage();
     } else if (b.dataset.action === "add-member") addMember();
+    else if (b.dataset.action === "reset-member-password") {
+      openModal("SEND PASSWORD RESET?", "A reset link will go to this member’s approved email. You will not see their password.",
+        `<div class="modal-actions"><button class="button ghost" data-action="close">Cancel</button><button class="button gold" data-action="confirm-member-reset" data-id="${esc(b.dataset.id)}">Send reset link</button></div>`);
+    } else if (b.dataset.action === "confirm-member-reset") {
+      await api("/api/roster/" + encodeURIComponent(b.dataset.id) + "/reset-password", { method: "POST", body: {} });
+      modal.close();
+      toast("Password reset email requested.");
+    }
     else if (b.dataset.action === "deactivate-member") {
       openModal(
         "DEACTIVATE MEMBER?",

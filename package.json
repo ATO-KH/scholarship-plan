@@ -15,6 +15,7 @@
   },
   "description": "Private scholarship portal with identity, membership, evidence, and Canvas integration support",
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "jose": "^6.1.0",
     "pg": "^8.23.0"
   },
