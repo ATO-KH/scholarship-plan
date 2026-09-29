@@ -73,6 +73,13 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal(config.payload.chapterAuth.configured, true);
     assert.deepEqual(config.payload.providers, []);
     assert.equal((await request("/api/demo/session", {})).status, 404);
+    const demoLogin = await fetch(base + "/demo/login");
+    assert.equal(demoLogin.status, 200);
+    assert.match(await demoLogin.text(), /demo-member/);
+    const demoScript = await fetch(base + "/demo/app.js");
+    assert.equal(demoScript.status, 200);
+    assert.match(await demoScript.text(), /location\.pathname\.startsWith\("\/demo\/"\)/);
+    assert.equal((await fetch(base + "/demo/demo-worker.js")).status, 200);
     assert.equal((await request("/auth/microsoft")).status, 404);
     const chair = await request("/api/auth/login", {
       identifier: "chair@example.edu", password: "correct-test-password",

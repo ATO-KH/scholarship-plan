@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATO Scholarship | Kappa Eta</title>
+    <meta
+      name="description"
+      content="A proof-of-concept scholarship portal for ATO Kappa Eta. Fictional data only."
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23264167'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='serif' font-size='40' fill='%23FDB144'%3EA%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="demo-bar">
+      <span
+        ><strong>DEMO SANDBOX</strong> Fictional records · browser-simulated API ·
+        no chapter data</span
+      ><div class="demo-bar-actions"><button data-action="reset" class="text-btn">Reset demo</button><button data-action="logout" class="text-btn">Sign out</button></div>
+    </div>
+    <header class="masthead">
+      <a class="brand" href="#overview" aria-label="ATO Scholarship home"
+        ><span class="greek">ΑΤΩ</span
+        ><span class="brand-name"
+          >ALPHA TAU OMEGA<span>KAPPA ETA · FLORIDA TECH</span></span
+        ></a
+      >
+      <div class="header-right">
+        <span class="term">FALL 2026</span
+        ><button class="account-button" data-action="account">
+          <span class="avatar">AB</span
+          ><span id="header-person">Alex Brooks<span>Member demo</span></span>
+        </button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="portal-label">SCHOLARSHIP PORTAL</div>
+        <nav id="nav" aria-label="Main navigation">
+          <a href="#overview" class="active">Overview</a
+          ><a href="#submissions">My submissions</a
+          ><a href="#earn">Ways to earn points</a
+          ><a href="#access">Privacy & sign-in</a>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="eyebrow">EXPLORE THE DEMO</span
+          ><label for="persona">View as</label
+          ><select id="persona">
+            <option value="alex">Alex Brooks · Member</option>
+            <option value="jordan">Jordan Ellis · Member</option>
+            <option value="chair">Scholarship chair</option>
+          </select>
+          <p>Sign out to try the other demo account.</p>
+        </div>
+      </aside>
+      <main id="main">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">MEMBER ACCOUNT</p>
+            <h1>MY SCHOLARSHIP POINTS</h1>
+            <p>Track submissions, decisions, and approved points.</p>
+          </div>
+          <button class="button gold" data-action="new">
+            + New submission
+          </button>
+        </div>
+        <div class="overview-grid">
+          <section class="points-panel">
+            <p class="eyebrow">APPROVED POINTS</p>
+            <div class="points-number">18 <span>/ 55</span></div>
+            <p>Semester goal · Tier 2</p>
+            <div class="progress"><span style="width: 32.7%"></span></div>
+            <div class="points-foot">
+              <span>37 points to your semester goal</span><strong>33%</strong>
+            </div>
+          </section>
+          <section class="panel checkpoint">
+            <p class="eyebrow">NEXT CHECKPOINT</p>
+            <h2>OCTOBER 10</h2>
+            <p>28 approved points required</p>
+            <div class="checkpoint-status">10 points to go</div>
+            <p class="muted">
+              Only approved submissions count toward your goal.
+            </p>
+          </section>
+        </div>
+        <section class="panel recent">
+          <div class="section-heading">
+            <h2>RECENT SUBMISSIONS</h2>
+            <a href="#submissions">View all</a>
+          </div>
+          <p>Loading your demo submissions…</p>
+        </section>
+      </main>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <dialog id="modal"><div id="modal-content"></div></dialog>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -2258,6 +2258,10 @@ const server = http.createServer(async (req, res) => {
       }
       fail(404, "API endpoint not found.");
     }
+    if (path === "/demo" && req.method === "GET") {
+      res.writeHead(302, { Location: "/demo/login" });
+      return res.end();
+    }
     const mapping = {
       "/": "index.html",
       "/index.html": "index.html",
@@ -2265,6 +2269,17 @@ const server = http.createServer(async (req, res) => {
       "/account/reset": "index.html",
       "/style.css": "style.css",
       "/app.js": "app.js",
+      "/demo/": "demo/index.html",
+      "/demo/index.html": "demo/index.html",
+      "/demo/login": "demo/login.html",
+      "/demo/login.html": "demo/login.html",
+      "/demo/login.css": "demo/login.css",
+      "/demo/login.js": "demo/login.js",
+      "/demo/style.css": "demo/style.css",
+      "/demo/app.js": "demo/app.js",
+      "/demo/demo-worker.js": "demo/demo-worker.js",
+      "/demo/demo-domain.mjs": "demo/demo-domain.mjs",
+      "/demo/demo-canvas.mjs": "demo/demo-canvas.mjs",
     };
     if (req.method !== "GET" || !mapping[path]) fail(404, "Not found.");
     const file = mapping[path];
@@ -2274,6 +2289,7 @@ const server = http.createServer(async (req, res) => {
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
         ".js": "text/javascript; charset=utf-8",
+        ".mjs": "text/javascript; charset=utf-8",
       }[extname(file)],
     });
     res.end(contents);

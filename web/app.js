@@ -711,7 +711,7 @@ function loginPage() {
 }
 
 function sandboxLinks() {
-  return `<section class="panel login-panel sandbox-panel"><h2>Explore the demo</h2><p>Try fictional accounts without a password. Demo records are separate from the chapter portal.</p><div class="sandbox-actions"><a class="button ghost" href="https://matasvai.github.io/ato-scholarship-demo/?view=alex#overview">Member view</a><a class="button ghost" href="https://matasvai.github.io/ato-scholarship-demo/?view=chair#queue">Scholarship Chair view</a></div></section>`;
+  return `<section class="panel login-panel sandbox-panel"><h2>Explore the demo</h2><p>Use a demo username and password to explore fictional records. Demo accounts are separate from chapter accounts.</p><div class="sandbox-actions"><a class="button ghost" href="/demo/login?account=demo-member">Member demo login</a><a class="button ghost" href="/demo/login?account=demo-chair">Chair demo login</a></div></section>`;
 }
 
 function accountSetupPage() {

@@ -1,6 +1,6 @@
 # ATO Scholarship Portal — private edition
 
-The fuller server-backed version of the Kappa Eta scholarship workflow. The separate public proof of concept is at [ato-scholarship-demo](https://github.com/matasvai/ato-scholarship-demo), with [member](https://matasvai.github.io/ato-scholarship-demo/?view=alex#overview) and [chair](https://matasvai.github.io/ato-scholarship-demo/?view=chair#queue) demonstrations.
+The fuller server-backed version of the Kappa Eta scholarship workflow. The live portal hosts an isolated fictional sandbox at [demo sign-in](https://scholarship-plan.vercel.app/demo/login); the separate public proof of concept remains at [ato-scholarship-demo](https://github.com/matasvai/ato-scholarship-demo).
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
@@ -105,7 +105,7 @@ Follow [DEPLOYMENT.md](DEPLOYMENT.md) and [.env.vercel.example](.env.vercel.exam
 - JSON and CSV responses have a 4 MiB guard. Large histories need pagination or a separate export mechanism before expanding beyond the pilot.
 - Back up database state, Storage object bytes, and the Canvas encryption key separately. A database backup does not include uploaded evidence bytes.
 
-Production starts without sample members and rejects demo-persona switching. Its sign-in screen links to a separate [fictional member sandbox](https://matasvai.github.io/ato-scholarship-demo/?view=alex#overview) and [fictional chair sandbox](https://matasvai.github.io/ato-scholarship-demo/?view=chair#queue). Neither sandbox needs a password or touches live academic records. This repository is deployment preparation; it is not evidence that chapter accounts or a live chapter login have been created.
+Production starts without sample members and rejects demo-persona switching in its real API. Its sign-in screen links to `/demo/login`, a separate browser-only sandbox on the same domain. Use `demo-member` or `demo-chair` with `Demo2026!` to explore fictional records; the credentials are public and are not real authentication. A service worker scoped to `/demo/` handles demo API-shaped requests, so the sandbox never uses the chapter database. This repository is deployment preparation; it is not evidence that chapter accounts or a live chapter login have been created.
 
 ## API surfaces
 
