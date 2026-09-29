@@ -794,7 +794,8 @@ async function init(sessionFromLogin = null) {
     document.body.classList.remove("portal-loading");
     setAuthLoading(false);
     navigation();
-    main.innerHTML = `<div class="workspace-loading" role="status" aria-live="polite">${$("#auth-loading .auth-cross").outerHTML}<p>Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…</p></div>`;
+    const cross = $("#auth-loading .auth-cross").outerHTML.replaceAll("loading-cross-", "workspace-cross-");
+    main.innerHTML = `<div class="workspace-loading" role="status" aria-live="polite">${cross}<p>Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…</p></div>`;
     const [nextRules, nextSubmissions, nextSummary] = await Promise.all([
       api("/api/rules"),
       api("/api/submissions"),

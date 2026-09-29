@@ -26,12 +26,24 @@
     <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-atomic="true">
       <div class="auth-loading-content">
         <svg class="auth-cross" viewBox="-8 -8 168 168" width="152" height="152" aria-hidden="true" focusable="false">
-          <g class="auth-cross-rotor" fill="currentColor">
-            <path class="auth-cross-arm auth-cross-arm-top" d="M25 0h102L96 36H56Z" />
-            <path class="auth-cross-arm auth-cross-arm-right" d="M152 25v102l-36-31V56Z" />
-            <path class="auth-cross-arm auth-cross-arm-bottom" d="M127 152H25l31-36h40Z" />
-            <path class="auth-cross-arm auth-cross-arm-left" d="M0 127V25l36 31v40Z" />
-            <circle cx="76" cy="76" r="32.5" fill="none" stroke="currentColor" stroke-width="7" />
+          <!-- The cross occupies the rightmost 152 pixels of the original logo. -->
+          <defs>
+            <clipPath id="loading-cross-top"><path d="M0 0h152L76 76Z" /></clipPath>
+            <clipPath id="loading-cross-right"><path d="M152 0v152L76 76Z" /></clipPath>
+            <clipPath id="loading-cross-bottom"><path d="M152 152H0l76-76Z" /></clipPath>
+            <clipPath id="loading-cross-left"><path d="M0 152V0l76 76Z" /></clipPath>
+            <clipPath id="loading-cross-center"><circle cx="76" cy="76" r="34.5" /></clipPath>
+            <mask id="loading-cross-arms" maskUnits="userSpaceOnUse" x="-8" y="-8" width="168" height="168">
+              <rect x="-8" y="-8" width="168" height="168" fill="white" />
+              <circle cx="76" cy="76" r="34.5" fill="black" />
+            </mask>
+          </defs>
+          <g class="auth-cross-rotor">
+            <g class="auth-cross-arm auth-cross-arm-top" clip-path="url(#loading-cross-top)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
+            <g class="auth-cross-arm auth-cross-arm-right" clip-path="url(#loading-cross-right)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
+            <g class="auth-cross-arm auth-cross-arm-bottom" clip-path="url(#loading-cross-bottom)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
+            <g class="auth-cross-arm auth-cross-arm-left" clip-path="url(#loading-cross-left)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
+            <image href="/ato-logo.png" x="-430" y="0" width="582" height="152" clip-path="url(#loading-cross-center)" />
           </g>
         </svg>
         <p id="auth-loading-message">Checking sign-in…</p>

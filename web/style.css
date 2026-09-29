@@ -364,15 +364,15 @@ main {
   width: clamp(104px, 22vw, 152px);
   height: auto;
   overflow: visible;
-  color: #ffa126;
+  color: #ff9b26;
 }
 .auth-cross-rotor {
-  transform-box: fill-box;
+  transform-box: view-box;
   transform-origin: center;
-  animation: auth-cross-spin 3.8s infinite;
+  animation: auth-cross-spin 2.6s infinite;
 }
 .auth-cross-arm {
-  animation: auth-cross-drift 3.8s infinite;
+  animation: auth-cross-drift 2.6s infinite;
 }
 .auth-cross-arm-top { --drift-x: 0px; --drift-y: -7px; }
 .auth-cross-arm-right { --drift-x: 7px; --drift-y: 0px; }
@@ -398,11 +398,12 @@ main {
   font: 500 19px var(--display);
 }
 @keyframes auth-cross-spin {
+  /* One 1.6-second turn, then a one-second hold. */
   0% {
     transform: rotate(0deg);
     animation-timing-function: cubic-bezier(.45, 0, .55, 1);
   }
-  73.684% { transform: rotate(360deg); }
+  61.538% { transform: rotate(360deg); }
   100% { transform: rotate(360deg); }
 }
 @keyframes auth-cross-drift {
@@ -410,11 +411,11 @@ main {
     transform: translate(0, 0);
     animation-timing-function: cubic-bezier(.42, 0, .58, 1);
   }
-  36.842% {
+  30.769% {
     transform: translate(var(--drift-x), var(--drift-y));
     animation-timing-function: cubic-bezier(.42, 0, .58, 1);
   }
-  73.684%, 100% { transform: translate(0, 0); }
+  61.538%, 100% { transform: translate(0, 0); }
 }
 .login-panel {
   max-width: 620px;
