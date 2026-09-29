@@ -1,0 +1,15 @@
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+PRAGMA busy_timeout=5000;
+CREATE TABLE IF NOT EXISTS chapters (workspace TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS members (workspace TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('chair','member')), tier INTEGER, credits REAL, active INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(workspace,id));
+CREATE TABLE IF NOT EXISTS identities (workspace TEXT NOT NULL, provider TEXT NOT NULL, subject TEXT NOT NULL, member_id TEXT NOT NULL, PRIMARY KEY(workspace,provider,subject), FOREIGN KEY(workspace,member_id) REFERENCES members(workspace,id));
+CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, workspace TEXT NOT NULL, member_id TEXT NOT NULL, csrf TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL, session_id TEXT, data TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, workspace TEXT NOT NULL, owner TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, filename TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ready', backend TEXT NOT NULL DEFAULT 'local', final_path TEXT);
+CREATE TABLE IF NOT EXISTS integrations (workspace TEXT NOT NULL, member_id TEXT NOT NULL, data TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(workspace,member_id));
+CREATE TABLE IF NOT EXISTS canvas_generations (workspace TEXT NOT NULL, member_id TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY(workspace,member_id));
+CREATE TABLE IF NOT EXISTS canvas_leases (workspace TEXT NOT NULL, member_id TEXT NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(workspace,member_id));
+CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL, at TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
+CREATE INDEX IF NOT EXISTS audit_workspace ON audit(workspace,id);

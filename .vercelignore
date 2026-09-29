@@ -1,0 +1,9 @@
+.git
+.env*
+data
+uploads
+coverage
+private-tests
+tests
+*.sqlite*
+*.tar.gz

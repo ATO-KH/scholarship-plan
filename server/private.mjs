@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFile, writeFile, mkdir, chmod, unlink } from "node:fs/promises";
+import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
 import { resolve, extname, basename } from "node:path";
 import {
   randomBytes,
@@ -7,7 +7,25 @@ import {
   createHash,
   timingSafeEqual,
 } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./database.mjs";
+import { rosterStatus, fetchRosterSnapshot } from "./roster.mjs";
+import {
+  storageStatus,
+  verifyStorageConfiguration,
+  createUploadGrant,
+  finalizeStoredEvidence,
+  createDownloadGrant,
+  removeStoredEvidence,
+  deleteStoredEvidenceAndVerify,
+} from "./storage.mjs";
+import {
+  assertAcademicWritesAllowed,
+  semesterResetStatus,
+  previewSemesterReset,
+  startSemesterReset,
+  resumeSemesterReset,
+  UPLOAD_GRANT_DRAIN_MS,
+} from "./semester.mjs";
 import {
   TODAY,
   members as demoMembers,
@@ -27,6 +45,7 @@ import {
   startCanvasFlow,
   completeCanvasFlow,
   fetchCanvasAssignments,
+  refreshCanvasTokens,
   sealTokens,
   openTokens,
 } from "./canvas.mjs";
@@ -62,34 +81,14 @@ const dataDir = resolve(
   mode,
 );
 const filesDir = resolve(dataDir, "evidence");
-await mkdir(filesDir, { recursive: true, mode: 0o700 });
-await chmod(dataDir, 0o700);
-const databaseFile = resolve(dataDir, "chapter.sqlite");
-const db = new DatabaseSync(databaseFile);
-await chmod(databaseFile, 0o600);
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
-  CREATE TABLE IF NOT EXISTS chapters (workspace TEXT PRIMARY KEY, data TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS members (workspace TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('chair','member')), tier INTEGER, credits REAL, active INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY(workspace,id));
-  CREATE TABLE IF NOT EXISTS identities (workspace TEXT NOT NULL, provider TEXT NOT NULL, subject TEXT NOT NULL, member_id TEXT NOT NULL,
-    PRIMARY KEY(workspace,provider,subject), FOREIGN KEY(workspace,member_id) REFERENCES members(workspace,id));
-  CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, workspace TEXT NOT NULL, member_id TEXT NOT NULL, csrf TEXT NOT NULL, expires INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL, session_id TEXT, data TEXT NOT NULL, expires INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, workspace TEXT NOT NULL, owner TEXT NOT NULL, name TEXT NOT NULL,
-    mime TEXT NOT NULL, size INTEGER NOT NULL, filename TEXT NOT NULL, created_at TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS integrations (workspace TEXT NOT NULL, member_id TEXT NOT NULL, data TEXT NOT NULL, revision TEXT NOT NULL,
-    PRIMARY KEY(workspace,member_id));
-  CREATE TABLE IF NOT EXISTS canvas_generations (workspace TEXT NOT NULL, member_id TEXT NOT NULL, generation TEXT NOT NULL,
-    PRIMARY KEY(workspace,member_id));
-  CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL, at TEXT NOT NULL,
-    actor TEXT NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL);
-  CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
-  CREATE INDEX IF NOT EXISTS audit_workspace ON audit(workspace,id);`);
-db.prepare("INSERT OR IGNORE INTO chapters VALUES (?,?)").run(
-  "chapter",
-  JSON.stringify({ submissions: [] }),
-);
+const db = await openDatabase({ env, directory: dataDir });
+const directUploads = db.kind === "postgres";
+if (!directUploads) await mkdir(filesDir, { recursive: true, mode: 0o700 });
+if (env.VERCEL || env.VERCEL_ENV) {
+  if (!storageStatus(env).configured)
+    throw Error("Hosted production requires private object storage.");
+  await verifyStorageConfiguration({ env });
+}
 
 const fail = (status, message) => {
   throw Object.assign(new Error(message), { status });
@@ -121,6 +120,37 @@ const checkpoints = [
   { date: "2026-11-06", targets: [30, 42, 54, 70, 90] },
   { date: targetDate, targets: [40, 55, 70, 90, 120] },
 ];
+function semesterSettings(state = {}) {
+  return {
+    name: "Fall 2026",
+    startDate: null,
+    targetDate,
+    endDate,
+    checkpointDates: checkpoints.slice(0, 3).map((item) => item.date),
+    ...state.semester,
+    timeZone: "America/New_York",
+  };
+}
+function semesterCheckpoints(state) {
+  const semester = semesterSettings(state);
+  return checkpoints.map((checkpoint, index) => ({
+    ...checkpoint,
+    date: index === 3 ? semester.targetDate : semester.checkpointDates[index],
+  }));
+}
+function academicGuard(state, generation) {
+  assertAcademicWritesAllowed(state);
+  if (
+    generation !== undefined &&
+    (state.semesterGeneration || null) !== generation
+  )
+    fail(409, "The semester changed. Refresh before continuing.");
+}
+async function academicSnapshot(session, expectedGeneration) {
+  const state = await stateOf(session.workspace);
+  academicGuard(state, expectedGeneration);
+  return state.semesterGeneration || null;
+}
 const sessionCookie = production ? "__Host-ato_session" : "ato_session";
 const identityCookie = production ? "__Host-ato_identity" : "ato_identity";
 const SESSION_LIFETIME = 8 * 60 * 60 * 1000;
@@ -146,29 +176,162 @@ function getCookie(req, name) {
   const value = found[0].slice(name.length + 1);
   return /^[a-f0-9]{64}$/.test(value) ? value : null;
 }
-function atomic(fn) {
-  db.exec("BEGIN IMMEDIATE");
+async function atomic(fn) {
+  return db.transaction(fn);
+}
+async function lockWorkspace(workspace) {
+  const row = await db
+    .prepare("SELECT workspace FROM chapters WHERE workspace=? FOR UPDATE")
+    .get(workspace);
+  if (!row) fail(404, "Chapter workspace not found.");
+}
+async function assertActiveSession(session, user, checkEligibility = true) {
+  const fresh = await db
+    .prepare("SELECT id FROM sessions WHERE id=? AND expires>?")
+    .get(session.id, Date.now());
+  const currentMember = await member(session.workspace, user.id);
+  if (!fresh || !currentMember?.active || currentMember.role !== user.role)
+    fail(401, "Your account session is no longer active.");
+  if (checkEligibility && user.role !== "chair")
+    assertRosterEligibility(await stateOf(session.workspace), user);
+}
+
+function rosterView(state) {
+  const config = rosterStatus(env);
+  const snapshot = state.roster;
+  const age = Date.now() - Date.parse(snapshot?.fetchedAt);
+  const fresh =
+    config.configured &&
+    !state.rosterSyncError &&
+    snapshot?.source === config.source &&
+    Array.isArray(snapshot?.ids) &&
+    Number.isFinite(age) &&
+    age >= 0 &&
+    age < config.maxAgeMs;
+  return {
+    ...config,
+    fresh,
+    fetchedAt: snapshot?.fetchedAt || null,
+    revision: snapshot?.revision || null,
+    activeCount: snapshot?.ids?.length || 0,
+    refreshing: (state.rosterSyncAttempt?.expiresAt || 0) > Date.now(),
+    retryAt: state.rosterSyncError?.retryAt || null,
+    lastError: state.rosterSyncError
+      ? "Roster synchronization failed. Check the configured sheet and try again."
+      : null,
+  };
+}
+function assertRosterEligibility(state, user) {
+  const status = rosterView(state);
+  if (!status.required || user.role === "chair") return;
+  if (!status.fresh)
+    fail(
+      503,
+      "Current roster eligibility is unavailable. Ask the Scholarship Chair to refresh the roster.",
+    );
+  if (!state.roster.ids.includes(user.id))
+    fail(
+      403,
+      "Your account is not active on the current chapter roster. Contact the Scholarship Chair.",
+    );
+}
+async function refreshRoster(session, user, force = false) {
+  const attempt = randomUUID();
+  const source = rosterStatus(env).source;
+  const existing = await atomic(async () => {
+    await lockWorkspace(session.workspace);
+    await assertActiveSession(session, user, false);
+    const state = await stateOf(session.workspace);
+    if (!force && rosterView(state).fresh) return state;
+    if (
+      state.rosterSyncAttempt?.source === source &&
+      state.rosterSyncAttempt.expiresAt > Date.now()
+    )
+      fail(
+        503,
+        "Roster refresh is already in progress. Try again in a few seconds.",
+      );
+    if (
+      state.rosterSyncError?.source === source &&
+      Date.parse(state.rosterSyncError.retryAt) > Date.now()
+    )
+      fail(
+        503,
+        "Roster refresh failed recently. Wait thirty seconds before retrying.",
+      );
+    state.rosterSyncAttempt = {
+      id: attempt,
+      source,
+      expiresAt: Date.now() + 45_000,
+    };
+    await db
+      .prepare("UPDATE chapters SET data=? WHERE workspace=?")
+      .run(JSON.stringify(state), session.workspace);
+    return null;
+  });
+  if (existing) return existing;
+  let snapshot;
   try {
-    const result = fn();
-    db.exec("COMMIT");
-    return result;
+    snapshot = await fetchRosterSnapshot({ env });
   } catch (error) {
-    db.exec("ROLLBACK");
+    await atomic(async () => {
+      await lockWorkspace(session.workspace);
+      await assertActiveSession(session, user, false);
+      const state = await stateOf(session.workspace);
+      if (state.rosterSyncAttempt?.id !== attempt) return;
+      state.rosterSyncError = {
+        at: now(),
+        source,
+        retryAt: new Date(Date.now() + 30_000).toISOString(),
+      };
+      delete state.rosterSyncAttempt;
+      await db
+        .prepare("UPDATE chapters SET data=? WHERE workspace=?")
+        .run(JSON.stringify(state), session.workspace);
+    });
     throw error;
   }
+  return atomic(async () => {
+    await lockWorkspace(session.workspace);
+    await assertActiveSession(session, user, false);
+    const state = await stateOf(session.workspace);
+    if (
+      state.rosterSyncAttempt?.id !== attempt ||
+      state.rosterSyncAttempt.expiresAt <= Date.now()
+    )
+      return state;
+    state.roster = snapshot;
+    delete state.rosterSyncError;
+    delete state.rosterSyncAttempt;
+    await db
+      .prepare("UPDATE chapters SET data=? WHERE workspace=?")
+      .run(JSON.stringify(state), session.workspace);
+    await audit(
+      session.workspace,
+      user.name,
+      "roster.sync",
+      "",
+      `${state.roster.ids.length} eligible member IDs`,
+    );
+    return state;
+  });
 }
-function audit(workspace, actor, action, subject = "", detail = "") {
-  db.prepare(
-    "INSERT INTO audit(workspace,at,actor,action,subject,detail) VALUES (?,?,?,?,?,?)",
-  ).run(workspace, now(), actor || "system", action, subject, detail);
+
+async function audit(workspace, actor, action, subject = "", detail = "") {
+  await db
+    .prepare(
+      "INSERT INTO audit(workspace,at,actor,action,subject,detail) VALUES (?,?,?,?,?,?)",
+    )
+    .run(workspace, now(), actor || "system", action, subject, detail);
 }
-function member(workspace, id) {
-  const row = db
+async function member(workspace, id) {
+  const row = await db
     .prepare("SELECT * FROM members WHERE workspace=? AND id=?")
     .get(workspace, id);
   if (!row) return null;
+  const schedule = semesterCheckpoints(await stateOf(workspace));
   const checkpoint =
-    checkpoints.find((c) => c.date >= policyDay()) || checkpoints.at(-1);
+    schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
   return {
     id: row.id,
     name: row.name,
@@ -193,45 +356,60 @@ function member(workspace, id) {
       : {}),
   };
 }
-function listMembers(workspace) {
-  return db
-    .prepare("SELECT id FROM members WHERE workspace=? ORDER BY name")
-    .all(workspace)
-    .map((row) => member(workspace, row.id));
-}
-function insertMember(workspace, m) {
-  db.prepare(
-    "INSERT INTO members(workspace,id,name,email,role,tier,credits,active) VALUES (?,?,?,?,?,?,?,1)",
-  ).run(
-    workspace,
-    m.id,
-    m.name,
-    m.email,
-    m.role,
-    m.tier ?? null,
-    m.credits ?? null,
+async function listMembers(workspace) {
+  return await Promise.all(
+    (
+      await db
+        .prepare("SELECT id FROM members WHERE workspace=? ORDER BY name")
+        .all(workspace)
+    ).map(async (row) => await member(workspace, row.id)),
   );
 }
-function stateOf(workspace) {
+async function insertMember(workspace, m) {
+  await db
+    .prepare(
+      "INSERT INTO members(workspace,id,name,email,role,tier,credits,active) VALUES (?,?,?,?,?,?,?,1)",
+    )
+    .run(
+      workspace,
+      m.id,
+      m.name,
+      m.email,
+      m.role,
+      m.tier ?? null,
+      m.credits ?? null,
+    );
+}
+async function stateOf(workspace) {
   return JSON.parse(
-    db.prepare("SELECT data FROM chapters WHERE workspace=?").get(workspace)
-      .data,
+    (
+      await db
+        .prepare("SELECT data FROM chapters WHERE workspace=?")
+        .get(workspace)
+    ).data,
   );
 }
-function currentSession(req) {
+async function currentSession(req) {
   const raw = getCookie(req, sessionCookie);
   if (!raw) return null;
   return (
-    db
+    (await db
       .prepare("SELECT * FROM sessions WHERE id=? AND expires>?")
-      .get(sha(raw), Date.now()) || null
+      .get(sha(raw), Date.now())) || null
   );
 }
-function requireSession(req) {
-  const session = currentSession(req);
-  const user = session && member(session.workspace, session.member_id);
+async function requireSession(req) {
+  const session = await currentSession(req);
+  const user = session && (await member(session.workspace, session.member_id));
   if (!session || !user?.active)
     fail(401, "Sign in to an active chapter account.");
+  if (user.role !== "chair" && req.url?.split("?")[0] !== "/api/logout") {
+    let state = await stateOf(session.workspace);
+    const status = rosterView(state);
+    if (status.required && !status.fresh)
+      state = await refreshRoster(session, user);
+    assertRosterEligibility(state, user);
+  }
   return { session, user };
 }
 function chair(user) {
@@ -256,8 +434,9 @@ function csrf(req, session) {
       "The security token is missing or expired. Refresh and try again.",
     );
 }
-function issueSession(workspace, userId, previousId = null) {
-  if (previousId) db.prepare("DELETE FROM sessions WHERE id=?").run(previousId);
+async function issueSession(workspace, userId, previousId = null) {
+  if (previousId)
+    await db.prepare("DELETE FROM sessions WHERE id=?").run(previousId);
   const raw = token();
   const session = {
     id: sha(raw),
@@ -266,32 +445,24 @@ function issueSession(workspace, userId, previousId = null) {
     csrf: token(),
     expires: Date.now() + SESSION_LIFETIME,
   };
-  db.prepare("INSERT INTO sessions VALUES (?,?,?,?,?)").run(
-    session.id,
-    workspace,
-    userId,
-    session.csrf,
-    session.expires,
-  );
+  await db
+    .prepare("INSERT INTO sessions VALUES (?,?,?,?,?)")
+    .run(session.id, workspace, userId, session.csrf, session.expires);
   return { session, cookie: cookie(sessionCookie, raw) };
 }
-function cleanup() {
-  db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
-  db.prepare("DELETE FROM transactions WHERE expires<=?").run(Date.now());
+async function cleanup() {
+  await db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
+  await db.prepare("DELETE FROM transactions WHERE expires<=?").run(Date.now());
 }
-function mutate(session, user, fn) {
-  return atomic(() => {
-    const fresh = db
-      .prepare("SELECT id FROM sessions WHERE id=? AND expires>?")
-      .get(session.id, Date.now());
-    if (!fresh || !member(session.workspace, user.id)?.active)
-      fail(401, "Your account session is no longer active.");
-    const state = stateOf(session.workspace);
-    const result = fn(state);
-    db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(
-      JSON.stringify(state),
-      session.workspace,
-    );
+async function mutate(session, user, fn) {
+  return await atomic(async () => {
+    await lockWorkspace(session.workspace);
+    await assertActiveSession(session, user);
+    const state = await stateOf(session.workspace);
+    const result = await fn(state);
+    await db
+      .prepare("UPDATE chapters SET data=? WHERE workspace=?")
+      .run(JSON.stringify(state), session.workspace);
     return result;
   });
 }
@@ -305,38 +476,55 @@ function canvasConfigured() {
     Buffer.from(key, "base64").toString("base64") === key
   );
 }
-function connection(session) {
-  return db
+async function connection(session) {
+  return await db
     .prepare("SELECT * FROM integrations WHERE workspace=? AND member_id=?")
     .get(session.workspace, session.member_id);
 }
-function advanceCanvasGeneration(workspace, userId) {
+async function advanceCanvasGeneration(workspace, userId) {
   const generation = randomUUID();
-  db.prepare("INSERT OR REPLACE INTO canvas_generations VALUES (?,?,?)").run(
-    workspace,
-    userId,
-    generation,
-  );
-  db.prepare(
-    "DELETE FROM transactions WHERE kind='canvas' AND session_id IN (SELECT id FROM sessions WHERE workspace=? AND member_id=?)",
-  ).run(workspace, userId);
+  await db
+    .prepare(
+      "INSERT INTO canvas_generations VALUES (?,?,?) ON CONFLICT(workspace,member_id) DO UPDATE SET generation=excluded.generation",
+    )
+    .run(workspace, userId, generation);
+  await db
+    .prepare(
+      "DELETE FROM transactions WHERE kind='canvas' AND session_id IN (SELECT id FROM sessions WHERE workspace=? AND member_id=?)",
+    )
+    .run(workspace, userId);
   return generation;
 }
-function sessionPayload(session, user) {
+async function sessionPayload(session, user) {
+  const state = await stateOf(session.workspace);
   return {
     user,
     csrfToken: session.csrf,
     mode,
     today: policyDay(),
-    canvasConnected: !!connection(session),
+    canvasConnected: !!(await connection(session)),
+    semester: semesterSettings(state),
+    semesterReset: semesterResetStatus(state),
+    rosterEligibility: {
+      required: rosterStatus(env).required,
+      eligible:
+        user.role === "chair" ||
+        !rosterStatus(env).required ||
+        (rosterView(state).fresh && state.roster.ids.includes(user.id)),
+      fresh: rosterView(state).fresh,
+      fetchedAt: state.roster?.fetchedAt || null,
+    },
   };
 }
 function json(res, status, value, headers = {}) {
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized) > 4 * 1024 * 1024)
+    fail(413, "Report is too large; contact the portal administrator.");
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     ...headers,
   });
-  res.end(JSON.stringify(value));
+  res.end(serialized);
 }
 function redirect(res, url, headers = {}) {
   res.writeHead(302, { Location: url, ...headers });
@@ -369,7 +557,10 @@ function ownSubmission(state, user, id) {
   return item;
 }
 function claim(input, state, user, evidence) {
-  if (production && endDate && policyDay() > endDate)
+  const semester = semesterSettings(state);
+  if (semester.startDate && input.date < semester.startDate)
+    fail(422, "This activity is before the current semester start date.");
+  if (production && semester.endDate && policyDay() > semester.endDate)
     fail(422, "This semester submission period has closed.");
   try {
     // The shared demo scorer validates dates, caps and duplicates. Actual evidence
@@ -410,14 +601,15 @@ function uploadMeta(upload) {
     url: `/api/uploads/${upload.id}`,
   };
 }
-function getUpload(id, session, user, ownerOnly = false) {
+async function getUpload(id, session, user, ownerOnly = false) {
   const upload =
     typeof id === "string" &&
-    db
+    (await db
       .prepare("SELECT * FROM uploads WHERE id=? AND workspace=?")
-      .get(id, session.workspace);
+      .get(id, session.workspace));
   if (
     !upload ||
+    upload.status !== "ready" ||
     (upload.owner !== user.id && (ownerOnly || user.role !== "chair"))
   )
     fail(404, "Evidence file not found.");
@@ -498,51 +690,156 @@ function validateRoster(input) {
     credits: input.credits,
   };
 }
-const canvasLocks = new Map();
+async function coordinatedCanvasRefresh(
+  session,
+  user,
+  original,
+  expectedRevision,
+  signal,
+) {
+  const leaseOwner = randomUUID();
+  let acquired = false;
+  const deadline = Date.now() + 65_000;
+  try {
+    while (!acquired) {
+      signal?.throwIfAborted();
+      if (Date.now() >= deadline)
+        fail(503, "Canvas is busy refreshing. Try again shortly.");
+      const lease = await db
+        .prepare(
+          `INSERT INTO canvas_leases(workspace,member_id,owner,expires) VALUES (?,?,?,?)
+        ON CONFLICT(workspace,member_id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires
+        WHERE canvas_leases.expires<=? RETURNING owner`,
+        )
+        .get(
+          session.workspace,
+          user.id,
+          leaseOwner,
+          Date.now() + 60_000,
+          Date.now(),
+        );
+      acquired = lease?.owner === leaseOwner;
+      if (!acquired) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    await assertActiveSession(session, user);
+    const current = await connection(session);
+    if (!current || current.revision !== expectedRevision)
+      fail(409, "Canvas connection changed. Start again.");
+    const currentTokens = openTokens(current.data, env);
+    if (currentTokens.accessToken !== original.accessToken)
+      return currentTokens;
+    const refreshed = await refreshCanvasTokens({
+      env,
+      tokens: currentTokens,
+      redirectUri: `${origin}/auth/canvas/callback`,
+      signal,
+    });
+    await atomic(async () => {
+      await lockWorkspace(session.workspace);
+      await assertActiveSession(session, user);
+      const updated = await db
+        .prepare(
+          `UPDATE integrations SET data=? WHERE workspace=? AND member_id=? AND revision=?
+        AND EXISTS (SELECT 1 FROM canvas_leases WHERE workspace=? AND member_id=? AND owner=? AND expires>?)`,
+        )
+        .run(
+          sealTokens(refreshed, env),
+          session.workspace,
+          user.id,
+          expectedRevision,
+          session.workspace,
+          user.id,
+          leaseOwner,
+          Date.now(),
+        );
+      if (updated.changes !== 1)
+        fail(409, "Canvas refresh was superseded. Reconnect or try again.");
+    });
+    return refreshed;
+  } finally {
+    if (acquired)
+      await db
+        .prepare(
+          "DELETE FROM canvas_leases WHERE workspace=? AND member_id=? AND owner=?",
+        )
+        .run(session.workspace, user.id, leaseOwner);
+  }
+}
 async function liveAssignments(session, user) {
   if (!canvasConfigured())
     fail(503, "Canvas is not configured. Contact the portal administrator.");
-  const lockKey = `${session.workspace}:${user.id}`;
-  const previous = canvasLocks.get(lockKey) || Promise.resolve();
-  const task = previous
-    .catch(() => {})
-    .then(async () => {
-      const stored = connection(session);
-      if (!stored) fail(409, "Connect your Canvas account first.");
-      const assignments = await fetchCanvasAssignments({
-        env,
-        tokens: openTokens(stored.data, env),
-        redirectUri: `${origin}/auth/canvas/callback`,
-        onTokenRefresh: (tokens) => {
-          if (!member(session.workspace, user.id)?.active)
-            fail(401, "Your account is no longer active.");
-          const changed = db
-            .prepare(
-              "UPDATE integrations SET data=? WHERE workspace=? AND member_id=? AND revision=?",
-            )
-            .run(
-              sealTokens(tokens, env),
-              session.workspace,
-              user.id,
-              stored.revision,
-            );
-          if (!changed.changes)
-            fail(409, "Canvas connection changed. Start again.");
-        },
-      });
-      if (
-        connection(session)?.revision !== stored.revision ||
-        !member(session.workspace, user.id)?.active
-      )
-        fail(409, "Canvas connection changed. Start again.");
-      return assignments;
-    });
-  canvasLocks.set(lockKey, task);
+  const stored = await connection(session);
+  if (!stored) fail(409, "Connect your Canvas account first.");
+  const assignments = await fetchCanvasAssignments({
+    env,
+    tokens: openTokens(stored.data, env),
+    redirectUri: `${origin}/auth/canvas/callback`,
+    refreshTokens: (tokens, options) =>
+      coordinatedCanvasRefresh(
+        session,
+        user,
+        tokens,
+        stored.revision,
+        options?.signal,
+      ),
+  });
+  await assertActiveSession(session, user);
+  if ((await connection(session))?.revision !== stored.revision)
+    fail(409, "Canvas connection changed. Start again.");
+  return { assignments, revision: stored.revision };
+}
+
+async function deleteEvidenceObject({ backend, path }) {
+  if (backend === "supabase")
+    return deleteStoredEvidenceAndVerify({ path, env });
+  if (backend !== "local" || !/^[a-f0-9-]{36}\.bin$/i.test(path))
+    fail(503, "Evidence cleanup requires administrator review.");
+  const file = resolve(filesDir, path);
+  await unlink(file).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+  });
   try {
-    return await task;
-  } finally {
-    if (canvasLocks.get(lockKey) === task) canvasLocks.delete(lockKey);
+    await access(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return { deleted: true };
+    throw error;
   }
+  fail(503, "Evidence deletion could not yet be verified.");
+}
+
+// Failed/terminated finalization keeps both object references until a bounded,
+// retryable deletion proves they are absent after the replayable grant expires.
+async function cleanupExpiredUpload(session, user) {
+  const stale = await atomic(async () => {
+    await lockWorkspace(session.workspace);
+    await assertActiveSession(session, user);
+    const row = await db
+      .prepare(
+        "SELECT * FROM uploads WHERE workspace=? AND backend='supabase' AND status IN ('pending','verifying','failed','purging') AND created_at<=? ORDER BY created_at LIMIT 1 FOR UPDATE",
+      )
+      .get(
+        session.workspace,
+        new Date(Date.now() - UPLOAD_GRANT_DRAIN_MS).toISOString(),
+      );
+    if (!row) return null;
+    await db
+      .prepare("UPDATE uploads SET status='purging' WHERE id=?")
+      .run(row.id);
+    return row;
+  });
+  if (!stale) return { cleaned: 0 };
+  for (const path of new Set(
+    [stale.filename, stale.final_path].filter(Boolean),
+  ))
+    await deleteEvidenceObject({ backend: "supabase", path });
+  await atomic(async () => {
+    await lockWorkspace(session.workspace);
+    await assertActiveSession(session, user);
+    await db
+      .prepare("DELETE FROM uploads WHERE id=? AND status='purging'")
+      .run(stale.id);
+  });
+  return { cleaned: 1 };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -552,7 +849,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
   );
   if (production)
     res.setHeader("Strict-Transport-Security", "max-age=31536000");
@@ -560,41 +857,48 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, origin);
     const path = url.pathname;
     if (!["GET", "POST"].includes(req.method)) fail(405, "Method not allowed.");
-    if (path === "/api/config" && req.method === "GET")
+    if (path === "/api/config" && req.method === "GET") {
+      const current = await currentSession(req);
+      const state = production
+        ? await stateOf("chapter")
+        : current
+          ? await stateOf(current.workspace)
+          : {};
       return json(res, 200, {
         mode,
         providers: identityProviders(env),
         canvasConfigured: canvasConfigured(),
-        semester: { targetDate, endDate, timeZone: "America/New_York" },
+        uploadMode: directUploads ? "direct" : "local",
+        semester: semesterSettings(state),
       });
+    }
     if (production && path.startsWith("/api/demo/")) fail(404, "Not found.");
     if (path === "/api/demo/session" && req.method === "POST" && !production) {
       requireOrigin(req);
       if (req.headers["x-ato-demo"] !== "1")
         fail(403, "The demo request header is required.");
       const input = await readBody(req);
-      let session = currentSession(req);
+      let session = await currentSession(req);
       if (session) csrf(req, session);
       const persona = input.persona || session?.member_id || "alex";
       if (!demoMembers.some((m) => m.id === persona))
         fail(422, "Unknown demo persona.");
-      cleanup();
+      await cleanup();
       let workspace = session?.workspace;
-      const issued = atomic(() => {
+      const issued = await atomic(async () => {
         if (!workspace) {
           workspace = `demo-${randomUUID()}`;
-          db.prepare("INSERT INTO chapters VALUES (?,?)").run(
-            workspace,
-            JSON.stringify(seed()),
-          );
-          for (const m of demoMembers) insertMember(workspace, m);
+          await db
+            .prepare("INSERT INTO chapters VALUES (?,?)")
+            .run(workspace, JSON.stringify(seed()));
+          for (const m of demoMembers) await insertMember(workspace, m);
         }
-        return issueSession(workspace, persona, session?.id);
+        return await issueSession(workspace, persona, session?.id);
       });
       return json(
         res,
         200,
-        sessionPayload(issued.session, member(workspace, persona)),
+        await sessionPayload(issued.session, await member(workspace, persona)),
         { "Set-Cookie": issued.cookie },
       );
     }
@@ -611,16 +915,18 @@ const server = http.createServer(async (req, res) => {
       const provider = identityRoute[1];
       const redirectUri = `${origin}/auth/${provider}/callback`;
       if (!identityRoute[2]) {
-        cleanup();
+        await cleanup();
         const flow = startIdentityFlow(provider, { env, redirectUri });
         const browserToken = token();
-        db.prepare("INSERT INTO transactions VALUES (?,?,?,?,?)").run(
-          sha(browserToken),
-          "identity",
-          null,
-          JSON.stringify(flow.transaction),
-          Date.now() + 600_000,
-        );
+        await db
+          .prepare("INSERT INTO transactions VALUES (?,?,?,?,?)")
+          .run(
+            sha(browserToken),
+            "identity",
+            null,
+            JSON.stringify(flow.transaction),
+            Date.now() + 600_000,
+          );
         return redirect(res, flow.url, {
           "Set-Cookie": cookie(identityCookie, browserToken, 600),
         });
@@ -628,17 +934,11 @@ const server = http.createServer(async (req, res) => {
       const browserToken = getCookie(req, identityCookie);
       const txn =
         browserToken &&
-        atomic(() => {
-          const row = db
-            .prepare(
-              "SELECT * FROM transactions WHERE id=? AND kind=? AND expires>?",
-            )
-            .get(sha(browserToken), "identity", Date.now());
-          db.prepare("DELETE FROM transactions WHERE id=?").run(
-            sha(browserToken),
-          );
-          return row;
-        });
+        (await db
+          .prepare(
+            "DELETE FROM transactions WHERE id=? AND kind=? AND expires>? RETURNING *",
+          )
+          .get(sha(browserToken), "identity", Date.now()));
       res.setHeader("Set-Cookie", cookie(identityCookie, "", 0));
       if (!txn || JSON.parse(txn.data).provider !== provider)
         fail(400, "Sign-in expired. Please start again.");
@@ -648,8 +948,9 @@ const server = http.createServer(async (req, res) => {
         env,
         redirectUri,
       });
-      const issued = atomic(() => {
-        let binding = db
+      const issued = await atomic(async () => {
+        await lockWorkspace("chapter");
+        let binding = await db
           .prepare(
             "SELECT member_id FROM identities WHERE workspace=? AND provider=? AND subject=?",
           )
@@ -658,26 +959,23 @@ const server = http.createServer(async (req, res) => {
           !binding &&
           env.BOOTSTRAP_PROVIDER === identity.provider &&
           equal(env.BOOTSTRAP_SUBJECT, identity.subject) &&
-          !db
+          !(await db
             .prepare(
               "SELECT id FROM members WHERE workspace='chapter' AND role='chair'",
             )
-            .get()
+            .get())
         ) {
           const id = randomUUID();
-          insertMember("chapter", {
+          await insertMember("chapter", {
             id,
             name: env.BOOTSTRAP_NAME?.trim().slice(0, 100) || identity.name,
             email: env.BOOTSTRAP_EMAIL?.trim().slice(0, 254) || identity.email,
             role: "chair",
           });
-          db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(
-            "chapter",
-            identity.provider,
-            identity.subject,
-            id,
-          );
-          audit(
+          await db
+            .prepare("INSERT INTO identities VALUES (?,?,?,?)")
+            .run("chapter", identity.provider, identity.subject, id);
+          await audit(
             "chapter",
             identity.name,
             "chair.bootstrap",
@@ -686,20 +984,24 @@ const server = http.createServer(async (req, res) => {
           );
           binding = { member_id: id };
         }
-        const user = binding && member("chapter", binding.member_id);
+        const user = binding && (await member("chapter", binding.member_id));
         if (!user?.active)
           fail(
             403,
             "Your verified account is not on the active chapter roster. Ask the Scholarship Chair to add its stable identity.",
           );
-        audit(
+        await audit(
           "chapter",
           user.name,
           "session.login",
           user.id,
           identity.provider,
         );
-        return issueSession("chapter", user.id, currentSession(req)?.id);
+        return await issueSession(
+          "chapter",
+          user.id,
+          (await currentSession(req))?.id,
+        );
       });
       return redirect(res, "/", {
         "Set-Cookie": [cookie(identityCookie, "", 0), issued.cookie],
@@ -707,14 +1009,19 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path.startsWith("/auth/canvas") || path.startsWith("/api/")) {
-      let { session, user } = requireSession(req);
+      let { session, user } = await requireSession(req);
+      const requestGeneration =
+        (await stateOf(session.workspace)).semesterGeneration || null;
       if (req.method === "POST") csrf(req, session);
       const input =
         req.method === "POST"
-          ? await readBody(req, path === "/api/uploads" ? 7_100_000 : 30_000)
+          ? await readBody(
+              req,
+              !directUploads && path === "/api/uploads" ? 7_100_000 : 262_144,
+            )
           : null;
       // Re-read after request-body or network waits so deactivation and session rotation win.
-      ({ session, user } = requireSession(req));
+      ({ session, user } = await requireSession(req));
       if (
         req.headers["x-ato-expected-user"] &&
         req.headers["x-ato-expected-user"] !== user.id
@@ -724,16 +1031,78 @@ const server = http.createServer(async (req, res) => {
           "The account changed in another tab. Refresh before continuing.",
         );
       if (path === "/api/session" && req.method === "GET")
-        return json(res, 200, sessionPayload(session, user));
+        return json(res, 200, await sessionPayload(session, user));
       if (path === "/api/me" && req.method === "GET")
         return json(res, 200, { user, mode, today: policyDay() });
+      if (path === "/api/admin/roster-sync") {
+        chair(user);
+        const state =
+          req.method === "POST"
+            ? await refreshRoster(session, user, true)
+            : await stateOf(session.workspace);
+        return json(res, 200, rosterView(state));
+      }
+      if (path === "/api/semester" && req.method === "GET") {
+        const state = await stateOf(session.workspace);
+        return json(res, 200, {
+          semester: semesterSettings(state),
+          reset: semesterResetStatus(state),
+        });
+      }
+      if (path === "/api/semester/preview" && req.method === "GET") {
+        chair(user);
+        return json(
+          res,
+          200,
+          await previewSemesterReset({
+            db,
+            workspace: session.workspace,
+            authorize: () => assertActiveSession(session, user),
+          }),
+        );
+      }
+      if (path === "/api/semester/reset" && req.method === "POST") {
+        chair(user);
+        const reset = await startSemesterReset({
+          db,
+          workspace: session.workspace,
+          actor: user.name,
+          confirm: input.confirm,
+          semester: input.semester,
+          previewToken: input.previewToken,
+          authorize: () => assertActiveSession(session, user),
+        });
+        return json(res, 200, {
+          reset,
+          semester: semesterSettings(await stateOf(session.workspace)),
+        });
+      }
+      if (path === "/api/semester/reset/resume" && req.method === "POST") {
+        chair(user);
+        const reset = await resumeSemesterReset({
+          db,
+          workspace: session.workspace,
+          deleteObject: deleteEvidenceObject,
+          authorize: () => assertActiveSession(session, user),
+        });
+        return json(res, 200, {
+          reset,
+          semester: semesterSettings(await stateOf(session.workspace)),
+        });
+      }
+      if (path === "/api/uploads/cleanup" && req.method === "POST") {
+        chair(user);
+        return json(res, 200, await cleanupExpiredUpload(session, user));
+      }
       if (path === "/api/logout" && req.method === "POST") {
-        atomic(() => {
-          db.prepare("DELETE FROM sessions WHERE id=?").run(session.id);
-          db.prepare("DELETE FROM transactions WHERE session_id=?").run(
-            session.id,
-          );
-          audit(session.workspace, user.name, "session.logout", user.id);
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user, false);
+          await db.prepare("DELETE FROM sessions WHERE id=?").run(session.id);
+          await db
+            .prepare("DELETE FROM transactions WHERE session_id=?")
+            .run(session.id);
+          await audit(session.workspace, user.name, "session.logout", user.id);
         });
         return json(
           res,
@@ -742,7 +1111,8 @@ const server = http.createServer(async (req, res) => {
           { "Set-Cookie": cookie(sessionCookie, "", 0) },
         );
       }
-      if (path === "/api/rules" && req.method === "GET")
+      if (path === "/api/rules" && req.method === "GET") {
+        const state = await stateOf(session.workspace);
         return json(res, 200, {
           activities: activities.map((a) => ({
             ...a,
@@ -757,15 +1127,16 @@ const server = http.createServer(async (req, res) => {
           rounding: "Chair must enter whole points and explain any difference.",
           tierSource:
             "Chair-assigned; GPA tier boundaries in the plan conflict.",
-          checkpoints,
-          semester: { targetDate, endDate, timeZone: "America/New_York" },
+          checkpoints: semesterCheckpoints(state),
+          semester: semesterSettings(state),
         });
+      }
       if (path === "/api/integrations" && req.method === "GET")
         return json(res, 200, {
           providers: identityProviders(env),
           canvas: {
             configured: canvasConfigured(),
-            connected: !!connection(session),
+            connected: !!(await connection(session)),
           },
         });
       if (
@@ -788,20 +1159,24 @@ const server = http.createServer(async (req, res) => {
           env,
           redirectUri: `${origin}/auth/canvas/callback`,
         });
-        atomic(() => {
-          const generation = advanceCanvasGeneration(
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const generation = await advanceCanvasGeneration(
             session.workspace,
             user.id,
           );
-          db.prepare(
-            "INSERT OR REPLACE INTO transactions VALUES (?,?,?,?,?)",
-          ).run(
-            `canvas:${session.id}`,
-            "canvas",
-            session.id,
-            JSON.stringify({ ...flow.transaction, generation }),
-            Date.now() + 600_000,
-          );
+          await db
+            .prepare(
+              "INSERT INTO transactions VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,session_id=excluded.session_id,data=excluded.data,expires=excluded.expires",
+            )
+            .run(
+              `canvas:${session.id}`,
+              "canvas",
+              session.id,
+              JSON.stringify({ ...flow.transaction, generation }),
+              Date.now() + 600_000,
+            );
         });
         return json(res, 200, { url: flow.url });
       }
@@ -812,17 +1187,11 @@ const server = http.createServer(async (req, res) => {
             403,
             "Real Canvas connections are disabled in the isolated demonstration.",
           );
-        const txn = atomic(() => {
-          const row = db
-            .prepare(
-              "SELECT * FROM transactions WHERE id=? AND kind=? AND session_id=? AND expires>?",
-            )
-            .get(`canvas:${session.id}`, "canvas", session.id, Date.now());
-          db.prepare("DELETE FROM transactions WHERE id=?").run(
-            `canvas:${session.id}`,
-          );
-          return row;
-        });
+        const txn = await db
+          .prepare(
+            "DELETE FROM transactions WHERE id=? AND kind=? AND session_id=? AND expires>? RETURNING *",
+          )
+          .get(`canvas:${session.id}`, "canvas", session.id, Date.now());
         if (!txn) fail(400, "Canvas connection expired. Please start again.");
         const tokens = await completeCanvasFlow({
           transaction: JSON.parse(txn.data),
@@ -830,26 +1199,30 @@ const server = http.createServer(async (req, res) => {
           env,
           redirectUri: `${origin}/auth/canvas/callback`,
         });
-        const fresh = requireSession(req);
+        const fresh = await requireSession(req);
         if (fresh.session.id !== session.id)
           fail(401, "Your account session changed. Reconnect Canvas.");
-        atomic(() => {
-          const current = db
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const current = await db
             .prepare(
-              "SELECT generation FROM canvas_generations WHERE workspace=? AND member_id=?",
+              "SELECT generation FROM canvas_generations WHERE workspace=? AND member_id=? FOR UPDATE",
             )
             .get(session.workspace, user.id);
           if (current?.generation !== JSON.parse(txn.data).generation)
             fail(409, "Canvas connection changed. Start again.");
-          db.prepare(
-            "INSERT OR REPLACE INTO integrations VALUES (?,?,?,?)",
-          ).run(
-            session.workspace,
-            user.id,
-            sealTokens(tokens, env),
-            randomUUID(),
-          );
-          audit(
+          await db
+            .prepare(
+              "INSERT INTO integrations VALUES (?,?,?,?) ON CONFLICT(workspace,member_id) DO UPDATE SET data=excluded.data,revision=excluded.revision",
+            )
+            .run(
+              session.workspace,
+              user.id,
+              sealTokens(tokens, env),
+              randomUUID(),
+            );
+          await audit(
             session.workspace,
             user.name,
             "canvas.connect",
@@ -864,12 +1237,16 @@ const server = http.createServer(async (req, res) => {
         req.method === "POST"
       ) {
         individual(user);
-        atomic(() => {
-          db.prepare(
-            "DELETE FROM integrations WHERE workspace=? AND member_id=?",
-          ).run(session.workspace, user.id);
-          advanceCanvasGeneration(session.workspace, user.id);
-          audit(
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          await db
+            .prepare(
+              "DELETE FROM integrations WHERE workspace=? AND member_id=?",
+            )
+            .run(session.workspace, user.id);
+          await advanceCanvasGeneration(session.workspace, user.id);
+          await audit(
             session.workspace,
             user.name,
             "canvas.disconnect",
@@ -888,10 +1265,10 @@ const server = http.createServer(async (req, res) => {
       ) {
         individual(user);
         const assignments = production
-          ? await liveAssignments(session, user)
-          : sampleAssignments(stateOf(session.workspace), user.id);
-        requireSession(req);
-        const state = stateOf(session.workspace);
+          ? (await liveAssignments(session, user)).assignments
+          : sampleAssignments(await stateOf(session.workspace), user.id);
+        await requireSession(req);
+        const state = await stateOf(session.workspace);
         return json(res, 200, {
           mode: production ? "live" : "sample",
           providerConnected: production,
@@ -919,10 +1296,21 @@ const server = http.createServer(async (req, res) => {
           input.items.length > 10
         )
           fail(422, "Select up to ten assignments and confirm the categories.");
-        const assignments = production
+        const generation = await academicSnapshot(session, requestGeneration);
+        const fetched = production
           ? await liveAssignments(session, user)
-          : canvasAssignments;
-        const result = mutate(session, user, (state) => {
+          : { assignments: canvasAssignments };
+        const assignments = fetched.assignments;
+        const result = await mutate(session, user, async (state) => {
+          academicGuard(state, generation);
+          if (
+            production &&
+            (await connection(session))?.revision !== fetched.revision
+          )
+            fail(
+              409,
+              "Canvas connection changed. Fetch current assignments again.",
+            );
           const imported = [],
             skipped = [];
           for (const selected of input.items) {
@@ -1009,7 +1397,7 @@ const server = http.createServer(async (req, res) => {
             });
             state.submissions.push(item);
             imported.push(item);
-            audit(
+            await audit(
               session.workspace,
               user.name,
               "canvas.import",
@@ -1028,8 +1416,180 @@ const server = http.createServer(async (req, res) => {
           ...result,
         });
       }
+      if (path === "/api/uploads/init" && req.method === "POST") {
+        individual(user);
+        const generation = await academicSnapshot(session, requestGeneration);
+        if (!directUploads || !storageStatus(env).configured)
+          fail(503, "Direct evidence storage is not configured.");
+        await cleanupExpiredUpload(session, user);
+        const name =
+          typeof input.name === "string"
+            ? basename(input.name.replaceAll("\\", "/"))
+                .replace(/[\u0000-\u001f\u007f]/g, "")
+                .trim()
+            : "";
+        if (
+          !name ||
+          name.length > 150 ||
+          !["application/pdf", "image/png", "image/jpeg"].includes(
+            input.mime,
+          ) ||
+          !Number.isInteger(input.size) ||
+          input.size < 1 ||
+          input.size > 5 * 1024 * 1024
+        )
+          fail(
+            422,
+            "Choose a PDF, PNG or JPEG evidence file of at most 5 MiB.",
+          );
+        const id = randomUUID();
+        const path = `quarantine/${session.workspace}/${user.id}/${id}`;
+        const finalPath = `evidence/${session.workspace}/${user.id}/${randomUUID()}`;
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          academicGuard(await stateOf(session.workspace), generation);
+          await db
+            .prepare(
+              "INSERT INTO uploads(id,workspace,owner,name,mime,size,filename,created_at,status,backend,final_path) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            )
+            .run(
+              id,
+              session.workspace,
+              user.id,
+              name,
+              input.mime,
+              input.size,
+              path,
+              now(),
+              "pending",
+              "supabase",
+              finalPath,
+            );
+        });
+        try {
+          const grant = await createUploadGrant({ path, env });
+          await assertActiveSession(session, user);
+          academicGuard(await stateOf(session.workspace), generation);
+          return json(res, 201, {
+            id,
+            upload: { id, name, mime: input.mime, size: input.size },
+            uploadUrl: grant.url,
+            method: grant.method,
+            headers: grant.headers,
+            expiresIn: grant.expiresIn,
+          });
+        } catch (error) {
+          await db
+            .prepare(
+              "UPDATE uploads SET status='failed' WHERE id=? AND status='pending'",
+            )
+            .run(id);
+          throw error;
+        }
+      }
+      const completeUploadRoute = path.match(
+        /^\/api\/uploads\/([a-f0-9-]{36})\/complete$/,
+      );
+      if (completeUploadRoute && req.method === "POST") {
+        individual(user);
+        const generation = await academicSnapshot(session, requestGeneration);
+        if (!directUploads) fail(404, "Not found.");
+        const intent = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          academicGuard(await stateOf(session.workspace), generation);
+          const found = await db
+            .prepare(
+              "SELECT * FROM uploads WHERE id=? AND workspace=? AND owner=? FOR UPDATE",
+            )
+            .get(completeUploadRoute[1], session.workspace, user.id);
+          if (!found || found.backend !== "supabase")
+            fail(404, "Evidence upload not found.");
+          if (found.status === "ready") return found;
+          if (
+            found.status !== "pending" ||
+            Date.now() - Date.parse(found.created_at) > 2 * 60 * 60 * 1000
+          )
+            fail(
+              409,
+              "This upload expired or has already been completed. Upload a new file.",
+            );
+          await db
+            .prepare(
+              "UPDATE uploads SET status='verifying' WHERE id=? AND status='pending'",
+            )
+            .run(found.id);
+          return found;
+        });
+        if (intent.status === "ready")
+          return json(res, 200, { upload: uploadMeta(intent) });
+        try {
+          const verified = await finalizeStoredEvidence({
+            path: intent.filename,
+            finalPath: intent.final_path,
+            expectedMime: intent.mime,
+            expectedSize: intent.size,
+            env,
+          });
+          await atomic(async () => {
+            await lockWorkspace(session.workspace);
+            await assertActiveSession(session, user);
+            academicGuard(await stateOf(session.workspace), generation);
+            const changed = await db
+              .prepare(
+                "UPDATE uploads SET status='ready',size=?,mime=? WHERE id=? AND workspace=? AND owner=? AND status='verifying'",
+              )
+              .run(
+                verified.size,
+                verified.mime,
+                intent.id,
+                session.workspace,
+                user.id,
+              );
+            if (changed.changes !== 1)
+              fail(409, "Evidence upload changed. Upload a new file.");
+            await audit(
+              session.workspace,
+              user.name,
+              "evidence.upload",
+              intent.id,
+              `${verified.mime}; ${verified.size} bytes; sha256 ${verified.sha256}`,
+            );
+          });
+          return json(res, 201, {
+            upload: uploadMeta({
+              ...intent,
+              size: verified.size,
+              mime: verified.mime,
+            }),
+          });
+        } catch (error) {
+          const failed = await db
+            .prepare(
+              "UPDATE uploads SET status='failed' WHERE id=? AND status='verifying'",
+            )
+            .run(intent.id);
+          const remaining = await db
+            .prepare("SELECT status FROM uploads WHERE id=?")
+            .get(intent.id);
+          if (
+            failed.changes === 1 ||
+            !remaining ||
+            remaining.status === "purging"
+          )
+            await Promise.allSettled([
+              removeStoredEvidence({ path: intent.filename, env }),
+              removeStoredEvidence({ path: intent.final_path, env }),
+            ]);
+          throw error;
+        }
+      }
       if (path === "/api/uploads" && req.method === "POST") {
         individual(user);
+        const generation = await academicSnapshot(session, requestGeneration);
+        if (directUploads)
+          fail(422, "Use the direct evidence upload workflow.");
         const file = validUpload(input);
         const id = randomUUID();
         const filename = `${id}.bin`;
@@ -1038,19 +1598,26 @@ const server = http.createServer(async (req, res) => {
           mode: 0o600,
         });
         try {
-          requireSession(req);
-          atomic(() => {
-            db.prepare("INSERT INTO uploads VALUES (?,?,?,?,?,?,?,?)").run(
-              id,
-              session.workspace,
-              user.id,
-              file.name,
-              file.mime,
-              file.bytes.length,
-              filename,
-              now(),
-            );
-            audit(
+          await requireSession(req);
+          await atomic(async () => {
+            await lockWorkspace(session.workspace);
+            await assertActiveSession(session, user);
+            academicGuard(await stateOf(session.workspace), generation);
+            await db
+              .prepare(
+                "INSERT INTO uploads(id,workspace,owner,name,mime,size,filename,created_at) VALUES (?,?,?,?,?,?,?,?)",
+              )
+              .run(
+                id,
+                session.workspace,
+                user.id,
+                file.name,
+                file.mime,
+                file.bytes.length,
+                filename,
+                now(),
+              );
+            await audit(
               session.workspace,
               user.name,
               "evidence.upload",
@@ -1073,10 +1640,30 @@ const server = http.createServer(async (req, res) => {
       }
       const uploadRoute = path.match(/^\/api\/uploads\/([a-f0-9-]{36})$/);
       if (uploadRoute && req.method === "GET") {
-        const upload = getUpload(uploadRoute[1], session, user);
+        const upload = await getUpload(uploadRoute[1], session, user);
+        if (upload.backend === "supabase") {
+          const grant = await createDownloadGrant({
+            path: upload.final_path,
+            downloadName: upload.name,
+            expiresIn: 60,
+            env,
+          });
+          await assertActiveSession(session, user);
+          await getUpload(upload.id, session, user);
+          await audit(
+            session.workspace,
+            user.name,
+            "evidence.download",
+            upload.id,
+            user.role,
+          );
+          return redirect(res, grant.url);
+        }
+        if (directUploads)
+          fail(404, "Evidence record is not available in hosted storage.");
         const bytes = await readFile(resolve(filesDir, upload.filename));
-        requireSession(req);
-        audit(
+        await requireSession(req);
+        await audit(
           session.workspace,
           user.name,
           "evidence.download",
@@ -1095,14 +1682,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, {
           member: user.id,
           checkpointDate: user.checkpointDate,
-          ...totals(stateOf(session.workspace), user, policyDay()),
+          ...totals(await stateOf(session.workspace), user, policyDay()),
         });
       }
       if (path === "/api/members" && req.method === "GET") {
         chair(user);
-        const state = stateOf(session.workspace);
+        const state = await stateOf(session.workspace);
         return json(res, 200, {
-          members: listMembers(session.workspace)
+          members: (await listMembers(session.workspace))
             .filter((m) => m.role === "member")
             .map((m) => ({ ...m, ...totals(state, m, policyDay()) })),
         });
@@ -1110,22 +1697,26 @@ const server = http.createServer(async (req, res) => {
       if (path === "/api/roster" && req.method === "GET") {
         chair(user);
         return json(res, 200, {
-          members: listMembers(session.workspace).map((m) => ({
-            ...m,
-            identities: db
-              .prepare(
-                "SELECT provider,subject FROM identities WHERE workspace=? AND member_id=?",
-              )
-              .all(session.workspace, m.id),
-          })),
+          members: await Promise.all(
+            (await listMembers(session.workspace)).map(async (m) => ({
+              ...m,
+              identities: await db
+                .prepare(
+                  "SELECT provider,subject FROM identities WHERE workspace=? AND member_id=?",
+                )
+                .all(session.workspace, m.id),
+            })),
+          ),
         });
       }
       if (path === "/api/roster" && req.method === "POST") {
         chair(user);
         const invited = validateRoster(input);
-        const created = atomic(() => {
+        const created = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
           if (
-            db
+            await db
               .prepare(
                 "SELECT member_id FROM identities WHERE workspace=? AND provider=? AND subject=?",
               )
@@ -1136,56 +1727,70 @@ const server = http.createServer(async (req, res) => {
               "This stable identity is already bound to a roster member.",
             );
           const id = randomUUID();
-          insertMember(session.workspace, { ...invited, id, role: "member" });
-          db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(
-            session.workspace,
-            invited.provider,
-            invited.subject,
+          await insertMember(session.workspace, {
+            ...invited,
             id,
-          );
-          audit(
+            role: "member",
+          });
+          await db
+            .prepare("INSERT INTO identities VALUES (?,?,?,?)")
+            .run(session.workspace, invited.provider, invited.subject, id);
+          await audit(
             session.workspace,
             user.name,
             "roster.invite",
             id,
             `${invited.provider}; tier ${invited.tier}; credits ${invited.credits}`,
           );
-          return member(session.workspace, id);
+          return await member(session.workspace, id);
         });
         return json(res, 201, { member: created });
       }
       const deactivate = path.match(/^\/api\/roster\/([^/]+)\/deactivate$/);
       if (deactivate && req.method === "POST") {
         chair(user);
-        const target = member(session.workspace, deactivate[1]);
+        const target = await member(session.workspace, deactivate[1]);
         if (!target) fail(404, "Roster member not found.");
         if (target.id === user.id || target.role === "chair")
           fail(
             422,
             "The Scholarship Chair cannot be deactivated through this action.",
           );
-        atomic(() => {
-          db.prepare(
-            "UPDATE members SET active=0 WHERE workspace=? AND id=?",
-          ).run(session.workspace, target.id);
-          advanceCanvasGeneration(session.workspace, target.id);
-          db.prepare(
-            "DELETE FROM transactions WHERE session_id IN (SELECT id FROM sessions WHERE workspace=? AND member_id=?)",
-          ).run(session.workspace, target.id);
-          db.prepare(
-            "DELETE FROM sessions WHERE workspace=? AND member_id=?",
-          ).run(session.workspace, target.id);
-          db.prepare(
-            "DELETE FROM integrations WHERE workspace=? AND member_id=?",
-          ).run(session.workspace, target.id);
-          audit(session.workspace, user.name, "roster.deactivate", target.id);
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          await db
+            .prepare("UPDATE members SET active=0 WHERE workspace=? AND id=?")
+            .run(session.workspace, target.id);
+          await advanceCanvasGeneration(session.workspace, target.id);
+          await db
+            .prepare(
+              "DELETE FROM transactions WHERE session_id IN (SELECT id FROM sessions WHERE workspace=? AND member_id=?)",
+            )
+            .run(session.workspace, target.id);
+          await db
+            .prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
+            .run(session.workspace, target.id);
+          await db
+            .prepare(
+              "DELETE FROM integrations WHERE workspace=? AND member_id=?",
+            )
+            .run(session.workspace, target.id);
+          await audit(
+            session.workspace,
+            user.name,
+            "roster.deactivate",
+            target.id,
+          );
         });
-        return json(res, 200, { member: member(session.workspace, target.id) });
+        return json(res, 200, {
+          member: await member(session.workspace, target.id),
+        });
       }
       if (path === "/api/audit" && req.method === "GET") {
         chair(user);
         return json(res, 200, {
-          events: db
+          events: await db
             .prepare(
               "SELECT id,at,actor,action,subject,detail FROM audit WHERE workspace=? ORDER BY id DESC LIMIT 200",
             )
@@ -1193,20 +1798,24 @@ const server = http.createServer(async (req, res) => {
         });
       }
       if (path === "/api/submissions" && req.method === "GET") {
-        const state = stateOf(session.workspace);
+        const state = await stateOf(session.workspace);
         return json(res, 200, {
-          submissions: state.submissions
-            .filter((s) => user.role === "chair" || s.owner === user.id)
-            .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
-            .map((s) => ({
-              ...s,
-              memberName:
-                member(session.workspace, s.owner)?.name || "Former member",
-            })),
+          submissions: await Promise.all(
+            state.submissions
+              .filter((s) => user.role === "chair" || s.owner === user.id)
+              .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+              .map(async (s) => ({
+                ...s,
+                memberName:
+                  (await member(session.workspace, s.owner))?.name ||
+                  "Former member",
+              })),
+          ),
         });
       }
       if (path === "/api/submissions" && req.method === "POST") {
         individual(user);
+        const generation = await academicSnapshot(session, requestGeneration);
         const evidenceId = input.evidenceId || input.evidence;
         let evidence;
         if (!production && evidenceId === "sample") evidence = "sample";
@@ -1219,8 +1828,11 @@ const server = http.createServer(async (req, res) => {
             422,
             "Upload your evidence file or import a verified Canvas assignment first.",
           );
-        else evidence = getUpload(evidenceId, session, user, true).id;
-        const result = mutate(session, user, (state) => {
+        else evidence = (await getUpload(evidenceId, session, user, true)).id;
+        const result = await mutate(session, user, async (state) => {
+          academicGuard(state, generation);
+          if (evidence !== "sample")
+            await getUpload(evidence, session, user, true);
           const item = newSubmission(
             claim(input, state, user, evidence),
             user,
@@ -1230,7 +1842,12 @@ const server = http.createServer(async (req, res) => {
             },
           );
           state.submissions.push(item);
-          audit(session.workspace, user.name, "submission.create", item.id);
+          await audit(
+            session.workspace,
+            user.name,
+            "submission.create",
+            item.id,
+          );
           return { submission: item, points: totals(state, user, policyDay()) };
         });
         return json(res, 201, result);
@@ -1239,18 +1856,19 @@ const server = http.createServer(async (req, res) => {
         /^\/api\/submissions\/([^/]+)(?:\/(review|evidence))?$/,
       );
       if (submissionRoute) {
-        const state = stateOf(session.workspace);
+        const state = await stateOf(session.workspace);
         const item = ownSubmission(state, user, submissionRoute[1]);
         if (!submissionRoute[2] && req.method === "GET")
           return json(res, 200, {
             submission: {
               ...item,
               memberName:
-                member(session.workspace, item.owner)?.name || "Former member",
+                (await member(session.workspace, item.owner))?.name ||
+                "Former member",
             },
           });
         if (submissionRoute[2] === "evidence" && req.method === "GET") {
-          audit(
+          await audit(
             session.workspace,
             user.name,
             "evidence.view",
@@ -1258,7 +1876,7 @@ const server = http.createServer(async (req, res) => {
             user.role,
           );
           if (item.evidenceId) {
-            const upload = getUpload(item.evidenceId, session, user);
+            const upload = await getUpload(item.evidenceId, session, user);
             return json(res, 200, {
               evidence: {
                 sample: false,
@@ -1304,7 +1922,9 @@ const server = http.createServer(async (req, res) => {
         }
         if (submissionRoute[2] === "review" && req.method === "POST") {
           chair(user);
-          const result = mutate(session, user, (state) => {
+          const generation = await academicSnapshot(session, requestGeneration);
+          const result = await mutate(session, user, async (state) => {
+            academicGuard(state, generation);
             const item = ownSubmission(state, user, submissionRoute[1]);
             if (item.status !== "pending")
               fail(409, "This submission has already been reviewed.");
@@ -1343,7 +1963,7 @@ const server = http.createServer(async (req, res) => {
               at: item.reviewedAt,
               note,
             });
-            audit(
+            await audit(
               session.workspace,
               user.name,
               `submission.${input.decision}`,
@@ -1354,7 +1974,7 @@ const server = http.createServer(async (req, res) => {
               submission: item,
               points: totals(
                 state,
-                member(session.workspace, item.owner),
+                await member(session.workspace, item.owner),
                 policyDay(),
               ),
             };
@@ -1363,15 +1983,16 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (path === "/api/demo/reset" && req.method === "POST" && !production) {
-        mutate(session, user, (state) => {
+        await mutate(session, user, async (state) => {
+          academicGuard(state);
           state.submissions = seed().submissions;
-          audit(session.workspace, user.name, "demo.reset");
+          await audit(session.workspace, user.name, "demo.reset");
         });
         return json(res, 200, { reset: true });
       }
       if (path === "/api/export" && req.method === "GET") {
         chair(user);
-        const state = stateOf(session.workspace);
+        const state = await stateOf(session.workspace);
         const quote = (v) => {
           const s = String(v ?? "");
           return `"${(/^\s*[=+@\-]|^[\t\r\n]/.test(s) ? `'${s}` : s).replaceAll('"', '""')}"`;
@@ -1387,32 +2008,36 @@ const server = http.createServer(async (req, res) => {
             "Approved points",
             "Review note",
           ],
-          ...state.submissions.map((s) => [
-            s.id,
-            member(session.workspace, s.owner)?.name || "Former member",
-            s.activity,
-            s.title,
-            s.date,
-            s.status,
-            s.awarded,
-            s.reviewNote,
-          ]),
+          ...(await Promise.all(
+            state.submissions.map(async (s) => [
+              s.id,
+              (await member(session.workspace, s.owner))?.name ||
+                "Former member",
+              s.activity,
+              s.title,
+              s.date,
+              s.status,
+              s.awarded,
+              s.reviewNote,
+            ]),
+          )),
         ];
-        audit(
+        await audit(
           session.workspace,
           user.name,
           "submissions.export",
           "",
           `${state.submissions.length} records`,
         );
+        const csv = rows.map((row) => row.map(quote).join(",")).join("\r\n");
+        if (Buffer.byteLength(csv) > 4 * 1024 * 1024)
+          fail(413, "Report is too large; contact the portal administrator.");
         res.writeHead(200, {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition":
             'attachment; filename="scholarship-submissions.csv"',
         });
-        return res.end(
-          rows.map((row) => row.map(quote).join(",")).join("\r\n"),
-        );
+        return res.end(csv);
       }
       fail(404, "API endpoint not found.");
     }
@@ -1457,8 +2082,8 @@ server.listen(port, env.HOST || "127.0.0.1", () =>
   console.log(`ATO scholarship private: ${origin} (${mode})`),
 );
 function shutdown() {
-  server.close(() => {
-    db.close();
+  server.close(async () => {
+    await db.close();
     process.exit(0);
   });
 }
