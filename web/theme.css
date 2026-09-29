@@ -11,7 +11,7 @@
 .brand-logo { display: block; width: 160px; height: auto; flex: none; }
 @media (max-width: 800px) { .brand-logo { width: 125px; } }
 @media (max-width: 560px) { .brand-logo { width: 94px; } }
-:root[data-theme="dark"] .brand-logo { background: #fff; padding: 4px; }
+:root[data-theme="dark"] .brand-logo { filter: drop-shadow(0 0 2px #aac9ed); }
 
 :root[data-theme="dark"] {
   color-scheme: dark;

@@ -535,8 +535,7 @@ async function handleAction(e) {
   const action = b.dataset.action;
   try {
     if (action === "logout") {
-      sessionStorage.removeItem("ato-scholarship-demo-login");
-      location.assign("/");
+      leaveDemo(false);
     } else if (action === "new") newSubmission();
     else if (action === "close") modal.close();
     else if (action === "detail") await detail(b.dataset.id);
@@ -608,7 +607,25 @@ async function handleAction(e) {
     toast(err.message);
   }
 }
+function leaveDemo(replaceHistory) {
+  sessionStorage.removeItem("ato-scholarship-demo-login");
+  if (replaceHistory) location.replace("/");
+  else location.assign("/");
+}
 document.addEventListener("click", handleAction);
+document.addEventListener("keydown", (event) => {
+  if (
+    !location.pathname.startsWith("/demo/") ||
+    event.key !== "Backspace" ||
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+  ) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return;
+  event.preventDefault();
+  leaveDemo(true);
+});
 person.addEventListener("change", () => {
   if (!location.pathname.startsWith("/demo/")) switchUser(person.value);
 });
