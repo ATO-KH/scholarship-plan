@@ -41,6 +41,12 @@ let user,
 const modal = $("#modal"),
   main = $("#main"),
   person = $("#persona");
+function setAuthLoading(active, message) {
+  if (message) $("#auth-loading-message").textContent = message;
+  document.body.classList.toggle("signing-in", active);
+  document.querySelector(".workspace").inert = active;
+  document.querySelector(".workspace").setAttribute("aria-busy", String(active));
+}
 const money = (n) =>
   Number.isInteger(n) ? String(n) : Number(n).toFixed(2).replace(/0$/, "");
 const date = (s) =>
@@ -130,8 +136,14 @@ function newButton() {
 function shield() {
   return '<svg width="18" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6Z"/><path d="m8 12 3 3 5-6"/></svg>';
 }
+function updateNavOverflow() {
+  const nav = $("#nav");
+  const overflow = nav.scrollWidth > nav.clientWidth + 1;
+  $("#nav-prev").hidden = !overflow || nav.scrollLeft < 2;
+  $("#nav-next").hidden = !overflow || nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 2;
+}
 function navigation() {
-  $(".term").textContent = rules.semester?.name || "Current semester";
+  $(".term").textContent = rules?.semester?.name || appConfig.semester?.name || "Current semester";
   const chair = user.role === "chair",
     pending = submissions.filter((s) => s.status === "pending").length;
   const links = chair
@@ -152,12 +164,26 @@ function navigation() {
         ["faq", "FAQ"],
         ["setup", "Connections"],
       ];
-  $("#nav").innerHTML = links
+  const nav = $("#nav");
+  const previousScroll = nav.scrollLeft;
+  nav.innerHTML = links
     .map(
       ([id, name, count]) =>
         `<a href="#${id}" class="${route() === id ? "active" : ""}">${name}${count ? `<span class="nav-count">${count}</span>` : ""}</a>`,
     )
     .join("");
+  nav.scrollLeft = previousScroll;
+  updateNavOverflow();
+  const selected = nav.querySelector("a.active");
+  if (selected) {
+    const navBox = nav.getBoundingClientRect();
+    const selectedBox = selected.getBoundingClientRect();
+    if (selectedBox.left < navBox.left)
+      nav.scrollLeft -= navBox.left - selectedBox.left + 8;
+    else if (selectedBox.right > navBox.right)
+      nav.scrollLeft += selectedBox.right - navBox.right + 8;
+  }
+  updateNavOverflow();
   $("#header-person").innerHTML =
     `${esc(user.name)}<span>${chair ? "Scholarship chair" : "Member"}${isDemo() ? " · demo" : ""}</span>`;
   $(".account-button .avatar").textContent = user.initials;
@@ -231,7 +257,6 @@ function queue() {
       "",
       "Review queue",
       "Approve or deny pending submissions.",
-      '<button class="button ghost" data-action="export">Export submissions</button>',
     ) +
     `<div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting your review</b>${new Set(pending.map((s) => s.owner)).size} members with pending claims</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${approved.reduce((n, s) => n + s.awarded, 0)} points awarded</span></div><div class="mini-stat"><strong>${roster.filter((m) => m.approved < m.checkpoint).length}</strong><span><b>Below next checkpoint</b>${date(checkpointDate())} · no automatic sanctions</span></div></div><div class="notice info"><strong>One review updates the member’s record.</strong> Approve a claim to award points, or deny it with a reason. Members see your decision and note.</div>${filters()}<section class="panel recent"><div class="section-heading"><h2>${filter === "pending" ? "PENDING SUBMISSIONS" : "SUBMISSION REGISTER"}</h2><span class="muted">${esc(rules.semester?.name || "Current semester")}</span></div>${rows(
       submissions.filter((s) => filter === "all" || s.status === filter),
@@ -676,17 +701,6 @@ async function handleAction(e) {
       await loadCanvas();
     } else if (action === "canvas-submit") {
       await importCanvas();
-    } else if (action === "export") {
-      const csv = await api("/api/export", { raw: true });
-      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = isDemo()
-        ? "ato-demo-submissions.csv"
-        : "ato-submissions.csv";
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("CSV export downloaded.");
     }
   } catch (err) {
     toast(err.message);
@@ -695,15 +709,34 @@ async function handleAction(e) {
 document.addEventListener("click", handleAction);
 person.addEventListener("change", () => switchUser(person.value));
 window.addEventListener("hashchange", render);
+$("#nav").addEventListener("scroll", updateNavOverflow);
+window.addEventListener("resize", updateNavOverflow);
+document.fonts?.ready.then(updateNavOverflow);
+for (const [button, direction] of [["#nav-prev", -1], ["#nav-next", 1]]) {
+  $(button).addEventListener("click", () => {
+    const nav = $("#nav");
+    nav.scrollBy({
+      left: direction * Math.max(180, nav.clientWidth * .7),
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  });
+}
 modal.addEventListener("click", (e) => {
   if (e.target === modal && !modal.dataset.recoveryLocked) modal.close();
 });
 modal.addEventListener("cancel", (event) => {
   if (modal.dataset.recoveryLocked) event.preventDefault();
 });
-async function init() {
+async function init(sessionFromLogin = null) {
+  const initEpoch = sessionEpoch;
+  setAuthLoading(true, sessionFromLogin ? "Signing in…" : "Checking sign-in…");
   try {
-    appConfig = await api("/api/config");
+    const accountPath = location.pathname.startsWith("/account/");
+    const sessionTask = !sessionFromLogin && !accountPath
+      ? api("/api/session").then((result) => ({ result }), (error) => ({ error }))
+      : null;
+    if (!sessionFromLogin) appConfig = await api("/api/config");
+    if (initEpoch !== sessionEpoch) return;
     if (appConfig.chapterAuth?.enabled && location.pathname.startsWith("/account/")) {
       const fragment = new URLSearchParams(location.hash.slice(1));
       accountToken = fragment.get("access_token");
@@ -713,16 +746,19 @@ async function init() {
     }
     const requested = new URL(location.href).searchParams.get("view");
     let result;
-    try {
-      result = await api("/api/session");
-    } catch (e) {
+    const sessionOutcome = sessionFromLogin
+      ? { result: sessionFromLogin }
+      : await (sessionTask || api("/api/session").then((value) => ({ result: value }), (error) => ({ error })));
+    if (sessionOutcome.error) {
+      const e = sessionOutcome.error;
       if (e.status !== 401) throw e;
       if (!isDemo()) {
         loginPage();
         return;
       }
       result = await api("/api/demo/session", { method: "POST", body: {} });
-    }
+    } else result = sessionOutcome.result;
+    if (initEpoch !== sessionEpoch) return;
     csrfToken = result.csrfToken;
     if (
       isDemo() &&
@@ -735,14 +771,18 @@ async function init() {
         body: { persona: requested },
       });
     user = result.user;
-    document.body.classList.remove("portal-loading", "signed-out");
+    appConfig.semester = result.semester || appConfig.semester;
+    rules = null;
+    submissions = [];
+    roster = [];
+    points = {};
+    document.body.classList.remove("signed-out");
     document.querySelector(".account-button").hidden = false;
     csrfToken = result.csrfToken;
     canvasConnected = Boolean(result.canvasConnected);
     const clean = new URL(location.href);
     clean.searchParams.delete("view");
     history.replaceState(null, "", clean);
-    rules = await api("/api/rules");
     filter = user.role === "chair" ? "pending" : "all";
     document.querySelector(".demo-bar > span").innerHTML = isDemo()
       ? "<strong>PRIVATE EDITION · DEMO</strong> Fictional data · real backend · identity not connected"
@@ -751,10 +791,30 @@ async function init() {
       ? ""
       : "none";
     document.querySelector('[data-action="reset"]').hidden = !isDemo();
-    await refresh();
-  } catch (e) {
     document.body.classList.remove("portal-loading");
+    setAuthLoading(false);
+    navigation();
+    main.innerHTML = `<div class="workspace-loading" role="status" aria-live="polite">${$("#auth-loading .auth-cross").outerHTML}<p>Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…</p></div>`;
+    const [nextRules, nextSubmissions, nextSummary] = await Promise.all([
+      api("/api/rules"),
+      api("/api/submissions"),
+      api(user.role === "chair" ? "/api/members" : "/api/points"),
+    ]);
+    if (initEpoch !== sessionEpoch) return;
+    rules = nextRules;
+    submissions = nextSubmissions.submissions;
+    if (user.role === "chair") roster = nextSummary.members;
+    else points = nextSummary;
+    render();
+  } catch (e) {
+    if (initEpoch !== sessionEpoch) return;
+    document.body.classList.remove("portal-loading");
+    setAuthLoading(false);
     document.body.classList.add("signed-out");
+    user = null;
+    csrfToken = null;
+    document.querySelector(".account-button").hidden = true;
+    $("#nav").innerHTML = "";
     main.innerHTML =
       heading(
         "",
@@ -762,11 +822,12 @@ async function init() {
         "The service could not load your account.",
       ) +
       `<div class="error">${esc(e.message)}</div><button class="button gold" id="retry">Try again</button>`;
-    $("#retry").onclick = init;
+    $("#retry").onclick = () => init();
   }
 }
 function loginPage() {
   document.body.classList.remove("portal-loading");
+  setAuthLoading(false);
   document.body.classList.add("signed-out");
   sessionEpoch++;
   logs = [];
@@ -787,14 +848,31 @@ function loginPage() {
   if (appConfig.chapterAuth?.enabled) {
     main.innerHTML = heading("", "Sign in", "Use your chapter account.") +
       `<section class="panel login-panel"><h2>Chapter account sign-in</h2><p>Members can use an approved email, badge number, or assigned portal ID. The Scholarship Chair uses the chapter office account.</p><form id="chapter-login"><div class="field"><label for="login-id">Email, badge number, or portal ID</label><input id="login-id" name="identifier" autocomplete="username" required maxlength="254"></div><div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Sign in</button></form><button class="text-btn" id="forgot-password" type="button" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Forgot password?</button>${appConfig.chapterAuth.configured ? "" : '<p class="footnote">Chapter accounts are being set up. Use the demo below to explore the portal in the meantime.</p>'}</section>` + sandboxLinks();
+    let loginPending = false;
     $("#chapter-login").onsubmit = async (event) => {
       event.preventDefault();
+      if (loginPending) return;
+      loginPending = true;
+      const submit = event.target.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      $("#form-error").textContent = "";
       const values = Object.fromEntries(new FormData(event.target));
+      setAuthLoading(true, "Signing in…");
       try {
         const signedIn = await api("/api/auth/login", { method: "POST", body: values });
-        if (signedIn.recoveryKey) showRecoveryKeyModal(signedIn.recoveryKey, init);
-        else await init();
-      } catch (error) { $("#form-error").textContent = error.message; }
+        if (signedIn.recoveryKey) {
+          setAuthLoading(false);
+          const { recoveryKey, ...session } = signedIn;
+          showRecoveryKeyModal(recoveryKey, () => init(session));
+        }
+        else await init(signedIn);
+      } catch (error) {
+        setAuthLoading(false);
+        $("#form-error").textContent = error.message;
+      } finally {
+        loginPending = false;
+        if (submit.isConnected) submit.disabled = false;
+      }
     };
     $("#forgot-password").onclick = () => {
       const panel = $(".login-panel");
@@ -849,6 +927,7 @@ function sandboxLinks() {
 
 function accountSetupPage() {
   document.body.classList.remove("portal-loading");
+  setAuthLoading(false);
   document.body.classList.add("signed-out");
   user = null;
   csrfToken = null;

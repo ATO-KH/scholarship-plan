@@ -23,6 +23,20 @@
     <link rel="stylesheet" href="/theme.css" />
   </head>
   <body class="portal-loading">
+    <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-atomic="true">
+      <div class="auth-loading-content">
+        <svg class="auth-cross" viewBox="-8 -8 168 168" width="152" height="152" aria-hidden="true" focusable="false">
+          <g class="auth-cross-rotor" fill="currentColor">
+            <path class="auth-cross-arm auth-cross-arm-top" d="M25 0h102L96 36H56Z" />
+            <path class="auth-cross-arm auth-cross-arm-right" d="M152 25v102l-36-31V56Z" />
+            <path class="auth-cross-arm auth-cross-arm-bottom" d="M127 152H25l31-36h40Z" />
+            <path class="auth-cross-arm auth-cross-arm-left" d="M0 127V25l36 31v40Z" />
+            <circle cx="76" cy="76" r="32.5" fill="none" stroke="currentColor" stroke-width="7" />
+          </g>
+        </svg>
+        <p id="auth-loading-message">Checking sign-in…</p>
+      </div>
+    </div>
     <div class="demo-bar">
       <span
         ><strong>SCHOLARSHIP PORTAL</strong> Loading…</span
@@ -47,7 +61,11 @@
     <div class="workspace">
       <aside class="sidebar">
         <div class="portal-label">SCHOLARSHIP PORTAL</div>
-        <nav id="nav" aria-label="Main navigation"></nav>
+        <div class="nav-strip">
+          <button id="nav-prev" class="nav-scroll" type="button" aria-label="Show earlier tabs" hidden>‹</button>
+          <nav id="nav" aria-label="Main navigation"></nav>
+          <button id="nav-next" class="nav-scroll" type="button" aria-label="Show more tabs" hidden>›</button>
+        </div>
         <div class="sidebar-bottom" style="display:none">
           <span class="eyebrow">EXPLORE THE DEMO</span
           ><label for="persona">View as</label

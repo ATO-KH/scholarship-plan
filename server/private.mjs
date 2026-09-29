@@ -346,14 +346,7 @@ async function audit(workspace, actor, action, subject = "", detail = "") {
     )
     .run(workspace, now(), actor || "system", action, subject, detail);
 }
-async function member(workspace, id) {
-  const row = await db
-    .prepare("SELECT * FROM members WHERE workspace=? AND id=?")
-    .get(workspace, id);
-  if (!row) return null;
-  const schedule = semesterCheckpoints(await stateOf(workspace));
-  const checkpoint =
-    schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
+function memberView(row, checkpoint) {
   return {
     id: row.id,
     name: row.name,
@@ -378,14 +371,25 @@ async function member(workspace, id) {
       : {}),
   };
 }
-async function listMembers(workspace) {
-  return await Promise.all(
-    (
-      await db
-        .prepare("SELECT id FROM members WHERE workspace=? ORDER BY name")
-        .all(workspace)
-    ).map(async (row) => await member(workspace, row.id)),
-  );
+async function member(workspace, id) {
+  const row = await db
+    .prepare("SELECT * FROM members WHERE workspace=? AND id=?")
+    .get(workspace, id);
+  if (!row) return null;
+  const schedule = semesterCheckpoints(await stateOf(workspace));
+  const checkpoint =
+    schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
+  return memberView(row, checkpoint);
+}
+async function listMembers(workspace, state) {
+  const rows = await db
+    .prepare("SELECT * FROM members WHERE workspace=? ORDER BY name")
+    .all(workspace);
+  if (!rows.length) return [];
+  const schedule = semesterCheckpoints(state ?? (await stateOf(workspace)));
+  const checkpoint =
+    schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
+  return rows.map((row) => memberView(row, checkpoint));
 }
 async function insertMember(workspace, m) {
   await db
@@ -1943,24 +1947,30 @@ const server = http.createServer(async (req, res) => {
         chair(user);
         const state = await stateOf(session.workspace);
         return json(res, 200, {
-          members: (await listMembers(session.workspace))
+          members: (await listMembers(session.workspace, state))
             .filter((m) => m.role === "member")
             .map((m) => ({ ...m, ...totals(state, m, policyDay()) })),
         });
       }
       if (path === "/api/roster" && req.method === "GET") {
         chair(user);
+        const members = await listMembers(session.workspace);
+        const identities = await db
+          .prepare(
+            "SELECT member_id,provider,subject FROM identities WHERE workspace=? AND provider<>?",
+          )
+          .all(session.workspace, "supabase");
+        const identitiesByMember = new Map();
+        for (const { member_id, provider, subject } of identities) {
+          if (!identitiesByMember.has(member_id))
+            identitiesByMember.set(member_id, []);
+          identitiesByMember.get(member_id).push({ provider, subject });
+        }
         return json(res, 200, {
-          members: await Promise.all(
-            (await listMembers(session.workspace)).map(async (m) => ({
-              ...m,
-              identities: (await db
-                .prepare(
-                  "SELECT provider,subject FROM identities WHERE workspace=? AND member_id=?",
-                )
-                .all(session.workspace, m.id)).filter((item) => item.provider !== "supabase"),
-            })),
-          ),
+          members: members.map((m) => ({
+            ...m,
+            identities: identitiesByMember.get(m.id) || [],
+          })),
         });
       }
       if (path === "/api/roster" && req.method === "POST") {

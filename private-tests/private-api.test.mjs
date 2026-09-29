@@ -678,8 +678,24 @@ test("roster changes are chair-only, validate identifiers, and reject duplicate 
   });
   assert.ok([409, 422].includes(duplicate.status));
   const roster = await c.send("/api/roster");
-  assert.ok(JSON.stringify(roster).includes(member.subject));
-  assert.ok(JSON.stringify(roster).includes(member.email));
+  assert.equal(roster.status, 200);
+  const rosterById = new Map(roster.members.map((entry) => [entry.id, entry]));
+  assert.equal(rosterById.get(created.member.id).email, member.email);
+  assert.deepEqual(rosterById.get(created.member.id).identities, [
+    { provider: member.provider, subject: member.subject },
+  ]);
+  assert.deepEqual(rosterById.get("alex").identities, []);
+  assert.deepEqual(rosterById.get("jordan").identities, []);
+  const progress = await c.send("/api/members");
+  assert.equal(progress.status, 200);
+  assert.deepEqual(
+    progress.members.map((entry) => entry.id).sort(),
+    ["alex", "jordan", created.member.id].sort(),
+  );
+  const addedProgress = progress.members.find((entry) => entry.id === created.member.id);
+  assert.equal(addedProgress.goal, 55);
+  assert.equal(addedProgress.checkpointDate, "2026-10-10");
+  assert.equal(addedProgress.credits, 15);
 });
 
 test("production mode has no demo bypass, no sample public data, and rejects Google login", async () => {

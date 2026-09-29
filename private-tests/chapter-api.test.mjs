@@ -106,8 +106,19 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     }, chairCookie, chairCsrf)).status, 409);
     const roster = await request("/api/roster", undefined, chairCookie);
     assert.equal(roster.status, 200);
-    assert.equal(JSON.stringify(roster.payload).includes("1234"), true);
+    const rosterById = new Map(roster.payload.members.map((entry) => [entry.id, entry]));
+    assert.deepEqual(
+      rosterById.get(added.payload.member.id).identities
+        .map((identity) => `${identity.provider}:${identity.subject}`).sort(),
+      [`login:${added.payload.loginId.toLowerCase()}`, "login:1234"].sort(),
+    );
+    assert.deepEqual(rosterById.get(chair.payload.user.id).identities, []);
     assert.equal(JSON.stringify(roster.payload).includes("d4dc3984-9c89-4ff7-8075-cbe5b2cd18c4"), false);
+    const progress = await request("/api/members", undefined, chairCookie);
+    assert.equal(progress.status, 200);
+    assert.deepEqual(progress.payload.members.map((entry) => entry.id), [added.payload.member.id]);
+    assert.equal(progress.payload.members[0].goal, 40);
+    assert.equal(progress.payload.members[0].checkpointDate, "2026-10-10");
 
     const member = await request("/api/auth/login", {
       identifier: "1234", password: "correct-test-password",
@@ -195,6 +206,9 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       },
     }, chairCookie, chairCsrf);
     assert.equal(nextSemester.status, 200, JSON.stringify(nextSemester.payload));
+    const nextProgress = await request("/api/members", undefined, chairCookie);
+    assert.equal(nextProgress.status, 200);
+    assert.equal(nextProgress.payload.members[0].checkpointDate, "2026-10-01");
     const afterSemester = await request("/api/auth/login", {
       identifier: added.payload.loginId, password: "a-long-new-password",
     });
