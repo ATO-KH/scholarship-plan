@@ -1,6 +1,10 @@
 const originalFetch = globalThis.fetch;
 const chairId = "aab93409-383f-4d8a-b443-3d940a277153";
 const memberId = "d4dc3984-9c89-4ff7-8075-cbe5b2cd18c4";
+const passwords = new Map([
+  [chairId, "correct-test-password"],
+  [memberId, "correct-test-password"],
+]);
 const respond = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
@@ -14,7 +18,7 @@ globalThis.fetch = async (input, options = {}) => {
     const body = JSON.parse(options.body);
     const id = body.email === "chair@example.edu" ? chairId :
       body.email === "member@example.edu" ? memberId : null;
-    if (!id || body.password !== "correct-test-password")
+    if (!id || body.password !== passwords.get(id))
       return respond({ error: "invalid_grant" }, 400);
     return respond({
       access_token: "test-access-token", token_type: "bearer",
@@ -27,9 +31,20 @@ globalThis.fetch = async (input, options = {}) => {
   if (url.pathname === "/auth/v1/recover") return respond({});
   if (url.pathname === "/auth/v1/user") {
     const chair = options.headers?.Authorization === "Bearer test-chair-account-token";
+    const id = chair ? chairId : memberId;
+    if (options.method === "PUT") passwords.set(id, JSON.parse(options.body).password);
     return respond(chair
       ? { id: chairId, email: "chair@example.edu" }
       : { id: memberId, email: "member@example.edu" });
+  }
+  if (url.pathname.startsWith("/auth/v1/admin/users/") && options.method === "PUT") {
+    const id = url.pathname.split("/").at(-1);
+    if (!passwords.has(id)) return respond({ error: "not found" }, 404);
+    const password = JSON.parse(options.body).password;
+    if (password === "provider-failure-test-password")
+      return respond({ error: "temporary provider failure" }, 503);
+    passwords.set(id, password);
+    return respond({ id, email: id === chairId ? "chair@example.edu" : "member@example.edu" });
   }
   if (url.pathname.startsWith("/auth/v1/admin/users/") && options.method === "DELETE")
     return respond({});

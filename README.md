@@ -4,7 +4,7 @@ The fuller server-backed version of the Kappa Eta scholarship workflow. The live
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
-The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://scholarship-ato-kh.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. Chapter-managed sign-in is the production direction; the live form stays disabled until the Chair office account and email delivery are ready. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Existing Forms/Sheets records are not automatically migrated.
+The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://scholarship-ato-kh.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. Chapter-managed sign-in is the production direction. The Chair office account can be piloted once its exact Supabase identity is deployed; member invitations still require working email delivery and roster eligibility. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Existing Forms/Sheets records are not automatically migrated.
 
 ## What is implemented
 
@@ -12,7 +12,7 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 - Scholarship Chair review queue, approval/denial, CSV export, member progress, roster controls, and audit history.
 - Private PDF/JPEG/PNG evidence uploads and authenticated downloads.
 - Server-side ownership and chair-role checks, session cookies, and CSRF validation.
-- Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets. A dedicated office account holds the Chair role; Microsoft code remains inactive legacy support.
+- Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets. Members receive a 16-word recovery key on their first sign-in each semester and can use it to reset a password without email. A dedicated office account holds the Chair role; Microsoft code remains inactive legacy support.
 - Chapter membership bound to a stable verified provider identity, not a user-entered role.
 - Canvas OAuth connection, encrypted token storage, refresh handling, and read-only import of the consenting member's released numeric grades.
 - Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.

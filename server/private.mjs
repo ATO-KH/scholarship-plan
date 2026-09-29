@@ -16,7 +16,15 @@ import {
   sendPasswordReset,
   userForAccountToken,
   setPasswordWithToken,
+  setPasswordByAdmin,
 } from "./chapter-auth.mjs";
+import {
+  issueSemesterRecoveryKey,
+  beginRecovery,
+  cancelRecovery,
+  finishRecovery,
+  clearRecoveryKey,
+} from "./recovery.mjs";
 import { rosterStatus, fetchRosterSnapshot } from "./roster.mjs";
 import {
   storageStatus,
@@ -65,6 +73,7 @@ const mode = env.APP_MODE || "demo";
 if (!["demo", "production"].includes(mode))
   throw Error("APP_MODE must be demo or production.");
 const production = mode === "production";
+const chapterEmailReady = env.CHAPTER_EMAIL_READY === "true";
 const authMode = env.AUTH_MODE || "chapter";
 if (!["microsoft", "chapter"].includes(authMode))
   throw Error("AUTH_MODE must be microsoft or chapter.");
@@ -941,6 +950,7 @@ const server = http.createServer(async (req, res) => {
         chapterAuth: {
           enabled: authMode === "chapter",
           configured: chapterAuthConfigured(env) && chairAccountConfigured(env),
+          emailReady: chapterEmailReady,
         },
         canvasConfigured: canvasConfigured(),
         uploadMode: directUploads ? "direct" : "local",
@@ -956,8 +966,9 @@ const server = http.createServer(async (req, res) => {
       const password = typeof input.password === "string" ? input.password : "";
       if (!identifier || identifier.length > 254 || !password || password.length > 1024)
         fail(422, "Enter your email or member ID and password.");
-      await authAttempt("login_attempt", identifier, 10);
       const candidate = await accountForIdentifier(identifier);
+      const attemptKey = candidate?.id || identifier;
+      await authAttempt("login_attempt", attemptKey, 10);
       const bootstrapEmail = env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase();
       const email = candidate?.email ||
         (identifier.toLowerCase() === bootstrapEmail ? bootstrapEmail :
@@ -990,21 +1001,40 @@ const server = http.createServer(async (req, res) => {
         if (!user?.active || (candidate && candidate.id !== user.id) || user.email !== verified.email)
           fail(401, "Invalid sign-in details.");
         await audit("chapter", user.name, "session.login", user.id, "chapter");
-        return issueSession("chapter", user.id, (await currentSession(req))?.id);
+        return { ...await issueSession("chapter", user.id, (await currentSession(req))?.id), user };
       });
-      await clearAuthAttempts("login_attempt", identifier);
+      if (issued.user.role === "member") {
+        try {
+          let state = await stateOf("chapter");
+          if (rosterView(state).required && !rosterView(state).fresh)
+            state = await refreshRoster(issued.session, issued.user);
+          assertRosterEligibility(state, issued.user);
+          issued.recoveryKey = await atomic(async () => {
+            await lockWorkspace("chapter");
+            await assertActiveSession(issued.session, issued.user);
+            return issueSemesterRecoveryKey(db, "chapter", issued.user.id,
+              (await stateOf("chapter")).semesterGeneration || "initial");
+          });
+        } catch (error) {
+          await db.prepare("DELETE FROM sessions WHERE id=?").run(issued.session.id);
+          throw error;
+        }
+      }
+      await clearAuthAttempts("login_attempt", attemptKey);
       return json(res, 200,
-        await sessionPayload(issued.session, await member("chapter", issued.session.member_id)),
+        { ...await sessionPayload(issued.session, await member("chapter", issued.session.member_id)),
+          ...(issued.recoveryKey ? { recoveryKey: issued.recoveryKey } : {}) },
         { "Set-Cookie": issued.cookie });
     }
     if (production && authMode === "chapter" && path === "/api/auth/request-reset" && req.method === "POST") {
       requireOrigin(req);
       if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      if (!chapterEmailReady) fail(503, "Email resets are not available yet. Members can use their recovery key; the Chair must contact the portal administrator.");
       const input = await readBody(req);
       const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
       if (!identifier || identifier.length > 254) fail(422, "Enter your email or member ID.");
-      await authAttempt("reset_attempt", identifier, 3);
       const candidate = await accountForIdentifier(identifier);
+      await authAttempt("reset_attempt", candidate?.id || identifier, 3);
       const linked = candidate && await db
         .prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
         .get("chapter", "supabase", candidate.id);
@@ -1016,6 +1046,56 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return json(res, 200, { message: "If the account is active, a reset link will be sent." });
+    }
+    if (production && authMode === "chapter" && path === "/api/auth/recover-key" && req.method === "POST") {
+      requireOrigin(req);
+      if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      const input = await readBody(req);
+      const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
+      const recoveryKey = typeof input.recoveryKey === "string" ? input.recoveryKey : "";
+      const password = typeof input.password === "string" ? input.password : "";
+      if (!identifier || identifier.length > 254 || recoveryKey.length > 256 ||
+          password.length < 12 || password.length > 1024)
+        fail(422, "Enter your member ID, 16-word recovery key, and a new password of at least 12 characters.");
+      const candidate = await accountForIdentifier(identifier);
+      await authAttempt("recovery_attempt", candidate?.id || identifier, 5);
+      const linked = candidate?.active && candidate.role === "member" && await db
+        .prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
+        .get("chapter", "supabase", candidate.id);
+      if (!linked) fail(401, "The account or recovery key was not recognized.");
+      const reservation = await atomic(async () => {
+        await lockWorkspace("chapter");
+        const current = await member("chapter", candidate.id);
+        if (!current?.active || current.role !== "member")
+          fail(401, "The account or recovery key was not recognized.");
+        const generation = (await stateOf("chapter")).semesterGeneration || "initial";
+        const result = await beginRecovery(db, "chapter", current.id, generation, recoveryKey);
+        if (!result) fail(401, "The account or recovery key was not recognized.");
+        await audit("chapter", current.name, "account.recovery.started", current.id);
+        return result;
+      });
+      try {
+        await setPasswordByAdmin(env, linked.subject, password);
+      } catch {
+        await atomic(async () => {
+          await lockWorkspace("chapter");
+          await cancelRecovery(db, "chapter", candidate.id, reservation);
+        });
+        fail(503, "The password could not be changed. Your recovery key remains valid; try again or contact the portal administrator.");
+      }
+      const nextKey = await atomic(async () => {
+        await lockWorkspace("chapter");
+        const generation = (await stateOf("chapter")).semesterGeneration || "initial";
+        const key = await finishRecovery(db, "chapter", candidate.id, generation, reservation);
+        await audit("chapter", candidate.name, "account.recovery.complete", candidate.id,
+          "Password changed; portal sessions revoked; recovery key rotated.");
+        return key;
+      });
+      await clearAuthAttempts("recovery_attempt", candidate.id);
+      return json(res, 200, {
+        message: "Password changed. Save the new 16-word recovery key, then sign in.",
+        recoveryKey: nextKey,
+      }, { "Set-Cookie": cookie(sessionCookie, "", 0) });
     }
     if (production && authMode === "chapter" && path === "/api/auth/complete" && req.method === "POST") {
       requireOrigin(req);
@@ -1034,11 +1114,15 @@ const server = http.createServer(async (req, res) => {
         fail(403, "This account is not approved for the portal.");
       if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id)))
         fail(401, "This account link has expired. Request a new one.");
-      if (user?.role === "chair") {
-        await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
-          .run("chapter", user.id);
-        await audit("chapter", "Scholarship Chair Office", "chair.password_change", user.id,
-          "Existing portal sessions revoked after password update.");
+      if (user) {
+        await atomic(async () => {
+          await lockWorkspace("chapter");
+          await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
+            .run("chapter", user.id);
+          if (user.role === "member") await clearRecoveryKey(db, "chapter", user.id);
+          await audit("chapter", user.name, "account.password_change", user.id,
+            "Existing portal sessions revoked after password update.");
+        });
       }
       return json(res, 200, { message: "Password set. Sign in to continue." });
     }
@@ -1883,6 +1967,7 @@ const server = http.createServer(async (req, res) => {
         chair(user);
         if (production && authMode === "chapter") {
           if (!chapterAuthConfigured(env)) fail(503, "Chapter invitations are not ready.");
+          if (!chapterEmailReady) fail(503, "Member invitations require email delivery. The Chair must configure and test chapter email first.");
           const invited = validateChapterMember(input);
           const existing = await db
             .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
@@ -1961,6 +2046,7 @@ const server = http.createServer(async (req, res) => {
       const resetMember = path.match(/^\/api\/roster\/([^/]+)\/reset-password$/);
       if (resetMember && req.method === "POST" && production && authMode === "chapter") {
         chair(user);
+        if (!chapterEmailReady) fail(503, "Email resets are not available yet. Members can use their recovery key.");
         const target = await member(session.workspace, resetMember[1]);
         if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
         const linked = await db.prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")

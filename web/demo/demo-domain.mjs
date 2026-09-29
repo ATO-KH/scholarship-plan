@@ -2,9 +2,9 @@ export const TODAY = "2026-09-28";
 export const members = [
   {
     id: "alex",
-    name: "Alex Brooks",
-    initials: "AB",
-    email: "alex.brooks@example.edu",
+    name: "Noah Knickerbocker",
+    initials: "NK",
+    email: "noah.knickerbocker@example.edu",
     role: "member",
     tier: 2,
     credits: 15,

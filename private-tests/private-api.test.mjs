@@ -690,7 +690,7 @@ test("production mode has no demo bypass, no sample public data, and rejects Goo
   assert.ok(
     config.payload.providers.every((provider) => provider.configured === false),
   );
-  assert.ok(!JSON.stringify(config.payload).includes("Alex Brooks"));
+  assert.ok(!JSON.stringify(config.payload).includes("Noah Knickerbocker"));
   assert.ok(!JSON.stringify(config.payload).includes("S-1008"));
   assert.equal((await request(production, "/api/session")).status, 401);
   assert.equal(

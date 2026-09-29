@@ -1,9 +1,9 @@
 "use strict";
 (() => {
   const key = "ato-scholarship-theme";
-  let theme = "light";
+  let theme = "dark";
   try {
-    if (localStorage.getItem(key) === "dark") theme = "dark";
+    if (localStorage.getItem(key) === "light") theme = "light";
   } catch {}
   document.documentElement.dataset.theme = theme;
 

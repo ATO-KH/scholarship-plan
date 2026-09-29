@@ -312,6 +312,25 @@ main {
   max-width: 620px;
   margin: 0 auto;
 }
+.recovery-key {
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font: 600 15px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.recovery-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 16px 0;
+  font-weight: 600;
+}
+.recovery-confirm input {
+  margin-top: 6px;
+}
 .sandbox-panel {
   margin-top: 16px;
 }
@@ -545,6 +564,27 @@ th:last-child {
 td strong {
   font-weight: 600;
   color: var(--ink);
+}
+.submission-row {
+  cursor: pointer;
+}
+.submission-row:hover td,
+.submission-row:focus-within td {
+  background: color-mix(in srgb, var(--gold) 9%, var(--white));
+}
+.submission-title {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+.submission-title:hover,
+.submission-title:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 td small {
   display: block;

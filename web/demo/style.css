@@ -527,6 +527,27 @@ td strong {
   font-weight: 600;
   color: var(--ink);
 }
+.submission-row {
+  cursor: pointer;
+}
+.submission-row:hover td,
+.submission-row:focus-within td {
+  background: color-mix(in srgb, var(--gold) 9%, var(--white));
+}
+.submission-title {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+.submission-title:hover,
+.submission-title:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 td small {
   display: block;
   font-size: 13px;

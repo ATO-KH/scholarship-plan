@@ -108,13 +108,13 @@ function navigation() {
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
         ["earn", "Point rules"],
-        ["access", "Privacy & sign-in"],
+        ["faq", "FAQ"],
       ]
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
         ["earn", "Ways to earn points"],
-        ["access", "Privacy & sign-in"],
+        ["faq", "FAQ"],
       ];
   $("#nav").innerHTML = links
     .map(
@@ -135,6 +135,7 @@ function route() {
   let p =
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
   if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
+  if (p === "access") p = "faq";
   if (user?.role === "chair" && ["overview", "submissions"].includes(p))
     p = "queue";
   if (user?.role === "member" && ["queue", "members"].includes(p))
@@ -153,7 +154,7 @@ async function refresh() {
 function rows(items, chair = false) {
   if (!items.length)
     return `<div class="empty"><h3>${filter === "pending" ? "YOU’RE ALL CAUGHT UP." : "NO SUBMISSIONS HERE YET."}</h3><p>${chair ? "Try another status to see previous decisions." : "Submit an activity to start building your points."}</p>${chair ? "" : newButton()}</div>`;
-  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th><th class="right">${chair ? "Review" : "Details"}</th></tr></thead><tbody>${items.map((s) => `<tr>${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.owner === "alex" ? "Tier 2 · 1.00×" : "Tier 1 · 1.15×"}</small></td>` : ""}<td><strong>${esc(s.title)}</strong><small>${esc(activity(s.activity).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td><td class="right"><button class="table-link" data-action="detail" data-id="${s.id}">${chair && s.status === "pending" ? "Review" : "View"}</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.owner === "alex" ? "Tier 2 · 1.00×" : "Tier 1 · 1.15×"}</small></td>` : ""}<td><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(activity(s.activity).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
@@ -217,14 +218,14 @@ function earnPage() {
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
-function accessPage() {
+function faqPage() {
   main.innerHTML =
     heading(
-      "MEMBERSHIP & PRIVACY",
-      "ACCOUNT ACCESS",
-      "The member and chair views have different permissions in the real portal.",
+      "WORK IN PROGRESS",
+      "FAQ",
+      "Answers to common questions about the scholarship portal.",
     ) +
-    `<div class="notice"><strong>Demo access is simulated.</strong> The public demo buttons select fictional browser-stored records. It does not authenticate a real chapter member or connect to Supabase.</div><div class="flow"><article><div class="step">01</div><h3>CHAPTER LOGIN</h3><p>The planned production login verifies a chapter-managed email and password. Members may use an assigned badge or portal ID as an alias.</p></article><article><div class="step">02</div><h3>APPROVED MEMBERSHIP</h3><p>The portal binds that account to an approved member record. The Scholarship Chair manages invitations and access.</p></article><article><div class="step">03</div><h3>PRIVATE RECORDS</h3><p>The production server checks ownership or chair role on every academic request.</p></article></div><section class="panel"><h2>WHAT EACH ROLE CAN SEE</h2><p><strong>Member:</strong> own submissions, own evidence, approved points, and review notes.</p><p><strong>Scholarship Chair:</strong> member submissions, confidential evidence, review actions, and progress totals.</p></section>`;
+    `<div class="notice info"><strong>This FAQ is still being built.</strong> Ask the Scholarship Chair if you need help beyond these basics.</div><section class="panel prose"><h2>How do I get an account or reset my password?</h2><p>The Scholarship Chair manages member access. Ask the chair for an invitation or password-reset link. Once your chapter account is active, you can sign in with your email, badge number, or assigned portal ID.</p><h2>Why are my pending points missing from my total?</h2><p>Pending points are estimates. Only points approved by the Scholarship Chair count toward your semester goal.</p><h2>Who can see my submissions?</h2><p>Members see their own submissions, points, and review notes. The Scholarship Chair can review member submissions and supporting evidence.</p><p class="footnote">This demo uses fictional accounts and records. It does not create a chapter login.</p></section>`;
 }
 function apiPage() {
   main.innerHTML =
@@ -252,7 +253,7 @@ function render() {
       members: membersPage,
       earn: earnPage,
       canvas: canvasPage,
-      access: accessPage,
+      faq: faqPage,
       api: apiPage,
     })[route()] || overview
   )();

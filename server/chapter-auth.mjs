@@ -105,3 +105,11 @@ export async function setPasswordWithToken(env, accessToken, password, expectedU
   if (data?.id !== expectedUserId) return null;
   return { id: data.id, email: data.email?.toLowerCase() };
 }
+
+export async function setPasswordByAdmin(env, userId, password) {
+  const { adminClient } = clients(env);
+  const { data, error } = await adminClient.auth.admin.updateUserById(userId, { password });
+  if (error || data?.user?.id !== userId)
+    throw Error("The password could not be changed. Try again shortly or request an email reset.");
+  return data.user.id;
+}

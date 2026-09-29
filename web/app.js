@@ -142,14 +142,14 @@ function navigation() {
         ["semester", "Semester settings"],
         ["audit", "Review history"],
         ["earn", "Point rules"],
-        ["access", "Privacy & sign-in"],
+        ["faq", "FAQ"],
         ["setup", "Connections"],
       ]
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
         ["earn", "Ways to earn points"],
-        ["access", "Privacy & sign-in"],
+        ["faq", "FAQ"],
         ["setup", "Connections"],
       ];
   $("#nav").innerHTML = links
@@ -170,6 +170,7 @@ function route() {
   let p =
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
   if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
+  if (p === "access") p = "faq";
   if (user?.role === "chair" && ["overview", "submissions"].includes(p))
     p = "queue";
   if (
@@ -191,7 +192,7 @@ async function refresh() {
 function rows(items, chair = false) {
   if (!items.length)
     return `<div class="empty"><h3>${filter === "pending" ? "YOU’RE ALL CAUGHT UP." : "NO SUBMISSIONS HERE YET."}</h3><p>${chair ? "Try another status to see previous decisions." : "Submit an activity to start building your points."}</p>${chair ? "" : newButton()}</div>`;
-  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th><th class="right">${chair ? "Review" : "Details"}</th></tr></thead><tbody>${items.map((s) => `<tr>${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td><strong>${esc(s.title)}</strong><small>${esc(activity(s.activity).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td><td class="right"><button class="table-link" data-action="detail" data-id="${s.id}">${chair && s.status === "pending" ? "Review" : "View"}</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(activity(s.activity).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
@@ -255,15 +256,14 @@ function earnPage() {
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
-function accessPage() {
-  const chapter = appConfig.chapterAuth?.enabled;
+function faqPage() {
   main.innerHTML =
     heading(
-      "",
-      "Privacy and access",
-      "How sign-in and record access work.",
+      "WORK IN PROGRESS",
+      "FAQ",
+      "Answers to common questions about the scholarship portal.",
     ) +
-    `<div class="flow"><article><div class="step">01</div><h3>${chapter ? "VERIFY CHAPTER ACCOUNT" : "VERIFY UNIVERSITY IDENTITY"}</h3><p>${chapter ? "The member signs in with an approved badge number, portal ID, or email and a personal password verified by Supabase Auth." : "Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain."}</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>${chapter ? "The Scholarship Chair uses a dedicated office account. It invites and deactivates member accounts. The chapter roster remains a separate eligibility check." : "The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server."}</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>CANVAS IS SEPARATE</h2><p>Portal sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
+    `<div class="notice info"><strong>This FAQ is still being built.</strong> Ask the Scholarship Chair if you need help beyond these basics.</div><section class="panel prose"><h2>How do I get an account or reset my password?</h2><p>The Scholarship Chair manages member access. Once your chapter account is active, you can sign in with your email, badge number, or assigned portal ID. ${appConfig.chapterAuth?.emailReady ? "Use the sign-in page to request a password-reset email." : "Email invitations and reset links are not available yet. Members who have already signed in can use their saved 16-word recovery key to reset a password."}</p><h2>Why are my pending points missing from my total?</h2><p>Pending points are estimates. Only points approved by the Scholarship Chair count toward your semester goal.</p><h2>Who can see my submissions?</h2><p>Members see their own submissions, points, and review notes. The Scholarship Chair can review member submissions and supporting evidence.</p>${isDemo() ? '<p class="footnote">The demo uses fictional accounts and records. It does not create a chapter login.</p>' : ""}</section>`;
 }
 
 function apiPage() {
@@ -288,7 +288,7 @@ function render() {
       members: membersPage,
       earn: earnPage,
       canvas: canvasPage,
-      access: accessPage,
+      faq: faqPage,
       api: apiPage,
       setup: setupPage,
       roster: rosterPage,
@@ -301,6 +301,22 @@ function openModal(title, subtitle, body) {
   $("#modal-content").innerHTML =
     `<div class="modal-heading"><div><h2>${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ""}</div><button class="close" data-action="close" aria-label="Close dialog">×</button></div>${body}`;
   if (!modal.open) modal.showModal();
+}
+function recoveryKeyContent(key) {
+  return `<div class="notice info"><strong>Save these 16 words now.</strong><p>This key is shown only once. Keep it somewhere private so you can reset your password if you lose access to your email. The Scholarship Chair cannot see or retrieve it.</p></div><p class="recovery-key" aria-label="Your new 16-word recovery key">${esc(key)}</p><label class="recovery-confirm"><input type="checkbox" id="saved-recovery-key"> I saved this key in a private place.</label><div class="modal-actions"><button class="button gold" id="recovery-key-done" type="button" disabled>Continue</button></div>`;
+}
+function showRecoveryKeyModal(key, onSaved) {
+  openModal("YOUR RECOVERY KEY", "Shown once for this semester", recoveryKeyContent(key));
+  modal.dataset.recoveryLocked = "1";
+  modal.querySelector(".modal-heading .close").hidden = true;
+  $("#saved-recovery-key").onchange = (event) => {
+    $("#recovery-key-done").disabled = !event.target.checked;
+  };
+  $("#recovery-key-done").onclick = () => {
+    delete modal.dataset.recoveryLocked;
+    modal.close();
+    onSaved?.();
+  };
 }
 function formError(message) {
   let e = $("#form-error");
@@ -598,7 +614,7 @@ async function handleAction(e) {
     openModal(
       "YOUR ACCOUNT",
       esc(user.name),
-      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair office account" : "Chapter member"}</p>${user.role === "chair" && appConfig.chapterAuth?.enabled ? '<p class="muted">At a chair transition, use the chapter inbox to reset this password. That signs out existing portal sessions.</p>' : ""}<div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
+      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair office account" : "Chapter member"}</p>${user.role === "chair" && appConfig.chapterAuth?.enabled ? `<p class="muted">${appConfig.chapterAuth.emailReady ? "At a chair transition, use the chapter inbox to reset this password. That signs out existing portal sessions." : "The chapter inbox is not connected for password resets yet. Contact the portal administrator if this office account needs recovery."}</p>` : ""}<div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
     );
     return;
   }
@@ -680,7 +696,10 @@ document.addEventListener("click", handleAction);
 person.addEventListener("change", () => switchUser(person.value));
 window.addEventListener("hashchange", render);
 modal.addEventListener("click", (e) => {
-  if (e.target === modal) modal.close();
+  if (e.target === modal && !modal.dataset.recoveryLocked) modal.close();
+});
+modal.addEventListener("cancel", (event) => {
+  if (modal.dataset.recoveryLocked) event.preventDefault();
 });
 async function init() {
   try {
@@ -772,14 +791,38 @@ function loginPage() {
       event.preventDefault();
       const values = Object.fromEntries(new FormData(event.target));
       try {
-        await api("/api/auth/login", { method: "POST", body: values });
-        await init();
+        const signedIn = await api("/api/auth/login", { method: "POST", body: values });
+        if (signedIn.recoveryKey) showRecoveryKeyModal(signedIn.recoveryKey, init);
+        else await init();
       } catch (error) { $("#form-error").textContent = error.message; }
     };
     $("#forgot-password").onclick = () => {
       const panel = $(".login-panel");
-      panel.innerHTML = `<h2>Reset password</h2><p>Enter your approved email, badge number, or portal ID. The Chair office account uses its chapter inbox.</p><form id="reset-request"><div class="field"><label for="reset-id">Email, badge number, or portal ID</label><input id="reset-id" name="identifier" autocomplete="username" required maxlength="254"></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Send reset link</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
+      const emailReady = appConfig.chapterAuth?.emailReady;
+      panel.innerHTML = `<h2>Recover your account</h2><p>Members can use their 16-word recovery key to set a new password.</p><button class="button gold" id="use-recovery-key" type="button">Use recovery key</button>${emailReady ? '<p class="footnote">Or request a link at your approved email.</p><form id="reset-request"><div class="field"><label for="reset-id">Email, badge number, or portal ID</label><input id="reset-id" name="identifier" autocomplete="username" required maxlength="254"></div><div id="form-error" role="alert"></div><button class="button ghost" type="submit">Request email reset</button></form>' : '<p class="footnote">Email resets are not available yet. If you do not have your key, contact the portal administrator. The Scholarship Chair office account must also use the administrator until chapter email is ready.</p>'}<button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
       $("#back-login").onclick = loginPage;
+      $("#use-recovery-key").onclick = () => {
+        panel.innerHTML = `<h2>Use your recovery key</h2><p>Enter the 16 words you saved after your first sign-in this semester.</p><form id="key-recovery"><div class="field"><label for="recovery-id">Email, badge number, or portal ID</label><input id="recovery-id" name="identifier" autocomplete="username" maxlength="254" required></div><div class="field"><label for="recovery-words">16-word recovery key</label><textarea id="recovery-words" name="recoveryKey" rows="4" autocomplete="off" spellcheck="false" required maxlength="256"></textarea></div><div class="field"><label for="recovery-password">New password</label><input id="recovery-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="recovery-confirm-password">Confirm new password</label><input id="recovery-confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Reset password</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
+        $("#back-login").onclick = loginPage;
+        $("#key-recovery").onsubmit = async (event) => {
+          event.preventDefault();
+          const values = Object.fromEntries(new FormData(event.target));
+          if (values.password !== values.confirm) {
+            $("#form-error").textContent = "Passwords do not match.";
+            return;
+          }
+          delete values.confirm;
+          try {
+            const result = await api("/api/auth/recover-key", { method: "POST", body: values });
+            panel.innerHTML = `<h2>Save your new recovery key</h2><p>Your password was changed. The old key no longer works.</p>${recoveryKeyContent(result.recoveryKey)}`;
+            $("#saved-recovery-key").onchange = (event) => {
+              $("#recovery-key-done").disabled = !event.target.checked;
+            };
+            $("#recovery-key-done").onclick = loginPage;
+          } catch (error) { $("#form-error").textContent = error.message; }
+        };
+      };
+      if (!emailReady) return;
       $("#reset-request").onsubmit = async (event) => {
         event.preventDefault();
         try {
@@ -1184,6 +1227,11 @@ async function updateSemesterState() {
 }
 function addMember() {
   if (appConfig.chapterAuth?.enabled) {
+    if (!appConfig.chapterAuth.emailReady) {
+      openModal("MEMBER INVITATIONS ARE NOT READY", "Chapter email delivery has not been configured.",
+        '<p>Set up and test chapter email before sending invitations. No account invitation was sent.</p><div class="modal-actions"><button class="button gold" data-action="close">Close</button></div>');
+      return;
+    }
     openModal("ADD A CHAPTER MEMBER", "An invitation will be emailed. The member chooses their own password.",
       `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
     $("#roster-form").onsubmit = async (event) => {
