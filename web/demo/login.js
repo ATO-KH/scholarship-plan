@@ -5,10 +5,13 @@ const password = document.querySelector("#password");
 const error = document.querySelector("#login-error");
 const suggested = new URL(location.href).searchParams.get("account");
 if (["demo-member", "demo-chair"].includes(suggested)) username.value = suggested;
+function enterDemo(persona) {
+  sessionStorage.setItem("ato-scholarship-demo-login", persona);
+  location.assign(`/demo/#${persona === "chair" ? "queue" : "overview"}`);
+}
 for (const button of document.querySelectorAll("[data-account]")) {
   button.addEventListener("click", () => {
-    username.value = button.dataset.account;
-    password.focus();
+    enterDemo(button.dataset.account === "demo-chair" ? "chair" : "alex");
   });
 }
 form.addEventListener("submit", (event) => {
@@ -19,6 +22,5 @@ form.addEventListener("submit", (event) => {
     error.hidden = false;
     return;
   }
-  sessionStorage.setItem("ato-scholarship-demo-login", persona);
-  location.assign(`/demo/#${persona === "chair" ? "queue" : "overview"}`);
+  enterDemo(persona);
 });

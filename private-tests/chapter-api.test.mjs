@@ -76,6 +76,9 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     const demoLogin = await fetch(base + "/demo/login");
     assert.equal(demoLogin.status, 200);
     assert.match(await demoLogin.text(), /demo-member/);
+    const demoLoginScript = await fetch(base + "/demo/login.js");
+    assert.equal(demoLoginScript.status, 200);
+    assert.match(await demoLoginScript.text(), /enterDemo\(button\.dataset\.account/);
     const demoScript = await fetch(base + "/demo/app.js");
     assert.equal(demoScript.status, 200);
     assert.match(await demoScript.text(), /location\.pathname\.startsWith\("\/demo\/"\)/);
