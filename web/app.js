@@ -263,7 +263,7 @@ function accessPage() {
       "Privacy and access",
       "How sign-in and record access work.",
     ) +
-    `<div class="flow"><article><div class="step">01</div><h3>${chapter ? "VERIFY CHAPTER ACCOUNT" : "VERIFY UNIVERSITY IDENTITY"}</h3><p>${chapter ? "The member signs in with an approved badge number, portal ID, or email and a personal password verified by Supabase Auth." : "Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain."}</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>${chapter ? "The Scholarship Chair uses a dedicated office account. It invites and deactivates member accounts. The chapter roster remains a separate eligibility check." : "The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server."}</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>CANVAS IS SEPARATE</h2><p>Portal sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
+    `<div class="flow"><article><div class="step">01</div><h3>${chapter ? "VERIFY CHAPTER ACCOUNT" : "VERIFY UNIVERSITY IDENTITY"}</h3><p>${chapter ? "The member signs in with an approved badge number, portal ID, or email and a personal password verified by Supabase Auth." : "Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain."}</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>${chapter ? "The Scholarship Chair uses a dedicated office account. It invites and deactivates member accounts. The chapter roster remains a separate eligibility check." : "The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server."}</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>CANVAS IS SEPARATE</h2><p>Portal sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
 }
 
 function apiPage() {
@@ -314,6 +314,81 @@ function formError(message) {
   e.textContent = message;
   e.scrollIntoView({ block: "nearest" });
 }
+function activityPicker() {
+  const first = rules.activities[0];
+  return `<div class="activity-picker"><input id="activity-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="activity-options" value="${esc(first.name)}" autocomplete="off" required><button id="activity-open" type="button" aria-label="Show activity types">▾</button><div id="activity-options" class="activity-options" role="listbox" hidden></div><input id="activity" name="activity" type="hidden" value="${esc(first.id)}"></div><small>Type to find an activity or open the list.</small>`;
+}
+function wireActivityPicker() {
+  const search = $("#activity-search"), selected = $("#activity"),
+    menu = $("#activity-options"), picker = search.closest(".activity-picker");
+  let matches = [], active = 0;
+  function close() {
+    menu.hidden = true;
+    search.setAttribute("aria-expanded", "false");
+    search.removeAttribute("aria-activedescendant");
+  }
+  function highlight() {
+    menu.querySelectorAll("[role=option]").forEach((option, index) => {
+      option.classList.toggle("active", index === active);
+      option.setAttribute("aria-selected", String(index === active));
+    });
+    if (matches.length) search.setAttribute("aria-activedescendant", `activity-option-${active}`);
+    else search.removeAttribute("aria-activedescendant");
+  }
+  function open(all = false) {
+    const query = search.value.trim().toLowerCase();
+    matches = rules.activities.filter((a) => all || a.name.toLowerCase().includes(query));
+    active = Math.max(0, matches.findIndex((a) => a.id === selected.value));
+    menu.innerHTML = matches.length
+      ? matches.map((a, index) => `<button id="activity-option-${index}" type="button" role="option" data-id="${esc(a.id)}">${esc(a.name)}</button>`).join("")
+      : '<div class="activity-empty">No matching activity</div>';
+    menu.hidden = false;
+    search.setAttribute("aria-expanded", "true");
+    highlight();
+  }
+  function choose(index) {
+    const match = matches[index];
+    if (!match) return;
+    search.value = match.name;
+    selected.value = match.id;
+    close();
+    updateForm();
+    search.focus();
+  }
+  search.addEventListener("input", () => {
+    const match = rules.activities.find((a) => a.name.toLowerCase() === search.value.trim().toLowerCase());
+    selected.value = match?.id || "";
+    updateForm();
+    open();
+  });
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { close(); return; }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (menu.hidden) open();
+      else if (matches.length) {
+        active = (active + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+        highlight();
+      }
+    }
+    if (event.key === "Enter" && !menu.hidden && matches.length) {
+      event.preventDefault();
+      choose(active);
+    }
+  });
+  $("#activity-open").addEventListener("click", () => {
+    search.focus();
+    if (menu.hidden) open(true);
+    else close();
+  });
+  menu.addEventListener("click", (event) => {
+    const option = event.target.closest("[role=option]");
+    if (option) choose(matches.findIndex((a) => a.id === option.dataset.id));
+  });
+  picker.addEventListener("focusout", (event) => {
+    if (!picker.contains(event.relatedTarget)) close();
+  });
+}
 function newSubmission() {
   if (user.role !== "member") return;
   openModal(
@@ -321,9 +396,9 @@ function newSubmission() {
     isDemo()
       ? "Add a fictional activity for the Scholarship Chair to review."
       : "Add an activity and evidence for the Scholarship Chair to review.",
-    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity">Activity type</label><select id="activity" name="activity">${rules.activities.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("")}</select></div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10)}" max="${rules.today}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept="application/pdf,image/png,image/jpeg">${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10)}" max="${rules.today}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept="application/pdf,image/png,image/jpeg">${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
-  $("#activity").addEventListener("change", updateForm);
+  wireActivityPicker();
   $("#evidence-file").addEventListener("change", uploadEvidence);
   $("#claim-form").addEventListener("input", estimate);
   $("#claim-form").addEventListener("submit", submitClaim);
@@ -331,6 +406,12 @@ function newSubmission() {
 }
 function updateForm() {
   const a = activity($("#activity").value);
+  if (!a) {
+    $("#proof-hint").textContent = "Choose an activity type from the list.";
+    $("#dynamic-field").innerHTML = "";
+    $("#estimate").textContent = "—";
+    return;
+  }
   $("#proof-hint").textContent = a.proof;
   $("#dynamic-field").innerHTML = a.grade
     ? '<label for="grade">Grade (%)</label><input id="grade" name="grade" type="number" min="0" max="100" step="0.01" value="95" required>'
@@ -346,6 +427,10 @@ function estimate() {
     a = activity(data.activity),
     g = Number(data.grade),
     q = Number(data.quantity || 1);
+  if (!a) {
+    $("#estimate").textContent = "—";
+    return;
+  }
   let base =
     a.id === "major"
       ? g >= 95
@@ -367,6 +452,11 @@ function estimate() {
 }
 async function submitClaim(e) {
   e.preventDefault();
+  if (!$("#activity").value) {
+    formError("Choose an activity type from the list.");
+    $("#activity-search").focus();
+    return;
+  }
   if (busy) return;
   busy = true;
   const button = e.submitter;

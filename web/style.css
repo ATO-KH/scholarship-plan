@@ -196,45 +196,42 @@ p {
   flex-shrink: 0;
 }
 .workspace {
-  display: grid;
-  grid-template-columns: 245px minmax(0, 1fr);
+  display: block;
   min-height: calc(100vh - 135px);
 }
 .sidebar {
   background: white;
-  border-right: 1px solid var(--line);
-  padding: 34px 22px;
-  display: flex;
-  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+  padding: 0 42px;
 }
 .portal-label {
-  font-size: 12px;
-  color: var(--muted);
-  letter-spacing: 1.7px;
-  padding: 0 14px;
-  margin-bottom: 18px;
+  display: none;
 }
 nav {
-  display: grid;
-  gap: 5px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
 }
 nav a {
-  padding: 12px 15px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
   text-decoration: none;
   font-size: 16px;
   color: #516077;
-  border-left: 3px solid transparent;
+  white-space: nowrap;
+  border-bottom: 3px solid transparent;
 }
 nav a.active {
   background: #eef2f7;
-  border-left-color: var(--gold);
+  border-bottom-color: var(--gold);
   color: var(--navy);
 }
 nav a:hover {
   background: #f4f6f9;
 }
 .nav-count {
-  float: right;
   font: 600 13px var(--sans);
   padding: 0 7px;
   background: var(--navy);
@@ -778,6 +775,61 @@ dialog::backdrop {
   min-height: 80px;
   resize: vertical;
 }
+.activity-picker {
+  position: relative;
+}
+.activity-picker input[type="text"] {
+  padding-right: 48px;
+}
+.activity-picker button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 42px;
+  height: calc(100% - 2px);
+  border: 0;
+  border-left: 1px solid #b9c5d3;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+}
+.activity-picker button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -3px;
+}
+.activity-options {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #b9c5d3;
+  background: white;
+  box-shadow: 3px 3px 0 rgba(18, 42, 70, 0.16);
+}
+.activity-options[hidden] {
+  display: none;
+}
+.activity-options [role="option"] {
+  position: static;
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 10px 11px;
+  border: 0;
+  border-bottom: 1px solid #e1e6ec;
+  text-align: left;
+}
+.activity-options [role="option"].active,
+.activity-options [role="option"]:hover {
+  background: #eaf0f7;
+}
+.activity-empty {
+  padding: 10px 11px;
+  color: var(--muted);
+}
 .field small {
   display: block;
   color: var(--muted);
@@ -987,14 +1039,11 @@ dialog::backdrop {
   }
 }
 @media (max-width: 1100px) {
-  .workspace {
-    grid-template-columns: 210px minmax(0, 1fr);
-  }
   main {
     padding: 30px 27px;
   }
   .sidebar {
-    padding: 30px 12px;
+    padding: 0 27px;
   }
   .page-heading {
     align-items: start;
@@ -1037,10 +1086,7 @@ dialog::backdrop {
     display: block;
   }
   .sidebar {
-    padding: 16px 20px;
-    display: block;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    padding: 0 20px;
   }
   .portal-label {
     display: none;

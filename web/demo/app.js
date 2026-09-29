@@ -222,7 +222,7 @@ function accessPage() {
       "ACCOUNT ACCESS",
       "The member and chair views have different permissions in the real portal.",
     ) +
-    `<div class="notice"><strong>Demo access is simulated.</strong> The public demo password only selects fictional browser-stored records. It does not authenticate a real chapter member or connect to Supabase.</div><div class="flow"><article><div class="step">01</div><h3>CHAPTER LOGIN</h3><p>The planned production login verifies a chapter-managed email and password. Members may use an assigned badge or portal ID as an alias.</p></article><article><div class="step">02</div><h3>APPROVED MEMBERSHIP</h3><p>The portal binds that account to an approved member record. The Scholarship Chair manages invitations and access.</p></article><article><div class="step">03</div><h3>PRIVATE RECORDS</h3><p>The production server checks ownership or chair role on every academic request.</p></article></div><section class="panel"><h2>WHAT EACH ROLE CAN SEE</h2><p><strong>Member:</strong> own submissions, own evidence, approved points, and review notes.</p><p><strong>Scholarship Chair:</strong> member submissions, confidential evidence, review actions, and progress totals.</p><p><strong>Other chapter officers:</strong> no academic evidence access by default.</p></section>`;
+    `<div class="notice"><strong>Demo access is simulated.</strong> The public demo password only selects fictional browser-stored records. It does not authenticate a real chapter member or connect to Supabase.</div><div class="flow"><article><div class="step">01</div><h3>CHAPTER LOGIN</h3><p>The planned production login verifies a chapter-managed email and password. Members may use an assigned badge or portal ID as an alias.</p></article><article><div class="step">02</div><h3>APPROVED MEMBERSHIP</h3><p>The portal binds that account to an approved member record. The Scholarship Chair manages invitations and access.</p></article><article><div class="step">03</div><h3>PRIVATE RECORDS</h3><p>The production server checks ownership or chair role on every academic request.</p></article></div><section class="panel"><h2>WHAT EACH ROLE CAN SEE</h2><p><strong>Member:</strong> own submissions, own evidence, approved points, and review notes.</p><p><strong>Scholarship Chair:</strong> member submissions, confidential evidence, review actions, and progress totals.</p></section>`;
 }
 function apiPage() {
   main.innerHTML =
@@ -272,20 +272,101 @@ function formError(message) {
   e.textContent = message;
   e.scrollIntoView({ block: "nearest" });
 }
+function activityPicker() {
+  const first = rules.activities[0];
+  return `<div class="activity-picker"><input id="activity-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="activity-options" value="${esc(first.name)}" autocomplete="off" required><button id="activity-open" type="button" aria-label="Show activity types">▾</button><div id="activity-options" class="activity-options" role="listbox" hidden></div><input id="activity" name="activity" type="hidden" value="${esc(first.id)}"></div><small>Type to find an activity or open the list.</small>`;
+}
+function wireActivityPicker() {
+  const search = $("#activity-search"), selected = $("#activity"),
+    menu = $("#activity-options"), picker = search.closest(".activity-picker");
+  let matches = [], active = 0;
+  function close() {
+    menu.hidden = true;
+    search.setAttribute("aria-expanded", "false");
+    search.removeAttribute("aria-activedescendant");
+  }
+  function highlight() {
+    menu.querySelectorAll("[role=option]").forEach((option, index) => {
+      option.classList.toggle("active", index === active);
+      option.setAttribute("aria-selected", String(index === active));
+    });
+    if (matches.length) search.setAttribute("aria-activedescendant", `activity-option-${active}`);
+    else search.removeAttribute("aria-activedescendant");
+  }
+  function open(all = false) {
+    const query = search.value.trim().toLowerCase();
+    matches = rules.activities.filter((a) => all || a.name.toLowerCase().includes(query));
+    active = Math.max(0, matches.findIndex((a) => a.id === selected.value));
+    menu.innerHTML = matches.length
+      ? matches.map((a, index) => `<button id="activity-option-${index}" type="button" role="option" data-id="${esc(a.id)}">${esc(a.name)}</button>`).join("")
+      : '<div class="activity-empty">No matching activity</div>';
+    menu.hidden = false;
+    search.setAttribute("aria-expanded", "true");
+    highlight();
+  }
+  function choose(index) {
+    const match = matches[index];
+    if (!match) return;
+    search.value = match.name;
+    selected.value = match.id;
+    close();
+    updateForm();
+    search.focus();
+  }
+  search.addEventListener("input", () => {
+    const match = rules.activities.find((a) => a.name.toLowerCase() === search.value.trim().toLowerCase());
+    selected.value = match?.id || "";
+    updateForm();
+    open();
+  });
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { close(); return; }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (menu.hidden) open();
+      else if (matches.length) {
+        active = (active + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+        highlight();
+      }
+    }
+    if (event.key === "Enter" && !menu.hidden && matches.length) {
+      event.preventDefault();
+      choose(active);
+    }
+  });
+  $("#activity-open").addEventListener("click", () => {
+    search.focus();
+    if (menu.hidden) open(true);
+    else close();
+  });
+  menu.addEventListener("click", (event) => {
+    const option = event.target.closest("[role=option]");
+    if (option) choose(matches.findIndex((a) => a.id === option.dataset.id));
+  });
+  picker.addEventListener("focusout", (event) => {
+    if (!picker.contains(event.relatedTarget)) close();
+  });
+}
 function newSubmission() {
   if (user.role !== "member") return;
   openModal(
     "SUBMIT YOUR EFFORT",
     "Add a fictional activity for the Scholarship Chair to review.",
-    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity">Activity type</label><select id="activity" name="activity">${rules.activities.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("")}</select></div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="2026-09-28" min="2026-09-14" max="2026-09-28" required><small>Demo date: September 28, 2026.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>Use a fictional sample for this demonstration. Real file uploads are not enabled.</p><button class="button ghost small" type="button" data-action="sample">Attach sample evidence</button></div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="2026-09-28" min="2026-09-14" max="2026-09-28" required><small>Demo date: September 28, 2026.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>Use a fictional sample for this demonstration. Real file uploads are not enabled.</p><button class="button ghost small" type="button" data-action="sample">Attach sample evidence</button></div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
-  $("#activity").addEventListener("change", updateForm);
+  wireActivityPicker();
   $("#claim-form").addEventListener("input", estimate);
   $("#claim-form").addEventListener("submit", submitClaim);
   updateForm();
 }
 function updateForm() {
   const a = activity($("#activity").value);
+  if (!a) {
+    $("#proof-hint").textContent = "Choose an activity type from the list.";
+    $("#dynamic-field").innerHTML = "";
+    $("#estimate").textContent = "—";
+    return;
+  }
   $("#proof-hint").textContent = a.proof;
   $("#dynamic-field").innerHTML = a.grade
     ? '<label for="grade">Grade (%)</label><input id="grade" name="grade" type="number" min="0" max="100" step="0.01" value="95" required>'
@@ -301,6 +382,10 @@ function estimate() {
     a = activity(data.activity),
     g = Number(data.grade),
     q = Number(data.quantity || 1);
+  if (!a) {
+    $("#estimate").textContent = "—";
+    return;
+  }
   let base =
     a.id === "major"
       ? g >= 95
@@ -322,6 +407,11 @@ function estimate() {
 }
 async function submitClaim(e) {
   e.preventDefault();
+  if (!$("#activity").value) {
+    formError("Choose an activity type from the list.");
+    $("#activity-search").focus();
+    return;
+  }
   if (busy) return;
   busy = true;
   const button = e.submitter;
