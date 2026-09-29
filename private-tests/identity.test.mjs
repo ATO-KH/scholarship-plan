@@ -74,12 +74,13 @@ async function verified(transaction, overrides = {}, signingKey = privateKey) {
 test("provider availability fails closed without exact organization configuration", () => {
   assert.deepEqual(
     identityProviders({}).map((p) => p.configured),
-    [false, false],
+    [false],
   );
   assert.deepEqual(
     identityProviders(env).map((p) => p.configured),
-    [true, true],
+    [true],
   );
+  assert.deepEqual(identityProviders(env).map((p) => p.id), ["microsoft"]);
   for (const badTenant of [
     "common",
     "organizations",
@@ -99,9 +100,13 @@ test("provider availability fails closed without exact organization configuratio
     "https://school.example.edu",
     "school.example.edu/",
   ]) {
-    assert.equal(
-      identityProviders({ ...env, GOOGLE_HOSTED_DOMAIN: domain })[1].configured,
-      false,
+    assert.throws(
+      () =>
+        startIdentityFlow("google", {
+          env: { ...env, GOOGLE_HOSTED_DOMAIN: domain },
+          redirectUri,
+        }),
+      /Google sign-in is not configured/,
     );
   }
   assert.throws(

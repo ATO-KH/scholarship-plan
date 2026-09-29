@@ -76,10 +76,7 @@ function configuration(provider, env) {
 }
 
 export function identityProviders(env = process.env) {
-  return [
-    { id: "microsoft", name: "Microsoft" },
-    { id: "google", name: "Google" },
-  ].map((provider) => {
+  return [{ id: "microsoft", name: "Microsoft" }].map((provider) => {
     try {
       configuration(provider.id, env);
       return { ...provider, configured: true };

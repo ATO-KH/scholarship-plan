@@ -651,8 +651,8 @@ test("roster changes are chair-only, validate identifiers, and reject duplicate 
   const member = {
     name: "Roster Test",
     email: "roster.test@example.edu",
-    provider: "google",
-    subject: "stable-google-subject-for-roster-test",
+    provider: "microsoft",
+    subject: "12345678-1234-1234-1234-123456789abc:oid:bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
     tier: 2,
     credits: 15,
   };
@@ -663,6 +663,7 @@ test("roster changes are chair-only, validate identifiers, and reject duplicate 
     { ...member, name: "" },
     { ...member, email: "not-an-email" },
     { ...member, provider: "arbitrary" },
+    { ...member, provider: "google" },
     { ...member, subject: "" },
     { ...member, tier: 9 },
     { ...member, credits: -1 },
@@ -681,7 +682,7 @@ test("roster changes are chair-only, validate identifiers, and reject duplicate 
   assert.ok(JSON.stringify(roster).includes(member.email));
 });
 
-test("production mode has no demo bypass, no sample public data, and refuses unconfigured Google login", async () => {
+test("production mode has no demo bypass, no sample public data, and rejects Google login", async () => {
   const config = await request(production, "/api/config");
   assert.equal(config.status, 200);
   assert.equal(config.payload.mode, "production");
@@ -701,7 +702,8 @@ test("production mode has no demo bypass, no sample public data, and refuses unc
     ).status,
     404,
   );
-  assert.equal((await request(production, "/auth/google")).status, 503);
+  assert.deepEqual(config.payload.providers.map((provider) => provider.id), ["microsoft"]);
+  assert.equal((await request(production, "/auth/google")).status, 404);
   assert.equal((await request(production, "/api/submissions")).status, 401);
   assert.equal((await request(production, "/api/members")).status, 401);
 });

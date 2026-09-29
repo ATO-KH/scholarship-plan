@@ -1,6 +1,6 @@
 # Operator runbook: Vercel and Supabase
 
-This is the deployment procedure for the implemented private portal. It does **not** mean a Vercel account, Supabase project, university app registration, service account, or production deployment has been created. Live university sign-in, Canvas, Google Sheets, hosted database, and hosted file behavior still require acceptance testing.
+This is the deployment procedure for the implemented private portal. A Vercel production deployment and Supabase project exist, but the university app registration and roster service account are not configured. Live university sign-in, Canvas, Google Sheets, and complete hosted evidence workflows still require acceptance testing.
 
 The hosted architecture is Vercel's Node server entrypoint, Supabase PostgreSQL for application state, and a private Supabase Storage bucket for evidence. Local demo mode continues to use disposable SQLite and local fictional files. No member records or credentials belong in the repository.
 
@@ -72,7 +72,7 @@ Set `BOOTSTRAP_PROVIDER=microsoft` and `BOOTSTRAP_SUBJECT=TENANT_GUID:oid:OBJECT
 
 The first successful login of that exact identity creates the chair **only if no chair already exists**. Merely changing the bootstrap environment does not promote another account once a chair is present. Preserve a documented operator recovery procedure for the trusted roster and directory binding. The Microsoft fallback subject, if no `oid` is issued, is `TENANT_GUID:sub:SUBJECT`; verify the actual provider output before provisioning it. See [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference).
 
-Google university sign-in is optional. If enabled, configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, the exact `GOOGLE_HOSTED_DOMAIN`, and callback `https://YOUR_HOST/auth/google/callback`. Membership still binds to the verified Google `sub`, not an email suffix. The university may need to approve the application and consent. Provider setup is not completed by committing these placeholders.
+Microsoft is the only portal sign-in provider. University approval may be required for app registration or consent. Provider setup is not completed by committing these placeholders. The scholarship chair controls portal membership and review access; Microsoft controls account passwords and the university's sign-in policy.
 
 ## 5. Connect the roster eligibility sheet
 

@@ -658,7 +658,7 @@ function validateRoster(input) {
     name.length > 100 ||
     email.length > 254 ||
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-    !["microsoft", "google"].includes(input.provider) ||
+    input.provider !== "microsoft" ||
     !subject ||
     subject.length > 512 ||
     /[\u0000-\u001f]/.test(subject) ||
@@ -907,6 +907,7 @@ const server = http.createServer(async (req, res) => {
       /^\/auth\/(microsoft|google)(\/callback)?$/,
     );
     if (identityRoute && req.method === "GET") {
+      if (identityRoute[1] !== "microsoft") fail(404, "Not found.");
       if (!production)
         fail(
           403,

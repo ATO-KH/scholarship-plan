@@ -4,7 +4,7 @@ The fuller server-backed version of the Kappa Eta scholarship workflow. The sepa
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
-The hosted implementation now targets **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. See the [deployment and operator runbook](DEPLOYMENT.md) for explicit schema migration, university identity setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Hosting accounts, a production deployment, and live university/provider acceptance are still required; existing Forms/Sheets records are not automatically migrated.
+The hosted implementation runs at [scholarship-plan.vercel.app](https://scholarship-plan.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. See the [deployment and operator runbook](DEPLOYMENT.md) for university identity setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. University sign-in and live end-to-end acceptance are still required; existing Forms/Sheets records are not automatically migrated.
 
 ## What is implemented
 
@@ -12,7 +12,7 @@ The hosted implementation now targets **Vercel Node.js 24 + Supabase PostgreSQL 
 - Scholarship Chair review queue, approval/denial, CSV export, member progress, roster controls, and audit history.
 - Private PDF/JPEG/PNG evidence uploads and authenticated downloads.
 - Server-side ownership and chair-role checks, session cookies, and CSRF validation.
-- Microsoft Entra ID and Google OpenID Connect authorization-code integrations with PKCE and signed-token verification.
+- Microsoft Entra ID authorization-code sign-in with PKCE and signed-token verification.
 - Chapter membership bound to a stable verified provider identity, not a user-entered email or role.
 - Canvas OAuth connection, encrypted token storage, refresh handling, and read-only import of the consenting member's released numeric grades.
 - Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.
@@ -21,7 +21,7 @@ The hosted implementation now targets **Vercel Node.js 24 + Supabase PostgreSQL 
 - Google Sheets eligibility using explicit portal member IDs and Active flags, with a 15-minute freshness requirement and chair recovery access.
 - Confirmed semester reset with a durable deletion manifest, retryable cleanup, preserved member accounts, and configurable next-semester dates.
 
-**Live identity-provider, Canvas, roster-sheet, Vercel, and Supabase behavior still need deployment acceptance.** Provider tests use local fixtures and mocks; they are not proof of a successful university connection or a deployed service. The runbook separates these checks from local verification.
+**Live university identity, Canvas, roster-sheet, and complete evidence workflows still need acceptance testing.** Provider tests use local fixtures and mocks; they are not proof of a successful university connection. The runbook separates these checks from the deployed homepage and database checks.
 
 ## Local setup
 
@@ -51,15 +51,13 @@ The local version uses Node's built-in SQLite module. The hosted version uses Po
 
 **Canvas:** connect through the university's OAuth authorization page → select released assignments → confirm each activity category → import as pending claims → chair reviews. The portal never changes Canvas grades or submits coursework.
 
-**Roster:** the chair adds members using their provider and stable verified identity ID, then copies each portal-issued member ID into the eligibility sheet. The sheet reads only `Portal Member ID` and `Active`; names and guessed email addresses do not authorize access. Deactivation blocks further portal access. The initial chair is configured on the server, not selected by the first visitor.
+**Roster:** the chair adds members using their stable verified Microsoft identity ID, then copies each portal-issued member ID into the eligibility sheet. The sheet reads only `Portal Member ID` and `Active`; names, badge numbers, and guessed email addresses do not authorize access. Deactivation blocks further portal access. The initial chair is configured on the server, not selected by the first visitor. Microsoft handles the account password; the chair controls portal membership and point reviews.
 
 **Semester:** preview the records to be removed, provide the next semester's explicit dates, and type the confirmation. Old academic access is removed immediately; the new semester opens after durable evidence cleanup finishes. Member accounts remain. This does not erase separately retained backups or downloaded copies.
 
-## Configure Microsoft or Google sign-in
+## Configure Microsoft sign-in
 
 Set production configuration only on the server. `.env` and generated databases/files are ignored by Git. `.env.example` contains blank placeholders only.
-
-### Microsoft Entra ID
 
 1. Register an application for the approved university tenant.
 2. Set `MICROSOFT_TENANT_ID` to the exact tenant GUID, and provide the client ID and secret.
@@ -69,14 +67,7 @@ Set production configuration only on the server. `.env` and generated databases/
 
 Microsoft email and `preferred_username` are mutable metadata. They are not used as proof of chapter membership. Authorization binds provider + stable subject to the roster.
 
-### Google university accounts
-
-1. Configure a Google OAuth web client for the chapter portal.
-2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and the exact `GOOGLE_HOSTED_DOMAIN`.
-3. Register `https://YOUR_HOST/auth/google/callback`.
-4. The server requires the exact signed hosted-domain claim and `email_verified=true`. Use the verified Google `sub` as the roster subject.
-
-For both providers, the flow uses state, nonce, PKCE, an expiring server-side transaction, signature verification, issuer/audience/expiry checks, and a server session. No provider access token is returned to browser code. The university may need to approve app registration or consent.
+The flow uses state, nonce, PKCE, an expiring server-side transaction, signature verification, issuer/audience/expiry checks, and a server session. No provider access token is returned to browser code. The university may need to approve app registration or consent.
 
 ## Configure Canvas
 
@@ -102,7 +93,7 @@ The connector retains numeric zero grades, excludes null/unposted/excused grades
 
 A Canvas group weight is not the individual assignment's course weight. The member selects the category and the chair verifies it. Canvas current percentages also do not establish transcript GPA.
 
-Microsoft or Google login is independent of Canvas authorization. A member connects Canvas separately. Disconnecting removes locally stored Canvas tokens and invalidates pending connections; already-reviewed scholarship records remain in the portal's history. Revoke the application in Canvas settings to remove the Canvas-side authorization.
+Microsoft login is independent of Canvas authorization. A member connects Canvas separately. Disconnecting removes locally stored Canvas tokens and invalidates pending connections; already-reviewed scholarship records remain in the portal's history. Revoke the application in Canvas settings to remove the Canvas-side authorization.
 
 ## Deployment and storage
 
@@ -125,7 +116,7 @@ The original submission/points endpoints remain compatible with the public demo'
 | GET      | `/api/config`                          | Non-secret mode/provider availability                 |
 | GET      | `/api/session`                         | Authenticated user and CSRF token                     |
 | POST     | `/api/logout`                          | End current session                                   |
-| GET      | `/auth/microsoft`, `/auth/google`      | Start university identity flow                        |
+| GET      | `/auth/microsoft`                      | Start university identity flow                        |
 | GET      | `/auth/:provider/callback`             | Validate callback and create session                  |
 | POST     | `/api/uploads`                         | Store owner-bound evidence                            |
 | POST     | `/api/uploads/init`                    | Reserve hosted evidence and issue direct upload grant |
@@ -166,7 +157,6 @@ Based on the supplied 2026 scholarship plan; the original PDF is not committed:
 
 - [Microsoft OpenID Connect](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)
 - [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)
-- [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect)
 - [Canvas OAuth](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
 - [Canvas developer keys](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys)
 - [Canvas assignments](https://developerdocs.instructure.com/services/canvas/resources/assignments)
