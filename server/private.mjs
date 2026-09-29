@@ -2049,7 +2049,7 @@ const server = http.createServer(async (req, res) => {
     };
     if (req.method !== "GET" || !mapping[path]) fail(404, "Not found.");
     const file = mapping[path];
-    const contents = await readFile(resolve(root, "dist", file));
+    const contents = await readFile(resolve(root, "web", file));
     res.writeHead(200, {
       "Content-Type": {
         ".html": "text/html; charset=utf-8",

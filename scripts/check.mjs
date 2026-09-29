@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 const root = resolve(import.meta.dirname, "..");
 if (Number(process.versions.node.split(".")[0]) < 24)
   throw Error("Node.js 24 or newer is required.");
-for (const directory of ["server", "scripts", "dist"]) {
+for (const directory of ["server", "scripts", "web"]) {
   for (const entry of await readdir(resolve(root, directory))) {
     if (!/\.(mjs|js)$/.test(entry)) continue;
     const result = spawnSync(
@@ -19,8 +19,8 @@ for (const directory of ["server", "scripts", "dist"]) {
 JSON.parse(await readFile(resolve(root, "vercel.json"), "utf8"));
 await Promise.all(
   [
-    "dist/index.html",
-    "dist/style.css",
+    "web/index.html",
+    "web/style.css",
     "server.mjs",
     "server/migrations/001_postgres.sql",
   ].map((path) => readFile(resolve(root, path))),

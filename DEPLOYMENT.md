@@ -8,6 +8,12 @@ The hosted architecture is Vercel's Node server entrypoint, Supabase PostgreSQL 
 
 Use the chapter's controlled Vercel and Supabase accounts. Import this **private** repository into a Vercel project. Set Node.js **24.x**; the repository pins pnpm and the dependency lockfile. Set `ENABLE_EXPERIMENTAL_COREPACK=1` in the Production environment so Vercel honors the pinned pnpm version, including when the install command is overridden. The install command is `pnpm install --frozen-lockfile`, and the build check is `pnpm check`. `server.mjs` is the Node entrypoint; `vercel.json` sets a 120-second invocation limit. See [Vercel's Corepack configuration](https://vercel.com/docs/builds/configure-a-build#corepack).
 
+The deployment configuration excludes local environment files, Vercel caches, Git metadata, test fixtures, and working data from dependency tracing as well as uploads. Keep both exclusion lists when changing the build: tracing a local Vercel cache can break packaging or include files that do not belong in the server bundle.
+
+Browser assets live in `web/`. Do not rename that directory to `dist/`, `build/`, or `output/`: Vercel's Node builder searches those directories after the build command and can mistake the browser's `app.js` for the compiled server. Verify the packaged server handler and asset inventory after changing deployment settings; a successful build alone does not prove that the correct program was packaged.
+
+Vercel Hobby currently rejects Git integration with a private organization repository. Keep the source private. Use an authorized personal private repository or direct CLI deployments to the linked project; direct deployments do not enable automatic deployment on Git pushes. Confirm the linked account and project before deploying, and complete the database, storage, and identity setup below first.
+
 Choose the final HTTPS hostname first. Set `PUBLIC_ORIGIN` to that exact origin, such as `https://scholarship.example.edu`, without a path, query, or credentials. Register the same origin's identity and Canvas callback URLs. A different temporary hostname is not interchangeable with the configured origin.
 
 Enter the placeholders from [.env.vercel.example](.env.vercel.example) in **Vercel's Production environment only**. Do not copy production secrets to Preview or Development. This application rejects Vercel Preview mode and refuses hosted SQLite/local-file fallback. A private Git repository, deployment protection, and `noindex` headers do not replace member authentication.

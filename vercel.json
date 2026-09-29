@@ -6,7 +6,8 @@
   "functions": {
     "server.mjs": {
       "maxDuration": 120,
-      "includeFiles": "{dist,server/migrations}/**"
+      "includeFiles": "{web,server/migrations}/**",
+      "excludeFiles": "{.vercel/**,.git/**,.env*,data/**,uploads/**,tests/**,private-tests/**,coverage/**,**/*.sqlite*,**/*.tar.gz}"
     }
   },
   "headers": [

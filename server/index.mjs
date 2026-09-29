@@ -59,7 +59,7 @@ const server = http.createServer(async (req, res) => {
         "/app.js": "app.js",
       };
       if (!mapping[path]) return json(res, 404, { error: "Not found" });
-      const data = await readFile(resolve(root, "dist", mapping[path]));
+      const data = await readFile(resolve(root, "web", mapping[path]));
       res.writeHead(200, {
         "Content-Type": {
           ".html": "text/html; charset=utf-8",
