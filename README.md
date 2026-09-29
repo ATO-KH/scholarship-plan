@@ -1,10 +1,10 @@
 # ATO Scholarship Portal — private edition
 
-The fuller server-backed version of the Kappa Eta scholarship workflow. The live portal hosts an isolated fictional sandbox at [demo sign-in](https://scholarship-plan.vercel.app/demo/login); the separate public proof of concept remains at [ato-scholarship-demo](https://github.com/matasvai/ato-scholarship-demo).
+The fuller server-backed version of the Kappa Eta scholarship workflow. The live portal hosts an isolated fictional sandbox at [demo sign-in](https://scholarship-ato-kh.vercel.app/demo/login); the separate public proof of concept remains at [ato-scholarship-demo](https://github.com/matasvai/ato-scholarship-demo).
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
-The hosted implementation runs at [scholarship-plan.vercel.app](https://scholarship-plan.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. Chapter-managed sign-in is the production direction; the live form stays disabled until the Chair office account and email delivery are ready. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Existing Forms/Sheets records are not automatically migrated.
+The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://scholarship-ato-kh.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. Chapter-managed sign-in is the production direction; the live form stays disabled until the Chair office account and email delivery are ready. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Existing Forms/Sheets records are not automatically migrated.
 
 ## What is implemented
 
