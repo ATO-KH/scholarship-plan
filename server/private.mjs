@@ -2266,7 +2266,12 @@ const server = http.createServer(async (req, res) => {
       fail(404, "API endpoint not found.");
     }
     if (path === "/demo" && req.method === "GET") {
-      res.writeHead(302, { Location: "/demo/login" });
+      res.writeHead(302, { Location: "/demo/" });
+      return res.end();
+    }
+    if (["/demo/login", "/demo/login.html"].includes(path) && req.method === "GET") {
+      const account = url.searchParams.get("account") === "demo-chair" ? "chair" : "member";
+      res.writeHead(302, { Location: `/demo/?account=${account}` });
       return res.end();
     }
     const mapping = {
@@ -2277,13 +2282,10 @@ const server = http.createServer(async (req, res) => {
       "/style.css": "style.css",
       "/theme.css": "theme.css",
       "/theme.js": "theme.js",
+      "/ato-logo.png": "ato-logo.png",
       "/app.js": "app.js",
       "/demo/": "demo/index.html",
       "/demo/index.html": "demo/index.html",
-      "/demo/login": "demo/login.html",
-      "/demo/login.html": "demo/login.html",
-      "/demo/login.css": "demo/login.css",
-      "/demo/login.js": "demo/login.js",
       "/demo/style.css": "demo/style.css",
       "/demo/app.js": "demo/app.js",
       "/demo/demo-worker.js": "demo/demo-worker.js",
@@ -2299,6 +2301,7 @@ const server = http.createServer(async (req, res) => {
         ".css": "text/css; charset=utf-8",
         ".js": "text/javascript; charset=utf-8",
         ".mjs": "text/javascript; charset=utf-8",
+        ".png": "image/png",
       }[extname(file)],
     });
     res.end(contents);

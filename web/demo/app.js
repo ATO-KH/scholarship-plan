@@ -4,9 +4,11 @@ const PAGES_MODE =
   location.hostname.endsWith(".github.io") ||
   location.pathname.startsWith("/demo/") ||
   new URL(location.href).searchParams.has("pages-demo");
-const demoLogin = sessionStorage.getItem("ato-scholarship-demo-login");
-if (location.pathname.startsWith("/demo/") && !["alex", "chair"].includes(demoLogin))
-  location.replace("/demo/login");
+const requestedDemoAccount = new URL(location.href).searchParams.get("account");
+const selectedDemoAccount = requestedDemoAccount === "chair" ? "chair" : requestedDemoAccount === "member" ? "alex" : null;
+if (selectedDemoAccount)
+  sessionStorage.setItem("ato-scholarship-demo-login", selectedDemoAccount);
+const demoLogin = selectedDemoAccount || sessionStorage.getItem("ato-scholarship-demo-login") || "alex";
 const $ = (s) => document.querySelector(s),
   esc = (s) =>
     String(s ?? "").replace(
@@ -222,7 +224,7 @@ function accessPage() {
       "ACCOUNT ACCESS",
       "The member and chair views have different permissions in the real portal.",
     ) +
-    `<div class="notice"><strong>Demo access is simulated.</strong> The public demo password only selects fictional browser-stored records. It does not authenticate a real chapter member or connect to Supabase.</div><div class="flow"><article><div class="step">01</div><h3>CHAPTER LOGIN</h3><p>The planned production login verifies a chapter-managed email and password. Members may use an assigned badge or portal ID as an alias.</p></article><article><div class="step">02</div><h3>APPROVED MEMBERSHIP</h3><p>The portal binds that account to an approved member record. The Scholarship Chair manages invitations and access.</p></article><article><div class="step">03</div><h3>PRIVATE RECORDS</h3><p>The production server checks ownership or chair role on every academic request.</p></article></div><section class="panel"><h2>WHAT EACH ROLE CAN SEE</h2><p><strong>Member:</strong> own submissions, own evidence, approved points, and review notes.</p><p><strong>Scholarship Chair:</strong> member submissions, confidential evidence, review actions, and progress totals.</p></section>`;
+    `<div class="notice"><strong>Demo access is simulated.</strong> The public demo buttons select fictional browser-stored records. It does not authenticate a real chapter member or connect to Supabase.</div><div class="flow"><article><div class="step">01</div><h3>CHAPTER LOGIN</h3><p>The planned production login verifies a chapter-managed email and password. Members may use an assigned badge or portal ID as an alias.</p></article><article><div class="step">02</div><h3>APPROVED MEMBERSHIP</h3><p>The portal binds that account to an approved member record. The Scholarship Chair manages invitations and access.</p></article><article><div class="step">03</div><h3>PRIVATE RECORDS</h3><p>The production server checks ownership or chair role on every academic request.</p></article></div><section class="panel"><h2>WHAT EACH ROLE CAN SEE</h2><p><strong>Member:</strong> own submissions, own evidence, approved points, and review notes.</p><p><strong>Scholarship Chair:</strong> member submissions, confidential evidence, review actions, and progress totals.</p></section>`;
 }
 function apiPage() {
   main.innerHTML =
@@ -234,12 +236,12 @@ function apiPage() {
         : "Real HTTP requests from this browser to the local demo backend.",
       `<button class="button gold" data-action="ping">${PAGES_MODE ? 'Run a demo request' : 'Run a live request'}</button>`,
     ) +
-    `<div class="integration-grid"><section class="panel"><span class="status approved">${PAGES_MODE ? "Browser simulation" : "Live demo API"}</span><h3 style="margin-top:16px">SUBMISSIONS & POINTS</h3><p>${PAGES_MODE ? "Service-worker requests, browser rules, IndexedDB records, and simulated role checks." : "HTTP endpoints, server-side rules, SQLite records, review history, and role checks."}</p></section><section class="panel"><span class="status pending">Not connected</span><h3 style="margin-top:16px">CHAPTER LOGIN</h3><p>The real chapter account system is separate from this demo password.</p></section><section class="panel"><span class="status pending">Not connected</span><h3 style="margin-top:16px">CANVAS / DRIVE / GRAPH</h3><p>Sample Canvas import is available. Live provider access is not connected. CSV export works now.</p></section></div><section class="panel"><div class="section-heading"><h2>REQUEST LOG <span class="review-count">${logs.length} requests</span></h2><button class="text-btn" data-action="clear-log">Clear log</button></div><p class="footnote">Select a request to inspect its actual payload and response. Cookies and credentials are not logged.</p><div class="api-log">${logs.map((l, i) => `<button class="api-row" data-action="request-detail" data-index="${i}"><span class="http-method">${l.method}</span><code>${esc(l.path)}</code><span class="http-status ${Number(l.status) >= 400 ? "bad" : ""}">${esc(l.status)}</span><span class="muted">${l.ms} ms</span></button>`).join("") || '<p class="muted">No requests yet. Run a live request above.</p>'}</div></section><div class="overview-grid" style="margin-top:24px"><section class="panel"><h2>TRY AN ACCESS CHECK</h2><p>${PAGES_MODE ? "The simulation scopes records to the selected demo member and demonstrates rejected requests. Browser checks are not a security boundary." : "The backend scopes records to the selected demo member and rejects chair-only actions from a member role."}</p><button class="button ghost" data-action="access-check" ${user.role === "chair" ? "disabled" : ""}>Test another member’s record</button><p class="footnote" style="margin-top:12px">${user.role === "chair" ? "Sign out and use the member demo account to try an access check." : "Expected result: 404. Another member’s record is not returned."}</p></section><section class="panel"><h2>WHAT THIS PROVES</h2><p>${PAGES_MODE ? "This hosted version demonstrates the workflow without a backend. Demo credentials select fictional roles, and records stay in this browser." : "The submission and review flow uses a real backend. Role checks are implemented, but switching identities is intentionally open in the demo."}</p><p class="footnote">This is not production authentication. ${PAGES_MODE ? "Fictional records persist only in this browser’s IndexedDB. They are not shared across devices." : "Fictional records persist in the local SQLite database during that session."}</p></section></div>`;
+    `<div class="integration-grid"><section class="panel"><span class="status approved">${PAGES_MODE ? "Browser simulation" : "Live demo API"}</span><h3 style="margin-top:16px">SUBMISSIONS & POINTS</h3><p>${PAGES_MODE ? "Service-worker requests, browser rules, IndexedDB records, and simulated role checks." : "HTTP endpoints, server-side rules, SQLite records, review history, and role checks."}</p></section><section class="panel"><span class="status pending">Not connected</span><h3 style="margin-top:16px">CHAPTER LOGIN</h3><p>The real chapter account system is separate from this demo.</p></section><section class="panel"><span class="status pending">Not connected</span><h3 style="margin-top:16px">CANVAS / DRIVE / GRAPH</h3><p>Sample Canvas import is available. Live provider access is not connected. CSV export works now.</p></section></div><section class="panel"><div class="section-heading"><h2>REQUEST LOG <span class="review-count">${logs.length} requests</span></h2><button class="text-btn" data-action="clear-log">Clear log</button></div><p class="footnote">Select a request to inspect its actual payload and response. Cookies and credentials are not logged.</p><div class="api-log">${logs.map((l, i) => `<button class="api-row" data-action="request-detail" data-index="${i}"><span class="http-method">${l.method}</span><code>${esc(l.path)}</code><span class="http-status ${Number(l.status) >= 400 ? "bad" : ""}">${esc(l.status)}</span><span class="muted">${l.ms} ms</span></button>`).join("") || '<p class="muted">No requests yet. Run a live request above.</p>'}</div></section><div class="overview-grid" style="margin-top:24px"><section class="panel"><h2>TRY AN ACCESS CHECK</h2><p>${PAGES_MODE ? "The simulation scopes records to the selected demo member and demonstrates rejected requests. Browser checks are not a security boundary." : "The backend scopes records to the selected demo member and rejects chair-only actions from a member role."}</p><button class="button ghost" data-action="access-check" ${user.role === "chair" ? "disabled" : ""}>Test another member’s record</button><p class="footnote" style="margin-top:12px">${user.role === "chair" ? "Sign out and use the member demo account to try an access check." : "Expected result: 404. Another member’s record is not returned."}</p></section><section class="panel"><h2>WHAT THIS PROVES</h2><p>${PAGES_MODE ? "This hosted version demonstrates the workflow without a backend. The demo buttons select fictional roles, and records stay in this browser." : "The submission and review flow uses a real backend. Role checks are implemented, but switching identities is intentionally open in the demo."}</p><p class="footnote">This is not production authentication. ${PAGES_MODE ? "Fictional records persist only in this browser’s IndexedDB. They are not shared across devices." : "Fictional records persist in the local SQLite database during that session."}</p></section></div>`;
 }
 function render() {
   if (PAGES_MODE)
     document.querySelector(".demo-bar > span").innerHTML =
-      "<strong>LIVE SITE DEMO</strong> Fictional data · browser-simulated API · demo credentials only";
+      "<strong>LIVE SITE DEMO</strong> Fictional data · browser-simulated API · no chapter account needed";
   if (!user || !rules) return;
   navigation();
   (
@@ -534,7 +536,7 @@ async function handleAction(e) {
   try {
     if (action === "logout") {
       sessionStorage.removeItem("ato-scholarship-demo-login");
-      location.assign("/demo/login");
+      location.assign("/");
     } else if (action === "new") newSubmission();
     else if (action === "close") modal.close();
     else if (action === "detail") await detail(b.dataset.id);
@@ -550,7 +552,7 @@ async function handleAction(e) {
       openModal(
         "DEMO ACCOUNT",
         esc(user.name),
-        `<p>You are viewing the ${user.role === "chair" ? "Scholarship Chair" : "member"} workflow as a fictional user. Sign out to try the other account.</p><p class="muted">This demo password protects no real records. Chapter sign-in is separate.</p><div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
+        `<p>You are viewing the ${user.role === "chair" ? "Scholarship Chair" : "member"} workflow as a fictional user. Sign out to try the other account.</p><p class="muted">This demo contains no real chapter records. Chapter sign-in is separate.</p><div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
       );
     } else if (action === "identity") identity(b.dataset.provider);
     else if (action === "reset") {
@@ -629,6 +631,7 @@ async function init() {
     if (requested) {
       const clean = new URL(location.href);
       clean.searchParams.delete("view");
+      clean.searchParams.delete("account");
       history.replaceState(null, "", clean);
     }
     user = result.user;

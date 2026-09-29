@@ -801,7 +801,7 @@ function loginPage() {
 }
 
 function sandboxLinks() {
-  return `<section class="panel login-panel sandbox-panel"><h2>Explore the demo</h2><p>Use a demo username and password to explore fictional records. Demo accounts are separate from chapter accounts.</p><div class="sandbox-actions"><a class="button ghost" href="/demo/login?account=demo-member">Member demo login</a><a class="button ghost" href="/demo/login?account=demo-chair">Chair demo login</a></div></section>`;
+  return `<section class="panel login-panel sandbox-panel"><h2>Explore the demo</h2><p>Choose a view to explore fictional records in this browser. Demo accounts are separate from chapter accounts.</p><div class="sandbox-actions"><a class="button ghost" href="/demo/?account=member">Open member demo</a><a class="button ghost" href="/demo/?account=chair">Open Chair demo</a></div></section>`;
 }
 
 function accountSetupPage() {

@@ -8,6 +8,10 @@
   font: 600 13px var(--sans);
 }
 .theme-toggle:hover { border-color: var(--gold); }
+.brand-logo { display: block; width: 160px; height: auto; flex: none; }
+@media (max-width: 800px) { .brand-logo { width: 125px; } }
+@media (max-width: 560px) { .brand-logo { width: 94px; } }
+:root[data-theme="dark"] .brand-logo { background: #fff; padding: 4px; }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
