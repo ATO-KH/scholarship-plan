@@ -166,8 +166,13 @@ export async function openDatabase({
         `SELECT version FROM ${schema}.schema_migrations WHERE version=1`,
       );
       if (ready.rowCount !== 1) throw Error("Schema unavailable.");
-    } catch {
+    } catch (error) {
       await pool.end();
+      // PostgreSQL/transport codes aid diagnosis without logging connection
+      // strings, usernames, passwords, SQL text, or provider error messages.
+      console.error("Database readiness failed.", {
+        code: typeof error.code === "string" ? error.code : "unclassified",
+      });
       throw Error(
         "Database is unavailable or its schema is not ready. Run the explicit migration and check server-side database configuration.",
       );
