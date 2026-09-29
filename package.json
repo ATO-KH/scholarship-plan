@@ -6,14 +6,17 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server/private.mjs",
     "demo": "node --env-file-if-exists=.env server/private.mjs",
-    "test": "node --test tests/api.test.mjs private-tests/*.test.mjs"
+    "test": "node --test tests/api.test.mjs private-tests/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "db:migrate": "node --env-file-if-exists=.env server/migrate.mjs"
   },
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "description": "Private scholarship portal with identity, membership, evidence, and Canvas integration support",
   "dependencies": {
-    "jose": "^6.1.0"
+    "jose": "^6.1.0",
+    "pg": "^8.23.0"
   },
   "packageManager": "pnpm@11.19.0"
 }

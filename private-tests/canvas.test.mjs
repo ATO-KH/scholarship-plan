@@ -5,6 +5,7 @@ import {
   startCanvasFlow,
   completeCanvasFlow,
   fetchCanvasAssignments,
+  refreshCanvasTokens,
   sealTokens,
   openTokens,
   CANVAS_SCOPES,
@@ -409,6 +410,66 @@ test("A Canvas 401 triggers exactly one refresh and one retry", async () => {
   );
   assert.equal(refreshes, 1);
   assert.equal(apiCalls, 2);
+});
+
+test("Shared token refresh can be coordinated outside the Canvas connector", async () => {
+  const events = [];
+  await fetchCanvasAssignments({
+    env,
+    tokens: { ...tokens, expiresAt: now() - 1 },
+    now,
+    refreshTokens: async (current, { signal }) => {
+      assert.equal(current.refreshToken, tokens.refreshToken);
+      assert.equal(signal.aborted, false);
+      events.push("database-coordinated-refresh");
+      return { ...tokens, accessToken: "shared-fresh-token" };
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(url.includes("/login/oauth2/token"), false);
+      assert.equal(options.headers.Authorization, "Bearer shared-fresh-token");
+      events.push("read");
+      return json([]);
+    },
+  });
+  assert.deepEqual(events, ["database-coordinated-refresh", "read"]);
+});
+
+test("Cancellation stops later Canvas pages and token exchanges", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(
+    fetchCanvasAssignments({
+      env,
+      tokens,
+      now,
+      signal: controller.signal,
+      fetchImpl: async (url, options) => {
+        calls++;
+        assert.equal(options.signal.aborted, false);
+        controller.abort();
+        assert.equal(options.signal.aborted, true);
+        return json([], {
+          headers: { link: `<${origin}/api/v1/courses?page=2>; rel="next"` },
+        });
+      },
+    }),
+    { code: "CANVAS_NETWORK" },
+  );
+  assert.equal(calls, 1);
+  await assert.rejects(
+    refreshCanvasTokens({
+      env,
+      tokens,
+      now,
+      signal: controller.signal,
+      fetchImpl: async () => {
+        calls++;
+        return json({});
+      },
+    }),
+    { code: "CANVAS_NETWORK" },
+  );
+  assert.equal(calls, 1);
 });
 
 test("Token encryption round-trips, randomizes ciphertext and rejects tampering or the wrong key", () => {

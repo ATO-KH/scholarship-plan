@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "node",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm check",
+  "functions": {
+    "server.mjs": {
+      "maxDuration": 120,
+      "includeFiles": "{dist,server/migrations}/**"
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }
+      ]
+    }
+  ]
+}

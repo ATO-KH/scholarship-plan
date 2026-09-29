@@ -115,10 +115,14 @@ export function startCanvasFlow({
 async function providerFetch(url, options, fetchImpl) {
   let response;
   try {
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(20_000)])
+      : AbortSignal.timeout(20_000);
+    signal.throwIfAborted();
     response = await fetchImpl(url, {
       ...options,
       redirect: "error",
-      signal: AbortSignal.timeout(20_000),
+      signal,
     });
   } catch {
     // Never return exception text: it can contain request URLs or credential data.
@@ -218,11 +222,13 @@ async function exchangeToken(
   fetchImpl,
   now,
   previousRefreshToken,
+  signal,
 ) {
   const response = await providerFetch(
     new URL("/login/oauth2/token", config.origin).href,
     {
       method: "POST",
+      signal,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
@@ -519,33 +525,68 @@ function normalizeAssignment(assignment, course) {
   };
 }
 
+// Shared deployments inject a database-coordinated refresh operation below.
+// This primitive only exchanges tokens; it never persists them itself.
+export async function refreshCanvasTokens({
+  env = process.env,
+  tokens,
+  redirectUri,
+  fetchImpl = globalThis.fetch,
+  now = Date.now,
+  signal,
+}) {
+  const config = canvasConfig(env);
+  const current = checkTokens(tokens);
+  const redirect = redirectUri ? callbackUri(redirectUri).href : null;
+  return exchangeToken(
+    config,
+    {
+      grant_type: "refresh_token",
+      refresh_token: current.refreshToken,
+      ...(redirect ? { redirect_uri: redirect } : {}),
+    },
+    fetchImpl,
+    now,
+    current.refreshToken,
+    signal,
+  );
+}
+
 export async function fetchCanvasAssignments({
   env = process.env,
   tokens,
   onTokenRefresh,
+  refreshTokens,
   redirectUri,
   fetchImpl = globalThis.fetch,
   now = Date.now,
+  signal: callerSignal,
 }) {
   const config = canvasConfig(env);
-  const redirect = redirectUri ? callbackUri(redirectUri).href : null;
+  const deadline = AbortSignal.timeout(90_000);
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, deadline])
+    : deadline;
   let current = checkTokens(tokens);
   let refreshUsed = false;
   let totalPages = 0;
   async function refresh() {
     if (refreshUsed) throw providerFailure(401);
     refreshUsed = true;
-    const refreshed = await exchangeToken(
-      config,
-      {
-        grant_type: "refresh_token",
-        refresh_token: current.refreshToken,
-        ...(redirect ? { redirect_uri: redirect } : {}),
-      },
-      fetchImpl,
-      now,
-      current.refreshToken,
+    signal.throwIfAborted();
+    const refreshed = checkTokens(
+      await (refreshTokens
+        ? refreshTokens(current, { signal })
+        : refreshCanvasTokens({
+            env,
+            tokens: current,
+            redirectUri,
+            fetchImpl,
+            now,
+            signal,
+          })),
     );
+    signal.throwIfAborted();
     // Persist a rotated access token before subsequent requests.
     if (onTokenRefresh) await onTokenRefresh(refreshed);
     current = refreshed;
@@ -556,6 +597,7 @@ export async function fetchCanvasAssignments({
       url,
       {
         method: "GET",
+        signal,
         headers: {
           Accept: "application/json+canvas-string-ids",
           Authorization: `Bearer ${current.accessToken}`,
@@ -569,6 +611,7 @@ export async function fetchCanvasAssignments({
         url,
         {
           method: "GET",
+          signal,
           headers: {
             Accept: "application/json+canvas-string-ids",
             Authorization: `Bearer ${current.accessToken}`,

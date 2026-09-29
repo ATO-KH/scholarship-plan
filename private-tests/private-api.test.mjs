@@ -31,6 +31,18 @@ async function start(mode = "demo", { missingOrigin = false } = {}) {
   const origin = mode === "demo" ? base : "https://portal.example.test";
   const env = {
     ...process.env,
+    DATABASE_URL: "",
+    VERCEL: "",
+    VERCEL_ENV: "",
+    SUPABASE_URL: "",
+    SUPABASE_SECRET_KEY: "",
+    SUPABASE_SERVICE_ROLE_KEY: "",
+    SUPABASE_STORAGE_BUCKET: "",
+    ROSTER_REQUIRED: "",
+    ROSTER_SHEET_ID: "",
+    ROSTER_SHEET_RANGE: "",
+    ROSTER_SERVICE_ACCOUNT_EMAIL: "",
+    ROSTER_SERVICE_ACCOUNT_PRIVATE_KEY: "",
     APP_MODE: mode,
     PORT: String(port),
     PUBLIC_ORIGIN: missingOrigin ? "" : origin,

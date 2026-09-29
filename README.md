@@ -4,6 +4,8 @@ The fuller server-backed version of the Kappa Eta scholarship workflow. The sepa
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
+The hosted implementation now targets **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. See the [deployment and operator runbook](DEPLOYMENT.md) for explicit schema migration, university identity setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Hosting accounts, a production deployment, and live university/provider acceptance are still required; existing Forms/Sheets records are not automatically migrated.
+
 ## What is implemented
 
 - Member submission forms, review status, notes, and approved point totals.
@@ -15,12 +17,15 @@ This repository is **private**. It contains application code and fictional sampl
 - Canvas OAuth connection, encrypted token storage, refresh handling, and read-only import of the consenting member's released numeric grades.
 - Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.
 - A demo mode for testing without university accounts and a production mode with no demo identity switch.
+- Hosted uploads that go directly to private Storage, followed by server-side byte validation and immutable final evidence storage.
+- Google Sheets eligibility using explicit portal member IDs and Active flags, with a 15-minute freshness requirement and chair recovery access.
+- Confirmed semester reset with a durable deletion manifest, retryable cleanup, preserved member accounts, and configurable next-semester dates.
 
-**Live identity-provider and Canvas connections have not been tested against a university tenant.** They require approved app registrations, correct environment values, and an HTTPS deployment. The automated provider tests use signed local token fixtures and mocked Canvas responses; those tests are not proof of a successful university connection.
+**Live identity-provider, Canvas, roster-sheet, Vercel, and Supabase behavior still need deployment acceptance.** Provider tests use local fixtures and mocks; they are not proof of a successful university connection or a deployed service. The runbook separates these checks from local verification.
 
 ## Local setup
 
-Use Node.js 24 or newer. Install the pinned dependency graph with pnpm:
+Use Node.js 24.x. Install the pinned dependency graph with pnpm:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -34,7 +39,9 @@ Open <http://127.0.0.1:4175>. Demo mode starts with fictional members; choose **
 pnpm test
 ```
 
-The package uses the Node built-in SQLite module and the `jose` library for JWT validation. No external database service is needed for the local version.
+The PostgreSQL concurrency test is opt-in locally via `TEST_DATABASE_URL` pointing to a disposable loopback database. CI supplies a PostgreSQL 17 service and runs it automatically. Never point this test at production.
+
+The local version uses Node's built-in SQLite module. The hosted version uses PostgreSQL through `pg`; `jose` verifies identity tokens. No external database service is needed for the local demo. Run local tests with production database, hosting, storage, and roster credentials unset; opt-in hosted acceptance uses separate disposable resources.
 
 ## Main workflows
 
@@ -44,7 +51,9 @@ The package uses the Node built-in SQLite module and the `jose` library for JWT 
 
 **Canvas:** connect through the university's OAuth authorization page → select released assignments → confirm each activity category → import as pending claims → chair reviews. The portal never changes Canvas grades or submits coursework.
 
-**Roster:** the chair adds members using their provider and stable verified identity ID. Deactivation blocks further portal access while preserving the review history. The initial chair is configured on the server, not selected by the first visitor.
+**Roster:** the chair adds members using their provider and stable verified identity ID, then copies each portal-issued member ID into the eligibility sheet. The sheet reads only `Portal Member ID` and `Active`; names and guessed email addresses do not authorize access. Deactivation blocks further portal access. The initial chair is configured on the server, not selected by the first visitor.
+
+**Semester:** preview the records to be removed, provide the next semester's explicit dates, and type the confirmation. Old academic access is removed immediately; the new semester opens after durable evidence cleanup finishes. Member accounts remain. This does not erase separately retained backups or downloaded copies.
 
 ## Configure Microsoft or Google sign-in
 
@@ -97,38 +106,44 @@ Microsoft or Google login is independent of Canvas authorization. A member conne
 
 ## Deployment and storage
 
-This edition requires a Node server, HTTPS, and persistent storage. **It cannot run as a GitHub Pages backend.** GitHub Pages hosts the separate browser-only demo.
+Follow [DEPLOYMENT.md](DEPLOYMENT.md) and [.env.vercel.example](.env.vercel.example). Vercel runs the Node entrypoint; Supabase holds the private database and evidence. **GitHub Pages cannot run this backend.** It hosts only the separate browser demo.
 
-- Set `APP_MODE=production` and `PUBLIC_ORIGIN` to the exact external HTTPS origin.
-- Set a verified bootstrap identity or provision the roster before member use.
-- Put a TLS reverse proxy in front of the loopback Node listener.
-- Preserve the application database and private upload directory on a persistent volume. Restrict filesystem permissions and arrange backups and a retention policy before storing live academic records.
-- Store secrets in the hosting provider's secret configuration. Do not put them in frontend code or commits.
-- Production mode starts without sample members and rejects demo-persona switching.
-- Evidence files are outside the public web directory. Downloads check membership and ownership or chair role and use attachment responses.
+- Production requires the exact HTTPS `PUBLIC_ORIGIN`, a migrated PostgreSQL schema, private bucket settings, and verified identity bindings. Vercel Preview mode cannot use this deployment's production state.
+- Production secrets belong only in Vercel's server-side Production environment. Do not commit them or expose them to browser code.
+- Hosted evidence uses direct signed transfers; the server validates actual bytes before making a submission reference usable. Downloads check the member/chair role and issue a short-lived attachment URL.
+- JSON and CSV responses have a 4 MiB guard. Large histories need pagination or a separate export mechanism before expanding beyond the pilot.
+- Back up database state, Storage object bytes, and the Canvas encryption key separately. A database backup does not include uploaded evidence bytes.
 
-This remains an implementation for review and deployment preparation. A live university OAuth round trip, deployment-specific HTTPS/session behavior, and operational handling of real academic records still need verification.
+Production starts without sample members and rejects demo-persona switching. This repository is deployment preparation; it is not evidence that accounts, credentials, or a live service have been created.
 
 ## API surfaces
 
 The original submission/points endpoints remain compatible with the public demo's local backend. The private edition adds:
 
-| Method   | Path                                   | Purpose                                       |
-| -------- | -------------------------------------- | --------------------------------------------- |
-| GET      | `/api/config`                          | Non-secret mode/provider availability         |
-| GET      | `/api/session`                         | Authenticated user and CSRF token             |
-| POST     | `/api/logout`                          | End current session                           |
-| GET      | `/auth/microsoft`, `/auth/google`      | Start university identity flow                |
-| GET      | `/auth/:provider/callback`             | Validate callback and create session          |
-| POST     | `/api/uploads`                         | Store owner-bound evidence                    |
-| GET      | `/api/uploads/:id`                     | Authenticated evidence download               |
-| GET/POST | `/api/roster`                          | Chair roster listing and creation             |
-| POST     | `/api/roster/:id/deactivate`           | Deactivate member access                      |
-| GET      | `/api/audit`                           | Chair audit history                           |
-| POST     | `/api/integrations/canvas/connect`     | Start member-authorized Canvas OAuth          |
-| POST     | `/api/integrations/canvas/disconnect`  | Remove stored Canvas authorization            |
-| GET      | `/api/integrations/canvas/assignments` | Fetch current member's eligible assignments   |
-| POST     | `/api/integrations/canvas/import`      | Import selected assignments as pending claims |
+| Method   | Path                                   | Purpose                                               |
+| -------- | -------------------------------------- | ----------------------------------------------------- |
+| GET      | `/api/config`                          | Non-secret mode/provider availability                 |
+| GET      | `/api/session`                         | Authenticated user and CSRF token                     |
+| POST     | `/api/logout`                          | End current session                                   |
+| GET      | `/auth/microsoft`, `/auth/google`      | Start university identity flow                        |
+| GET      | `/auth/:provider/callback`             | Validate callback and create session                  |
+| POST     | `/api/uploads`                         | Store owner-bound evidence                            |
+| POST     | `/api/uploads/init`                    | Reserve hosted evidence and issue direct upload grant |
+| POST     | `/api/uploads/:id/complete`            | Validate and finalize hosted evidence                 |
+| GET      | `/api/uploads/:id`                     | Authenticated evidence download                       |
+| POST     | `/api/uploads/cleanup`                 | Chair cleanup of expired upload intents               |
+| GET/POST | `/api/roster`                          | Chair roster listing and creation                     |
+| POST     | `/api/roster/:id/deactivate`           | Deactivate member access                              |
+| GET      | `/api/audit`                           | Chair audit history                                   |
+| GET/POST | `/api/admin/roster-sync`               | Inspect/refresh sheet eligibility                     |
+| GET      | `/api/semester`                        | Current semester and cleanup status                   |
+| GET      | `/api/semester/preview`                | Chair deletion counts and expiring confirmation token |
+| POST     | `/api/semester/reset`                  | Confirm permanent live academic reset                 |
+| POST     | `/api/semester/reset/resume`           | Resume one verified evidence deletion                 |
+| POST     | `/api/integrations/canvas/connect`     | Start member-authorized Canvas OAuth                  |
+| POST     | `/api/integrations/canvas/disconnect`  | Remove stored Canvas authorization                    |
+| GET      | `/api/integrations/canvas/assignments` | Fetch current member's eligible assignments           |
+| POST     | `/api/integrations/canvas/import`      | Import selected assignments as pending claims         |
 
 Authenticated mutations send `X-CSRF-Token` and are checked against the configured origin. API activity redacts token, CSRF, secret, and file-payload fields. Production identity comes from the server session, never from the demo selector or a body parameter.
 
@@ -140,8 +155,8 @@ Based on the supplied 2026 scholarship plan; the original PDF is not committed:
 - Multipliers can produce decimals, while the plan prohibits fractional awards and does not define rounding. Require an explicit integer award and a reason for adjustments.
 - The demo uses Monday–Sunday weeks and reserves weekly capacity for pending claims; the chapter must confirm this convention.
 - Grade-posting date in America/New_York is the import claim date. Confirm that interpretation of the 14-day window.
-- The final submission closing date is configurable through `SEMESTER_END_DATE` (the closing date itself, not the end of finals). If unset, there is no automatic semester closure.
-- The Fall 2026 point target date is `SEMESTER_TARGET_DATE`. Update dates and policy for a new semester before taking submissions.
+- Initial Fall 2026 date fallbacks use `SEMESTER_TARGET_DATE` and `SEMESTER_END_DATE` (the submission closing date itself, not the end of finals). A blank initial closing date means no configured final closure.
+- Subsequent semesters use the chair's persisted name, start, three checkpoints, target, and closing dates. These override the initial date fallbacks; confirm policy dates before opening a new semester.
 - Exact 5% individual course weight is not automatically major or minor.
 - Study-night attendance requirements remain separate from points; this portal does not impose sanctions.
 - The current policy accepts Google Forms or physical evidence. Approve this portal as a submission channel before replacing that process.

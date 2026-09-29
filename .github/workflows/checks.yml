@@ -1,0 +1,38 @@
+name: Portal checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ato_test
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: ato_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ato_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://ato_test:disposable-ci-only@127.0.0.1:5432/ato_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - name: Create public API test roles
+        run: |
+          node --input-type=module -e 'import pg from "pg"; const client = new pg.Client({connectionString:process.env.TEST_DATABASE_URL}); await client.connect(); await client.query("CREATE ROLE anon; CREATE ROLE authenticated;"); await client.end();'
+      - run: pnpm test

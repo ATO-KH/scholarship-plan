@@ -11,3 +11,6 @@ node_modules/
 !.env.example
 uploads/
 coverage/
+
+.vercel/
+!.env.vercel.example
