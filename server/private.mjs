@@ -967,7 +967,7 @@ const server = http.createServer(async (req, res) => {
       if (!identifier || identifier.length > 254 || !password || password.length > 1024)
         fail(422, "Enter your email or member ID and password.");
       const candidate = await accountForIdentifier(identifier);
-      const attemptKey = candidate?.id || identifier;
+      const attemptKey = candidate?.id || identifier.toLowerCase();
       await authAttempt("login_attempt", attemptKey, 10);
       const bootstrapEmail = env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase();
       const email = candidate?.email ||
@@ -1034,7 +1034,7 @@ const server = http.createServer(async (req, res) => {
       const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
       if (!identifier || identifier.length > 254) fail(422, "Enter your email or member ID.");
       const candidate = await accountForIdentifier(identifier);
-      await authAttempt("reset_attempt", candidate?.id || identifier, 3);
+      await authAttempt("reset_attempt", candidate?.id || identifier.toLowerCase(), 3);
       const linked = candidate && await db
         .prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
         .get("chapter", "supabase", candidate.id);
@@ -1058,7 +1058,7 @@ const server = http.createServer(async (req, res) => {
           password.length < 12 || password.length > 1024)
         fail(422, "Enter your member ID, 16-word recovery key, and a new password of at least 12 characters.");
       const candidate = await accountForIdentifier(identifier);
-      await authAttempt("recovery_attempt", candidate?.id || identifier, 5);
+      await authAttempt("recovery_attempt", candidate?.id || identifier.toLowerCase(), 5);
       const linked = candidate?.active && candidate.role === "member" && await db
         .prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
         .get("chapter", "supabase", candidate.id);

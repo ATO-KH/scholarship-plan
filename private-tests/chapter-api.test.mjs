@@ -219,7 +219,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     })).status, 429);
     for (let i = 0; i < 10; i++)
       assert.equal((await request("/api/auth/login", {
-        identifier: "unknown-badge", password: "wrong-password",
+        identifier: i % 2 ? "UNKNOWN-BADGE" : "unknown-badge", password: "wrong-password",
       })).status, 401);
     assert.equal((await request("/api/auth/login", {
       identifier: "unknown-badge", password: "wrong-password",
