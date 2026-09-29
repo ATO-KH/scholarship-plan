@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   chapterAuthConfigured,
+  chairAccountConfigured,
   verifyPassword,
   inviteAccount,
   sendPasswordReset,
@@ -22,6 +23,16 @@ test("chapter auth requires an exact Supabase origin and two distinct server key
   assert.equal(chapterAuthConfigured({ ...env, SUPABASE_URL: "https://chapter-test.supabase.co.evil.test" }), false);
   assert.equal(chapterAuthConfigured({ ...env, SUPABASE_PUBLISHABLE_KEY: "" }), false);
   assert.equal(chapterAuthConfigured({ ...env, SUPABASE_SECRET_KEY: env.SUPABASE_PUBLISHABLE_KEY }), false);
+});
+
+test("Chair office account requires an exact Auth UUID and email", () => {
+  const chair = {
+    CHAIR_AUTH_USER_ID: "aab93409-383f-4d8a-b443-3d940a277153",
+    CHAIR_ACCOUNT_EMAIL: "chair@example.edu",
+  };
+  assert.equal(chairAccountConfigured(chair), true);
+  assert.equal(chairAccountConfigured({ ...chair, CHAIR_AUTH_USER_ID: "" }), false);
+  assert.equal(chairAccountConfigured({ ...chair, CHAIR_ACCOUNT_EMAIL: "" }), false);
 });
 
 test("password verification accepts only a confirmed Supabase user", async () => {

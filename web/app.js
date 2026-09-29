@@ -142,7 +142,6 @@ function navigation() {
         ["semester", "Semester settings"],
         ["audit", "Review history"],
         ["earn", "Point rules"],
-        ["api", "API activity"],
         ["access", "Privacy & sign-in"],
         ["setup", "Connections"],
       ]
@@ -150,8 +149,6 @@ function navigation() {
         ["overview", "Overview"],
         ["submissions", "My submissions"],
         ["earn", "Ways to earn points"],
-        ["canvas", "Import from Canvas"],
-        ["api", "API activity"],
         ["access", "Privacy & sign-in"],
         ["setup", "Connections"],
       ];
@@ -172,6 +169,7 @@ function navigation() {
 function route() {
   let p =
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
+  if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (user?.role === "chair" && ["overview", "submissions"].includes(p))
     p = "queue";
   if (
@@ -263,7 +261,7 @@ function accessPage() {
       "Privacy and access",
       "How sign-in and record access work.",
     ) +
-    `<div class="flow"><article><div class="step">01</div><h3>${chapter ? "VERIFY CHAPTER ACCOUNT" : "VERIFY UNIVERSITY IDENTITY"}</h3><p>${chapter ? "The member signs in with an approved badge number, portal ID, or email and a personal password verified by Supabase Auth." : "Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain."}</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>${chapter ? "The chair creates accounts and can deactivate access. The current chapter roster remains a separate eligibility check." : "The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server."}</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>CANVAS IS SEPARATE</h2><p>Portal sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
+    `<div class="flow"><article><div class="step">01</div><h3>${chapter ? "VERIFY CHAPTER ACCOUNT" : "VERIFY UNIVERSITY IDENTITY"}</h3><p>${chapter ? "The member signs in with an approved badge number, portal ID, or email and a personal password verified by Supabase Auth." : "Microsoft Entra ID verifies the signed-in university account. The server validates token signature, audience, issuer, expiry, and the approved tenant or domain."}</p></article><article><div class="step">02</div><h3>CHECK CHAPTER MEMBERSHIP</h3><p>${chapter ? "The Scholarship Chair uses a dedicated office account. It invites and deactivates member accounts. The chapter roster remains a separate eligibility check." : "The roster binds a provider and a stable verified identity ID to a member. Email text alone cannot grant access. The chair role is assigned on the server."}</p></article><article><div class="step">03</div><h3>ENFORCE RECORD OWNERSHIP</h3><p>Every submission, file, review, and export passes an owner or chair-role check. Members receive their own records; the chair receives the review queue.</p></article></div><section class="panel prose"><h2>ACADEMIC EVIDENCE STAYS PRIVATE</h2><p>Evidence is stored privately. The server checks your access before providing a download; hosted download links expire shortly after they are issued. Other chapter officers do not receive academic-evidence access by default.</p><h2>ONE AUTHORITATIVE RECORD</h2><p>A chair decision updates the submission. Point totals are derived from approved records. CSV exports support reporting without maintaining a second editable points ledger.</p><h2>CANVAS IS SEPARATE</h2><p>Portal sign-in does not authorize Canvas. Each member separately connects Canvas through the university’s authorization page. Tokens stay encrypted on the backend.</p><p class="footnote">${isDemo() ? "This preview is in demo mode. Sample accounts are freely switchable; use fictional records only." : "You are using the authenticated portal. Ask the chair about the chapter’s retention and academic-evidence policy."}</p></section>`;
 }
 
 function apiPage() {
@@ -508,7 +506,7 @@ async function handleAction(e) {
     openModal(
       "YOUR ACCOUNT",
       esc(user.name),
-      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair" : "Chapter member"}</p><div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
+      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair office account" : "Chapter member"}</p>${user.role === "chair" && appConfig.chapterAuth?.enabled ? '<p class="muted">At a chair transition, use the chapter inbox to reset this password. That signs out existing portal sessions.</p>' : ""}<div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
     );
     return;
   }
@@ -677,7 +675,7 @@ function loginPage() {
     "<strong>CHAPTER PORTAL</strong> Approved chapter membership required";
   if (appConfig.chapterAuth?.enabled) {
     main.innerHTML = heading("", "Sign in", "Use your chapter account.") +
-      `<section class="panel login-panel"><h2>Chapter sign-in</h2><p>Enter your badge number, portal ID, or approved email.</p><form id="chapter-login"><div class="field"><label for="login-id">Badge number or email</label><input id="login-id" name="identifier" autocomplete="username" required maxlength="254"></div><div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Sign in</button></form><button class="text-btn" id="forgot-password" type="button">Forgot password?</button>${appConfig.chapterAuth.configured ? "" : '<p class="footnote">Chapter sign-in is being prepared. No live accounts are available yet.</p>'}</section>` + sandboxLinks();
+      `<section class="panel login-panel"><h2>Chapter account sign-in</h2><p>Members can use an approved email, badge number, or assigned portal ID. The Scholarship Chair uses the chapter office account.</p><form id="chapter-login"><div class="field"><label for="login-id">Email, badge number, or portal ID</label><input id="login-id" name="identifier" autocomplete="username" required maxlength="254"></div><div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Sign in</button></form><button class="text-btn" id="forgot-password" type="button" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Forgot password?</button>${appConfig.chapterAuth.configured ? "" : '<p class="footnote">Chapter accounts are being set up. Use the demo below to explore the portal in the meantime.</p>'}</section>` + sandboxLinks();
     $("#chapter-login").onsubmit = async (event) => {
       event.preventDefault();
       const values = Object.fromEntries(new FormData(event.target));
@@ -688,7 +686,7 @@ function loginPage() {
     };
     $("#forgot-password").onclick = () => {
       const panel = $(".login-panel");
-      panel.innerHTML = `<h2>Reset password</h2><p>Enter your badge number, portal ID, or approved email. If your account is active, we’ll email a reset link.</p><form id="reset-request"><div class="field"><label for="reset-id">Badge number or email</label><input id="reset-id" name="identifier" autocomplete="username" required maxlength="254"></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Send reset link</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
+      panel.innerHTML = `<h2>Reset password</h2><p>Enter your approved email, badge number, or portal ID. The Chair office account uses its chapter inbox.</p><form id="reset-request"><div class="field"><label for="reset-id">Email, badge number, or portal ID</label><input id="reset-id" name="identifier" autocomplete="username" required maxlength="254"></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Send reset link</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
       $("#back-login").onclick = loginPage;
       $("#reset-request").onsubmit = async (event) => {
         event.preventDefault();
@@ -936,7 +934,7 @@ async function rosterPage() {
       "Manage member identities and access.",
       '<button class="button gold" data-action="add-member">Add member</button>',
     ) +
-    '<section class="panel" id="roster-sync"><p>Checking sheet connection…</p></section><section class="panel recent" id="roster-table"><p>Loading roster…</p></section>';
+    `${appConfig.chapterAuth?.enabled ? '<div class="notice info"><strong>Scholarship Chair office account</strong><p>This account belongs to the office, not to a member. Transfer control of its chapter inbox to the incoming chair and reset its password during each transition. Other members have separate accounts.</p></div>' : ""}<section class="panel" id="roster-sync"><p>Checking sheet connection…</p></section><section class="panel recent" id="roster-table"><p>Loading roster…</p></section>`;
   loadRosterSync();
   const destination = $("#roster-table");
   try {

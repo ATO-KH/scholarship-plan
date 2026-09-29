@@ -10,6 +10,7 @@ import {
 import { openDatabase } from "./database.mjs";
 import {
   chapterAuthConfigured,
+  chairAccountConfigured,
   verifyPassword,
   inviteAccount,
   sendPasswordReset,
@@ -64,7 +65,7 @@ const mode = env.APP_MODE || "demo";
 if (!["demo", "production"].includes(mode))
   throw Error("APP_MODE must be demo or production.");
 const production = mode === "production";
-const authMode = env.AUTH_MODE || "microsoft";
+const authMode = env.AUTH_MODE || "chapter";
 if (!["microsoft", "chapter"].includes(authMode))
   throw Error("AUTH_MODE must be microsoft or chapter.");
 const port = Number(env.PORT || 4175);
@@ -939,7 +940,7 @@ const server = http.createServer(async (req, res) => {
         providers: authMode === "chapter" ? [] : identityProviders(env),
         chapterAuth: {
           enabled: authMode === "chapter",
-          configured: chapterAuthConfigured(env),
+          configured: chapterAuthConfigured(env) && chairAccountConfigured(env),
         },
         canvasConfigured: canvasConfigured(),
         uploadMode: directUploads ? "direct" : "local",
@@ -949,7 +950,7 @@ const server = http.createServer(async (req, res) => {
     if (production && path.startsWith("/api/demo/")) fail(404, "Not found.");
     if (production && authMode === "chapter" && path === "/api/auth/login" && req.method === "POST") {
       requireOrigin(req);
-      if (!chapterAuthConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
       const input = await readBody(req);
       const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
       const password = typeof input.password === "string" ? input.password : "";
@@ -957,7 +958,7 @@ const server = http.createServer(async (req, res) => {
         fail(422, "Enter your email or member ID and password.");
       await authAttempt("login_attempt", identifier, 10);
       const candidate = await accountForIdentifier(identifier);
-      const bootstrapEmail = env.BOOTSTRAP_EMAIL?.trim().toLowerCase();
+      const bootstrapEmail = env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase();
       const email = candidate?.email ||
         (identifier.toLowerCase() === bootstrapEmail ? bootstrapEmail :
           `${sha(identifier).slice(0, 24)}@invalid.example`);
@@ -969,20 +970,20 @@ const server = http.createServer(async (req, res) => {
         let binding = await identityMember("chapter", "supabase", verified.id);
         if (
           !binding && !candidate &&
-          equal(env.BOOTSTRAP_AUTH_USER_ID, verified.id) &&
-          equal(env.BOOTSTRAP_EMAIL?.trim().toLowerCase(), verified.email) &&
+          equal(env.CHAIR_AUTH_USER_ID, verified.id) &&
+          equal(env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase(), verified.email) &&
           !(await db.prepare("SELECT id FROM members WHERE workspace='chapter' AND role='chair'").get())
         ) {
           const id = randomUUID();
           await insertMember("chapter", {
             id,
-            name: env.BOOTSTRAP_NAME?.trim().slice(0, 100) || "Scholarship Chair",
+            name: "Scholarship Chair Office",
             email: verified.email,
             role: "chair",
           });
           await db.prepare("INSERT INTO identities VALUES (?,?,?,?)")
             .run("chapter", "supabase", verified.id, id);
-          await audit("chapter", "system", "chair.bootstrap", id, "Exact configured Supabase Auth user ID.");
+          await audit("chapter", "system", "chair.bootstrap", id, "Dedicated office account bound to exact Supabase Auth user ID.");
           binding = { member_id: id };
         }
         const user = binding && await member("chapter", binding.member_id);
@@ -998,7 +999,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (production && authMode === "chapter" && path === "/api/auth/request-reset" && req.method === "POST") {
       requireOrigin(req);
-      if (!chapterAuthConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
       const input = await readBody(req);
       const identifier = typeof input.identifier === "string" ? input.identifier.trim() : "";
       if (!identifier || identifier.length > 254) fail(422, "Enter your email or member ID.");
@@ -1018,7 +1019,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (production && authMode === "chapter" && path === "/api/auth/complete" && req.method === "POST") {
       requireOrigin(req);
-      if (!chapterAuthConfigured(env)) fail(503, "Chapter sign-in is not ready.");
+      if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
       const input = await readBody(req);
       if (typeof input.accessToken !== "string" || input.accessToken.length > 8192 ||
           typeof input.password !== "string" || input.password.length < 12 || input.password.length > 1024)
@@ -1028,11 +1029,17 @@ const server = http.createServer(async (req, res) => {
       const binding = await identityMember("chapter", "supabase", account.id);
       const user = binding && await member("chapter", binding.member_id);
       if ((!user?.active || user.email !== account.email) &&
-          !(equal(env.BOOTSTRAP_AUTH_USER_ID, account.id) &&
-            equal(env.BOOTSTRAP_EMAIL?.trim().toLowerCase(), account.email)))
+          !(equal(env.CHAIR_AUTH_USER_ID, account.id) &&
+            equal(env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase(), account.email)))
         fail(403, "This account is not approved for the portal.");
       if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id)))
         fail(401, "This account link has expired. Request a new one.");
+      if (user?.role === "chair") {
+        await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
+          .run("chapter", user.id);
+        await audit("chapter", "Scholarship Chair Office", "chair.password_change", user.id,
+          "Existing portal sessions revoked after password update.");
+      }
       return json(res, 200, { message: "Password set. Sign in to continue." });
     }
     if (path === "/api/demo/session" && req.method === "POST" && !production) {

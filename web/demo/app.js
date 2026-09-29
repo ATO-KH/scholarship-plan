@@ -106,15 +106,12 @@ function navigation() {
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
         ["earn", "Point rules"],
-        ["api", "API activity"],
         ["access", "Privacy & sign-in"],
       ]
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
         ["earn", "Ways to earn points"],
-        ["canvas", "Import from Canvas"],
-        ["api", "API activity"],
         ["access", "Privacy & sign-in"],
       ];
   $("#nav").innerHTML = links
@@ -125,6 +122,7 @@ function navigation() {
     .join("");
   $("#header-person").innerHTML =
     `${esc(user.name)}<span>${chair ? "Scholarship chair" : "Member"} demo</span>`;
+  $(".account-button").hidden = false;
   $(".account-button .avatar").textContent = user.initials;
   person.value = user.id;
   $(".portal-label").textContent = chair
@@ -134,6 +132,7 @@ function navigation() {
 function route() {
   let p =
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
+  if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (user?.role === "chair" && ["overview", "submissions"].includes(p))
     p = "queue";
   if (user?.role === "member" && ["queue", "members"].includes(p))
@@ -335,7 +334,7 @@ async function submitClaim(e) {
     filter = "pending";
     location.hash = "submissions";
     await refresh();
-    toast("Submission sent. Points will count after chair approval.");
+    toast("Submitted. Sign out and enter as Chair to review it in this browser.");
   } catch (err) {
     formError(err.message);
   } finally {

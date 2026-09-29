@@ -36,8 +36,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
         SUPABASE_STORAGE_BUCKET: "",
         ROSTER_REQUIRED: "", ROSTER_SHEET_ID: "", ROSTER_SHEET_RANGE: "",
         ROSTER_SERVICE_ACCOUNT_EMAIL: "", ROSTER_SERVICE_ACCOUNT_PRIVATE_KEY: "",
-        BOOTSTRAP_AUTH_USER_ID: chairId, BOOTSTRAP_EMAIL: "chair@example.edu",
-        BOOTSTRAP_NAME: "Demo Chair",
+        CHAIR_AUTH_USER_ID: chairId, CHAIR_ACCOUNT_EMAIL: "chair@example.edu",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -89,6 +88,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     });
     assert.equal(chair.status, 200, JSON.stringify(chair.payload));
     assert.equal(chair.payload.user.role, "chair");
+    assert.equal(chair.payload.user.name, "Scholarship Chair Office");
     const chairCookie = chair.cookie;
     const chairCsrf = chair.payload.csrfToken;
     assert.equal((await request("/api/roster", { name: "Member" })).status, 401);
@@ -141,6 +141,10 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal((await request("/api/auth/login", {
       identifier: "1234", password: "correct-test-password",
     })).status, 401);
+    assert.equal((await request("/api/auth/complete", {
+      accessToken: "test-chair-account-token", password: "a-new-chair-password",
+    })).status, 200);
+    assert.equal((await request("/api/session", undefined, chairCookie)).status, 401);
   } finally {
     child.kill("SIGTERM");
     await rm(directory, { recursive: true, force: true });

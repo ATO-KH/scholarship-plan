@@ -25,10 +25,12 @@ globalThis.fetch = async (input, options = {}) => {
   if (url.pathname === "/auth/v1/invite")
     return respond({ id: memberId, email: JSON.parse(options.body).email });
   if (url.pathname === "/auth/v1/recover") return respond({});
-  if (url.pathname === "/auth/v1/user" && options.method === "PUT")
-    return respond({ id: memberId, email: "member@example.edu" });
-  if (url.pathname === "/auth/v1/user")
-    return respond({ id: memberId, email: "member@example.edu" });
+  if (url.pathname === "/auth/v1/user") {
+    const chair = options.headers?.Authorization === "Bearer test-chair-account-token";
+    return respond(chair
+      ? { id: chairId, email: "chair@example.edu" }
+      : { id: memberId, email: "member@example.edu" });
+  }
   if (url.pathname.startsWith("/auth/v1/admin/users/") && options.method === "DELETE")
     return respond({});
   return respond({ error: "unexpected mock request" }, 404);

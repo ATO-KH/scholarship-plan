@@ -240,6 +240,7 @@ nav a:hover {
   border-radius: 2px;
 }
 .sidebar-bottom {
+  display: none !important;
   margin-top: auto;
   padding: 45px 12px 0;
 }
@@ -1360,3 +1361,4 @@ pre {
     flex-wrap: wrap;
   }
 }
+.account-button[hidden] { display: none !important; }

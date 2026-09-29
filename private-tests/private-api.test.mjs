@@ -702,7 +702,8 @@ test("production mode has no demo bypass, no sample public data, and rejects Goo
     ).status,
     404,
   );
-  assert.deepEqual(config.payload.providers.map((provider) => provider.id), ["microsoft"]);
+  assert.deepEqual(config.payload.providers.map((provider) => provider.id), []);
+  assert.equal(config.payload.chapterAuth.enabled, true);
   assert.equal((await request(production, "/auth/google")).status, 404);
   assert.equal((await request(production, "/api/submissions")).status, 401);
   assert.equal((await request(production, "/api/members")).status, 401);

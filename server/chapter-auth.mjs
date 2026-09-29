@@ -27,6 +27,13 @@ export function chapterAuthConfigured(env = process.env) {
   }
 }
 
+export function chairAccountConfigured(env = process.env) {
+  return (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(env.CHAIR_AUTH_USER_ID || "") &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(env.CHAIR_ACCOUNT_EMAIL || "")
+  );
+}
+
 function clients(env) {
   if (!chapterAuthConfigured(env))
     throw Error("Chapter account authentication is not configured.");

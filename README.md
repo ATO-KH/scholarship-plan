@@ -4,7 +4,7 @@ The fuller server-backed version of the Kappa Eta scholarship workflow. The live
 
 This repository is **private**. It contains application code and fictional sample fixtures, not university credentials or real chapter records. A private repository does not itself authenticate visitors to a deployed application.
 
-The hosted implementation runs at [scholarship-plan.vercel.app](https://scholarship-plan.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. A chapter-managed Supabase Auth login is implemented behind `AUTH_MODE=chapter`; the live site has not switched to it. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Live invitation and password-reset acceptance are still required; existing Forms/Sheets records are not automatically migrated.
+The hosted implementation runs at [scholarship-plan.vercel.app](https://scholarship-plan.vercel.app/) on **Vercel Node.js 24 + Supabase PostgreSQL and private Storage**. Local demo mode retains SQLite and fictional files. Chapter-managed sign-in is the production direction; the live form stays disabled until the Chair office account and email delivery are ready. See the [deployment and operator runbook](DEPLOYMENT.md) for account setup, roster-sheet eligibility, evidence storage, and permanent semester cleanup. Existing Forms/Sheets records are not automatically migrated.
 
 ## What is implemented
 
@@ -12,7 +12,7 @@ The hosted implementation runs at [scholarship-plan.vercel.app](https://scholars
 - Scholarship Chair review queue, approval/denial, CSV export, member progress, roster controls, and audit history.
 - Private PDF/JPEG/PNG evidence uploads and authenticated downloads.
 - Server-side ownership and chair-role checks, session cookies, and CSRF validation.
-- Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets; existing Microsoft Entra ID login remains available as the default configuration.
+- Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets. A dedicated office account holds the Chair role; Microsoft code remains inactive legacy support.
 - Chapter membership bound to a stable verified provider identity, not a user-entered role.
 - Canvas OAuth connection, encrypted token storage, refresh handling, and read-only import of the consenting member's released numeric grades.
 - Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.
@@ -21,7 +21,7 @@ The hosted implementation runs at [scholarship-plan.vercel.app](https://scholars
 - Google Sheets eligibility using explicit portal member IDs and Active flags, with a 15-minute freshness requirement and chair recovery access.
 - Confirmed semester reset with a durable deletion manifest, retryable cleanup, preserved member accounts, and configurable next-semester dates.
 
-**Live university identity, Canvas, roster-sheet, and complete evidence workflows still need acceptance testing.** Provider tests use local fixtures and mocks; they are not proof of a successful university connection. The runbook separates these checks from the deployed homepage and database checks.
+**Live chapter login, roster-sheet, and complete evidence workflows still need acceptance testing.** Canvas import is deferred and hidden from navigation. Provider tests use local fixtures and mocks; they are not proof of a successful live connection.
 
 ## Local setup
 
@@ -49,13 +49,13 @@ The local version uses Node's built-in SQLite module. The hosted version uses Po
 
 **Chair:** inspect evidence → enter a whole-point award or a denial reason → review history and totals update from the same submission record. Point totals are computed, not kept in a second manually edited sheet.
 
-**Canvas:** connect through the university's OAuth authorization page → select released assignments → confirm each activity category → import as pending claims → chair reviews. The portal never changes Canvas grades or submits coursework.
+**Canvas (deferred):** the code for a read-only import exists, but the feature is hidden until the chapter decides to implement and test it.
 
-**Roster:** in chapter-account mode, the chair enters a member's verified email and optional badge number; an invitation lets that member set a password. The portal assigns a separate, immutable Portal Member ID for the eligibility sheet and a `KH-...` sign-in alias. The sheet reads only `Portal Member ID` and `Active`; names, badge numbers, and guessed email addresses do not authorize access. Deactivation blocks further portal access. The initial chair is bound to one exact Supabase Auth user ID and email on the server, not selected by the first visitor.
+**Roster:** the Chair office account enters a member's verified email and optional badge number; an invitation lets that member set a password. The portal assigns a separate, immutable Portal Member ID for the eligibility sheet and a `KH-...` sign-in alias. The sheet reads only `Portal Member ID` and `Active`; names, badge numbers, and guessed email addresses do not authorize access. Deactivation blocks further portal access. The Chair office account is bound to one exact Supabase Auth user ID and the chapter-controlled inbox, not selected by the first visitor.
 
 **Semester:** preview the records to be removed, provide the next semester's explicit dates, and type the confirmation. Old academic access is removed immediately; the new semester opens after durable evidence cleanup finishes. Member accounts remain. This does not erase separately retained backups or downloaded copies.
 
-## Configure Microsoft sign-in
+## Legacy Microsoft sign-in (inactive)
 
 Set production configuration only on the server. `.env` and generated databases/files are ignored by Git. `.env.example` contains blank placeholders only.
 

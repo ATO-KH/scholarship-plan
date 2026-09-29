@@ -1,8 +1,8 @@
 # Operator runbook: Vercel and Supabase
 
-This is the deployment procedure for the implemented private portal. A Vercel production deployment and Supabase project exist, but the chapter-managed login has not been activated. Canvas, Google Sheets, and complete hosted evidence workflows still require acceptance testing.
+This is the deployment procedure for the implemented private portal. A Vercel production deployment and Supabase project exist. The chapter-managed login screen is the live entry point, but real sign-in stays disabled until the Chair office account and email service are configured. Canvas import is deferred; Google Sheets and complete hosted evidence workflows still require acceptance testing.
 
-The chapter-managed login code is staged behind `AUTH_MODE=chapter`. The live site has **not** switched to it. Do not enable it until the chair account, invitation emails, password recovery, and member authorization pass the pilot below. The requested 16-word recovery key is not implemented yet.
+`AUTH_MODE=chapter` selects the chapter-managed screen. It does not grant access by itself: the Supabase keys and exact Chair office account identity are required before sign-in activates. The requested 16-word recovery key is not implemented yet.
 
 The hosted architecture is Vercel's Node server entrypoint, Supabase PostgreSQL for application state, and a private Supabase Storage bucket for evidence. Local demo mode continues to use disposable SQLite and local fictional files. No member records or credentials belong in the repository.
 
@@ -61,7 +61,13 @@ Authorized evidence downloads redirect to a signed attachment URL with a default
 
 Direct transfers keep 5 MiB proof files out of Vercel request and response bodies. Vercel's documented function payload ceiling is **4.5 MB**. This portal additionally refuses JSON and CSV responses larger than **4 MiB** with an error; it does not silently truncate them. Large histories/audits/exports therefore need pagination or a separate export implementation before expansion beyond the pilot. This is a limit, not a demonstrated capacity guarantee. [Vercel payload limits](https://vercel.com/docs/functions/limitations)
 
-## 4. Register university identity and the first chair
+## 4. Set up chapter accounts and the Chair office account
+
+The Scholarship Chair uses a chapter-controlled inbox, not a member's school or personal account. Set `CHAIR_ACCOUNT_EMAIL` to that inbox in Vercel Production. After the office account is created in Supabase Auth, set `CHAIR_AUTH_USER_ID` to its exact Auth UUID. The first successful login of that exact pair creates the Chair role only if no Chair already exists. The account has no tier, credit load, or member points. Do not set a password in Git, chat, or Vercel environment variables.
+
+At each Chair transition, hand over the chapter inbox, request a password reset for the office account, and choose a new password. Completing that reset revokes the previous Chair portal sessions. Because the account is shared across officeholders, the audit log identifies the office account rather than the individual person; record the handoff dates separately. Keep the inbox recovery access under chapter control.
+
+### Legacy Microsoft setup (inactive)
 
 For Microsoft Entra, register the approved university-tenant web application and configure:
 
@@ -74,17 +80,17 @@ Set `BOOTSTRAP_PROVIDER=microsoft` and `BOOTSTRAP_SUBJECT=TENANT_GUID:oid:OBJECT
 
 The first successful login of that exact identity creates the chair **only if no chair already exists**. Merely changing the bootstrap environment does not promote another account once a chair is present. Preserve a documented operator recovery procedure for the trusted roster and directory binding. The Microsoft fallback subject, if no `oid` is issued, is `TENANT_GUID:sub:SUBJECT`; verify the actual provider output before provisioning it. See [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference).
 
-Microsoft is the current default portal sign-in provider; the chapter-managed alternative below is staged but inactive. University approval may be required for Microsoft app registration or consent. Provider setup is not completed by committing these placeholders.
+Microsoft support remains in the code only as an explicit legacy mode. It is not the chapter's planned login.
 
-### Staged chapter-managed login pilot
+### Chapter-managed login pilot
 
 The alternate `AUTH_MODE=chapter` uses Supabase Auth to verify email/password credentials and the portal's own membership database to authorize records. The chapter chair can invite a member, send a reset email, and deactivate access. Members may sign in using their verified email, assigned `KH-...` portal sign-in ID, or a chair-entered badge number. The immutable Portal Member ID remains the sheet eligibility key and never changes when a badge is assigned. No public self-registration or predictable temporary password is used.
 
 Before enabling this mode, configure a custom SMTP sender in Supabase Auth and test delivery to an ordinary member address. Supabase's default sender is for limited testing and cannot deliver to arbitrary chapter members. Keep public signups disabled and email confirmation enabled. Set Supabase Auth's Site URL to the production origin and allowlist only `${PUBLIC_ORIGIN}/account/setup` and `${PUBLIC_ORIGIN}/account/reset` for this flow. The production project's current Site URL and these two redirect URLs have been configured; SMTP has not. [Supabase invitations](https://supabase.com/docs/guides/auth/users), [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp).
 
-Add `SUPABASE_PUBLISHABLE_KEY` in Vercel Production. Keep `SUPABASE_SECRET_KEY` server-side; the browser never receives it. Invite the first chair to Supabase Auth through its dashboard after SMTP works. Copy the **exact Auth user UUID** into `BOOTSTRAP_AUTH_USER_ID`, and set `BOOTSTRAP_EMAIL` to the same confirmed email. The first successful login of that exact pair creates the chair only if no chair exists. Do not infer it from an email pattern or the first visitor. Reconcile the existing Supabase Auth users before deciding whether any can be used; they are not automatically portal members.
+Add `SUPABASE_PUBLISHABLE_KEY` in Vercel Production. Keep `SUPABASE_SECRET_KEY` server-side; the browser never receives it. Invite the Chair office inbox to Supabase Auth through its dashboard after SMTP works, then set `CHAIR_AUTH_USER_ID` to the exact Auth UUID. Do not infer it from an email pattern or the first visitor. Reconcile the existing Supabase Auth users before deciding whether any can be used; they are not automatically portal members.
 
-Pilot with one chair and one fictional member: confirm invite delivery, password setup, login by all assigned aliases, own-record isolation, chair-only controls, reset delivery, deactivation of an existing session, and roster-sheet eligibility. Then set `AUTH_MODE=chapter` in Production and redeploy. The 16-word recovery-key feature must be implemented and separately tested before it is promised to members. The live site's `/demo/login` provides public fictional accounts (`demo-member` and `demo-chair`, password `Demo2026!`) for showcasing both interfaces. This browser-only sandbox does not exercise Supabase Auth or the chapter database and must not be used as an authentication acceptance test.
+Pilot with the Chair office account and one fictional member: confirm invite delivery, password setup, login by all assigned aliases, own-record isolation, chair-only controls, reset delivery, Chair session revocation after password rotation, deactivation of an existing member session, and roster-sheet eligibility. The 16-word recovery-key feature must be implemented and separately tested before it is promised to members. The live site's `/demo/login` provides public fictional accounts (`demo-member` and `demo-chair`, password `Demo2026!`) for showcasing both interfaces. This browser-only sandbox does not exercise Supabase Auth or the chapter database and must not be used as an authentication acceptance test.
 
 ## 5. Connect the roster eligibility sheet
 
