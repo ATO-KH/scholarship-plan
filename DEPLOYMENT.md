@@ -1,6 +1,6 @@
 # Operator runbook: Vercel and Supabase
 
-This is the deployment procedure for the implemented private portal. A Vercel production deployment and Supabase project exist, but the university app registration and roster service account are not configured. Live university sign-in, Canvas, Google Sheets, and complete hosted evidence workflows still require acceptance testing.
+This is the deployment procedure for the implemented private portal. A Vercel production deployment and Supabase project exist, but the chapter-managed login has not been activated. Canvas, Google Sheets, and complete hosted evidence workflows still require acceptance testing.
 
 The chapter-managed login code is staged behind `AUTH_MODE=chapter`. The live site has **not** switched to it. Do not enable it until the chair account, invitation emails, password recovery, and member authorization pass the pilot below. The requested 16-word recovery key is not implemented yet.
 
@@ -74,7 +74,7 @@ Set `BOOTSTRAP_PROVIDER=microsoft` and `BOOTSTRAP_SUBJECT=TENANT_GUID:oid:OBJECT
 
 The first successful login of that exact identity creates the chair **only if no chair already exists**. Merely changing the bootstrap environment does not promote another account once a chair is present. Preserve a documented operator recovery procedure for the trusted roster and directory binding. The Microsoft fallback subject, if no `oid` is issued, is `TENANT_GUID:sub:SUBJECT`; verify the actual provider output before provisioning it. See [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference).
 
-Microsoft is the only portal sign-in provider. University approval may be required for app registration or consent. Provider setup is not completed by committing these placeholders. The scholarship chair controls portal membership and review access; Microsoft controls account passwords and the university's sign-in policy.
+Microsoft is the current default portal sign-in provider; the chapter-managed alternative below is staged but inactive. University approval may be required for Microsoft app registration or consent. Provider setup is not completed by committing these placeholders.
 
 ### Staged chapter-managed login pilot
 
