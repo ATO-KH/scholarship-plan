@@ -1,0 +1,134 @@
+.theme-toggle {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 7px 10px;
+  background: var(--white);
+  color: var(--ink);
+  font: 600 13px var(--sans);
+}
+.theme-toggle:hover { border-color: var(--gold); }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e8eef7;
+  --muted: #aebbd0;
+  --line: #35455c;
+  --paper: #101725;
+  --white: #1b283a;
+  --deep: #0d1a2c;
+  --green: #8bdab0;
+  --red: #f7a6a2;
+}
+:root[data-theme="dark"] a,
+:root[data-theme="dark"] .greek,
+:root[data-theme="dark"] .table-link,
+:root[data-theme="dark"] .section-heading a,
+:root[data-theme="dark"] .mini-stat strong,
+:root[data-theme="dark"] .rule-points,
+:root[data-theme="dark"] .empty h3 { color: #bed7f7; }
+:root[data-theme="dark"] .demo-bar {
+  background: #332918;
+  color: #f4d6a0;
+  border-color: #594526;
+}
+:root[data-theme="dark"] .masthead,
+:root[data-theme="dark"] .sidebar,
+:root[data-theme="dark"] .account-button,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .stats-row,
+:root[data-theme="dark"] .rule-card,
+:root[data-theme="dark"] .flow article,
+:root[data-theme="dark"] dialog,
+:root[data-theme="dark"] .evidence-sheet,
+:root[data-theme="dark"] .login-box { background: var(--white); }
+:root[data-theme="dark"] .account-button { color: var(--ink); }
+:root[data-theme="dark"] .avatar {
+  background: #253750;
+  border-color: #47607d;
+  color: #d2e4fb;
+}
+:root[data-theme="dark"] nav a { color: #b5c4d8; }
+:root[data-theme="dark"] nav a.active,
+:root[data-theme="dark"] nav a:hover {
+  background: #293a52;
+  color: #f4f7fc;
+}
+:root[data-theme="dark"] .button.ghost,
+:root[data-theme="dark"] .button.danger,
+:root[data-theme="dark"] .filter {
+  background: #203047;
+  color: #e8eef7;
+  border-color: #526581;
+}
+:root[data-theme="dark"] .filter.active,
+:root[data-theme="dark"] .button:not(.ghost, .danger, .gold) {
+  background: #355681;
+  color: #fff;
+  border-color: #5274a0;
+}
+:root[data-theme="dark"] .button.gold { color: #1b3050; }
+:root[data-theme="dark"] .checkpoint-status,
+:root[data-theme="dark"] .status.pending {
+  background: #49391f;
+  border-color: #76592c;
+  color: #ffdc99;
+}
+:root[data-theme="dark"] .status.approved {
+  background: #193b32;
+  color: #a6edc8;
+}
+:root[data-theme="dark"] .status.denied,
+:root[data-theme="dark"] .error {
+  background: #482725;
+  color: #ffc2bd;
+}
+:root[data-theme="dark"] .notice {
+  background: #342b20;
+  color: #f3d4a5;
+}
+:root[data-theme="dark"] .notice.info {
+  background: #203650;
+  color: #d4e5fb;
+  border-color: #80a7d8;
+}
+:root[data-theme="dark"] .step,
+:root[data-theme="dark"] .evidence-sheet .sample-stamp { color: #ffcb78; }
+:root[data-theme="dark"] td { border-bottom-color: var(--line); }
+:root[data-theme="dark"] .field input,
+:root[data-theme="dark"] .field select,
+:root[data-theme="dark"] .field textarea,
+:root[data-theme="dark"] .sidebar-bottom select,
+:root[data-theme="dark"] .activity-picker button,
+:root[data-theme="dark"] .activity-options {
+  background: #111d2d;
+  border-color: #586b85;
+  color: var(--ink);
+}
+:root[data-theme="dark"] .field input::placeholder,
+:root[data-theme="dark"] .field textarea::placeholder { color: #93a5be; }
+:root[data-theme="dark"] .activity-options [role="option"] { border-bottom-color: var(--line); }
+:root[data-theme="dark"] .activity-options [role="option"].active,
+:root[data-theme="dark"] .activity-options [role="option"]:hover { background: #2b4261; }
+:root[data-theme="dark"] .preview-points,
+:root[data-theme="dark"] .attachment,
+:root[data-theme="dark"] .sample-file,
+:root[data-theme="dark"] .review-note {
+  background: #223249;
+}
+:root[data-theme="dark"] .member-progress { background: #3c506b; }
+:root[data-theme="dark"] .member-progress span { background: #82ace1; }
+:root[data-theme="dark"] .history { border-left-color: var(--line); }
+:root[data-theme="dark"] .demo-credentials code,
+:root[data-theme="dark"] code { color: #ffcf86; }
+
+@media (max-width: 600px) {
+  .theme-toggle {
+    width: 36px;
+    height: 36px;
+    overflow: hidden;
+    font-size: 0;
+    padding: 0;
+  }
+  .theme-toggle::before { content: "◐"; font-size: 20px; line-height: 1; }
+}

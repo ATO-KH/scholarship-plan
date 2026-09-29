@@ -2275,6 +2275,8 @@ const server = http.createServer(async (req, res) => {
       "/account/setup": "index.html",
       "/account/reset": "index.html",
       "/style.css": "style.css",
+      "/theme.css": "theme.css",
+      "/theme.js": "theme.js",
       "/app.js": "app.js",
       "/demo/": "demo/index.html",
       "/demo/index.html": "demo/index.html",
