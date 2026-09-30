@@ -172,3 +172,5 @@ Based on the supplied 2026 scholarship plan; the original PDF is not committed:
 - [Canvas pagination](https://developerdocs.instructure.com/services/canvas/basics/file.pagination)
 
 The design follows [ato.org](https://ato.org/). This is an unofficial chapter workflow project, not an official ATO, Florida Tech, Canvas, Google, or Microsoft product.
+
+The public test credentials `test1` / `1234` on the chapter sign-in screen open a browser-only sandbox member. They do not authenticate with Supabase or grant access to chapter records. Test submissions stay in that browser and can be reviewed in its Chair demo.

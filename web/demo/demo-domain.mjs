@@ -1,6 +1,18 @@
 export const TODAY = "2026-09-28";
 export const members = [
   {
+    id: "test1",
+    name: "Test Member",
+    initials: "T1",
+    email: "test1@example.edu",
+    role: "member",
+    tier: 2,
+    credits: 15,
+    gpa: "3.24",
+    goal: 55,
+    checkpoint: 28,
+  },
+  {
     id: "alex",
     name: "Noah Knickerbocker",
     initials: "NK",

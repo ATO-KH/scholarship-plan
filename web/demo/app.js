@@ -5,7 +5,7 @@ const PAGES_MODE =
   location.pathname.startsWith("/demo/") ||
   new URL(location.href).searchParams.has("pages-demo");
 const requestedDemoAccount = new URL(location.href).searchParams.get("account");
-const selectedDemoAccount = requestedDemoAccount === "chair" ? "chair" : requestedDemoAccount === "member" ? "alex" : null;
+const selectedDemoAccount = requestedDemoAccount === "chair" ? "chair" : requestedDemoAccount === "member" ? "alex" : requestedDemoAccount === "test1" ? "test1" : null;
 if (selectedDemoAccount)
   sessionStorage.setItem("ato-scholarship-demo-login", selectedDemoAccount);
 const demoLogin = selectedDemoAccount || sessionStorage.getItem("ato-scholarship-demo-login") || "alex";
@@ -639,7 +639,7 @@ async function init() {
     const result = await api("/api/demo/session", {
       method: "POST",
       body:
-        requested && ["chair", "alex", "jordan"].includes(requested)
+        requested && ["chair", "alex", "jordan", "test1"].includes(requested)
           ? { persona: requested }
           : {},
     });

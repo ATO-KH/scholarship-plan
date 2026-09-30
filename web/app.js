@@ -871,6 +871,12 @@ function loginPage() {
       const values = Object.fromEntries(new FormData(event.target));
       setAuthLoading(true, "Signing in…");
       try {
+        // Public sandbox credentials never create a chapter-authenticated session.
+        if (values.identifier.trim().toLowerCase() === "test1") {
+          if (values.password !== "1234") throw Error("Invalid sign-in details.");
+          location.assign("/demo/?account=test1");
+          return;
+        }
         const signedIn = await api("/api/auth/login", { method: "POST", body: values });
         if (signedIn.recoveryKey) {
           setAuthLoading(false);
