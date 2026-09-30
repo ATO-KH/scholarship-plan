@@ -38,3 +38,10 @@
 .credit-evidence-image { display: block; max-width: 100%; max-height: 500px; object-fit: contain; margin: 16px 0; }
 .credit-review-actions { display: flex; gap: 12px; }
 @media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; } }
+
+.checkpoint-quota-table { min-width: 580px; }
+.checkpoint-quota-table input { width: 100%; min-width: 76px; padding: 10px; }
+.checkpoint-quota-table small { display: block; margin-top: 6px; font-weight: 400; }
+.checkpoint-quota-table td, .checkpoint-quota-table th { padding: 12px 8px; }
+.checkpoint-quota-table input { border: 1px solid var(--line); border-radius: 0; background: var(--paper); color: var(--ink); font: inherit; }
+.checkpoint-quota-table input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }

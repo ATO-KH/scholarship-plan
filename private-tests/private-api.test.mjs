@@ -346,6 +346,53 @@ test("Chair tier import accepts only roster emails and tiers, then updates membe
   assert.equal(JSON.stringify(audit.events.map(({ at, ...event }) => event)).includes("2.6"), false);
 });
 
+test("Chair checkpoint quotas update member goals and reject invalid, forbidden, and stale writes", async () => {
+  const isolated = await start("demo");
+  const c = client(isolated);
+  assert.equal((await c.send("/api/checkpoint-quotas")).status, 401);
+  await c.send("/api/demo/session", {});
+  const rulesBefore = await c.send("/api/rules");
+  const pointsBefore = await c.send("/api/points");
+  assert.equal((await c.send("/api/checkpoint-quotas")).status, 403);
+  assert.equal((await c.send("/api/checkpoint-quotas", {})).status, 403);
+  await c.send("/api/demo/session", { persona: "chair" });
+  const initial = await c.send("/api/checkpoint-quotas");
+  assert.deepEqual(initial.checkpoints, rulesBefore.checkpoints);
+  const targets = initial.checkpoints.map(item => item.targets.map(value => value * 2));
+  const change = { targets, version: initial.version };
+  assert.equal((await c.send("/api/checkpoint-quotas", change, { "X-CSRF-Token": "wrong" })).status, 403);
+  assert.equal((await c.send("/api/checkpoint-quotas", change, { Origin: "https://other.example" })).status, 403);
+  assert.equal((await c.send("/api/checkpoint-quotas", { ...change, dates: [] })).status, 422);
+  assert.equal((await c.send("/api/checkpoint-quotas", { ...change, targets: [[0]] })).status, 422);
+  assert.deepEqual((await c.send("/api/checkpoint-quotas")).checkpoints, initial.checkpoints);
+  const saved = await c.send("/api/checkpoint-quotas", change);
+  assert.equal(saved.status, 200);
+  assert.notEqual(saved.version, initial.version);
+  assert.deepEqual(saved.checkpoints.map(item => item.date), initial.checkpoints.map(item => item.date));
+  assert.equal((await c.send("/api/checkpoint-quotas", change)).status, 409);
+  const rules = await c.send("/api/rules");
+  assert.deepEqual(rules.checkpoints.map(item => item.targets), targets);
+  for (const path of ["/api/roster", "/api/members"]) {
+    const member = (await c.send(path)).members.find(item => item.id === "alex");
+    assert.equal(member.goal, pointsBefore.goal * 2);
+    assert.equal(member.checkpoint, pointsBefore.checkpoint * 2);
+  }
+  const events = (await c.send("/api/audit")).events.filter(event => event.action === "checkpoints.update");
+  assert.equal(events.length, 1);
+  assert.deepEqual(JSON.parse(events[0].detail), { targets });
+  const concurrent = await Promise.all([
+    c.send("/api/checkpoint-quotas", { targets, version: saved.version }),
+    c.send("/api/checkpoint-quotas", { targets, version: saved.version }),
+  ]);
+  assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 409]);
+  await c.send("/api/demo/session", { persona: "alex" });
+  const points = await c.send("/api/points");
+  assert.equal(points.goal, pointsBefore.goal * 2);
+  assert.equal(points.checkpoint, pointsBefore.checkpoint * 2);
+  assert.equal((await c.send("/api/session")).user.goal, points.goal);
+  assert.equal(points.approved, pointsBefore.approved, "changing quotas does not change earned points");
+});
+
 test("shared FAQ is readable by members, editable only by Chair, and rejects stale changes", async () => {
   const isolated = await start("demo");
   const member = client(isolated);
