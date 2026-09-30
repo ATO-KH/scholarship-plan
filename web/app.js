@@ -988,6 +988,10 @@ function registerTools() {
 }
 if (new URLSearchParams(location.search).get("preview") === "spinner") {
   $("#auth-loading-message").textContent = "Animation preview";
+  const previewAnimation = new URLSearchParams(location.search).get("animation");
+  if (["spin", "sequence"].includes(previewAnimation)) {
+    $("#auth-loading .auth-cross").setAttribute("animation", previewAnimation);
+  }
   const link = document.createElement("a");
   link.href = "/";
   link.className = "text-btn";
@@ -997,9 +1001,16 @@ if (new URLSearchParams(location.search).get("preview") === "spinner") {
     const cross = $("#auth-loading .auth-cross");
     const controls = document.createElement("div");
     controls.className = "spinner-preview-controls";
-    controls.innerHTML = '<button type="button" class="button ghost">Pause animation</button><input type="range" min="0" max="2600" step="1" value="0" aria-label="Animation position">';
+    controls.innerHTML = '<select aria-label="Loading animation"><option value="random">Random selection</option><option value="spin">Spin</option><option value="sequence">Clockwise arm sequence</option></select><button type="button" class="button ghost">Pause animation</button><input type="range" min="0" max="2600" step="1" value="0" aria-label="Animation position">';
+    const selector = controls.querySelector("select");
     const button = controls.querySelector("button");
     const slider = controls.querySelector("input");
+    selector.value = cross.getAttribute("animation") || "random";
+    selector.onchange = () => {
+      cross.setAnimation(selector.value);
+      slider.value = "0";
+      button.textContent = "Pause animation";
+    };
     button.onclick = () => {
       if (cross.paused) {
         cross.restart();

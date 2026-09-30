@@ -399,6 +399,15 @@ main {
   width: 100%;
   accent-color: #ff9b26;
 }
+.spinner-preview-controls select {
+  min-height: 44px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--white);
+  color: var(--ink);
+}
 .login-panel {
   max-width: 620px;
   margin: 0 auto;
