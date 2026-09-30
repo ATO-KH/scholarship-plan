@@ -1,5 +1,6 @@
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
 import { profileView, validateCourses } from "../web/profile-data.mjs";
+import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
 import { resolve, extname, basename } from "node:path";
@@ -139,29 +140,21 @@ const targetDate = env.SEMESTER_TARGET_DATE || "2026-12-04";
 const endDate = env.SEMESTER_END_DATE || null;
 if (!validDate(targetDate) || (endDate && !validDate(endDate)))
   throw Error("Semester dates must use valid YYYY-MM-DD dates.");
-const checkpoints = [
-  { date: "2026-09-12", targets: [10, 14, 18, 23, 30] },
-  { date: "2026-10-10", targets: [20, 28, 36, 46, 60] },
-  { date: "2026-11-06", targets: [30, 42, 54, 70, 90] },
-  { date: targetDate, targets: [40, 55, 70, 90, 120] },
-];
+const checkpointDates = ["2026-09-12", "2026-10-10", "2026-11-06"];
 function semesterSettings(state = {}) {
   return {
     name: "Fall 2026",
     startDate: null,
     targetDate,
     endDate,
-    checkpointDates: checkpoints.slice(0, 3).map((item) => item.date),
+    checkpointDates: [...checkpointDates],
     ...state.semester,
     timeZone: "America/New_York",
   };
 }
 function semesterCheckpoints(state) {
   const semester = semesterSettings(state);
-  return checkpoints.map((checkpoint, index) => ({
-    ...checkpoint,
-    date: index === 3 ? semester.targetDate : semester.checkpointDates[index],
-  }));
+  return checkpointQuotaView(state, [...semester.checkpointDates, semester.targetDate]).checkpoints;
 }
 function academicGuard(state, generation) {
   assertAcademicWritesAllowed(state);
@@ -366,7 +359,7 @@ async function audit(workspace, actor, action, subject = "", detail = "") {
     )
     .run(workspace, now(), actor || "system", action, subject, detail);
 }
-function memberView(row, checkpoint) {
+function memberView(row, checkpoint, finalCheckpoint) {
   return {
     id: row.id,
     name: row.name,
@@ -383,7 +376,7 @@ function memberView(row, checkpoint) {
       .toUpperCase(),
     ...(row.role === "member"
       ? {
-          goal: [40, 55, 70, 90, 120][row.tier - 1],
+          goal: finalCheckpoint.targets[row.tier - 1],
           checkpoint: checkpoint.targets[row.tier - 1],
           checkpointDate: checkpoint.date,
         }
@@ -398,7 +391,7 @@ async function member(workspace, id) {
   const schedule = semesterCheckpoints(await stateOf(workspace));
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return memberView(row, checkpoint);
+  return memberView(row, checkpoint, schedule.at(-1));
 }
 async function listMembers(workspace, state) {
   const rows = await db
@@ -408,7 +401,7 @@ async function listMembers(workspace, state) {
   const schedule = semesterCheckpoints(state ?? (await stateOf(workspace)));
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return rows.map((row) => memberView(row, checkpoint));
+  return rows.map((row) => memberView(row, checkpoint, schedule.at(-1)));
 }
 async function tierImportView(workspace, state) {
   const existing = (await listMembers(workspace, state)).filter((entry) => entry.role === "member");
@@ -1534,6 +1527,28 @@ const server = http.createServer(async (req, res) => {
           return id ? `/api/uploads/${id}` : null;
         });
         return json(res, 200, { image });
+      }
+      if (path === "/api/checkpoint-quotas" && ["GET", "POST"].includes(req.method)) {
+        chair(user);
+        const view = (state) => ({ ...checkpointQuotaView(state), checkpoints: semesterCheckpoints(state) });
+        if (req.method === "GET") return json(res, 200, view(await stateOf(session.workspace)));
+        if (!input || Object.keys(input).sort().join(",") !== "targets,version" || typeof input.version !== "string")
+          fail(422, "Submit the checkpoint quotas and their current version.");
+        const targets = validateCheckpointQuotas(input.targets);
+        const updated = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          if (input.version !== checkpointQuotaView(state).version)
+            fail(409, "The checkpoint quotas or semester changed. Reload them before saving.");
+          state.checkpointQuotas = targets;
+          state.checkpointQuotaRevision = (state.checkpointQuotaRevision || 0) + 1;
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          await audit(session.workspace, user.name, "checkpoints.update", "", JSON.stringify({ targets }));
+          return view(state);
+        });
+        return json(res, 200, updated);
       }
       if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
         if (user.role !== "member") fail(403, "Profiles are available to members only.");
@@ -2718,6 +2733,8 @@ const server = http.createServer(async (req, res) => {
       "/credit-ui.mjs": "credit-ui.mjs",
       "/picture-ui.mjs": "picture-ui.mjs",
       "/checkpoint-calendar.js": "checkpoint-calendar.js",
+      "/checkpoint-data.mjs": "checkpoint-data.mjs",
+      "/checkpoint-ui.mjs": "checkpoint-ui.mjs",
       "/loading-ui.js": "loading-ui.js",
       "/portal-components.css": "portal-components.css",
       "/loading-cross.js": "loading-cross.js",

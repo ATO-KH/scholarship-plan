@@ -181,6 +181,10 @@ test("semester reset removes academic evidence, preserves accounts and reopens w
   await access(file);
   await app.switchTo("chair");
   const membersBefore = (await app.api("/api/roster")).value.members;
+  const quotaBefore = (await app.api("/api/checkpoint-quotas")).value;
+  const quotas = { version: quotaBefore.version, targets: quotaBefore.checkpoints.map(item => item.targets.map(value => value * 2)) };
+  const savedQuotas = await app.api("/api/checkpoint-quotas", quotas);
+  assert.equal(savedQuotas.status, 200);
   const preview = (await app.api("/api/semester/preview")).value;
   const reset = await app.api("/api/semester/reset", {
     confirm: "DELETE SEMESTER",
@@ -210,9 +214,12 @@ test("semester reset removes academic evidence, preserves accounts and reopens w
     423,
   );
   await app.switchTo("chair");
+  assert.equal((await app.api("/api/checkpoint-quotas", { ...quotas, version: savedQuotas.value.version })).status, 423);
   const done = await app.api("/api/semester/reset/resume", {});
   assert.equal(done.status, 200);
   assert.equal(done.value.reset.status, "completed");
+  assert.equal((await app.api("/api/checkpoint-quotas", { ...quotas, version: savedQuotas.value.version })).status, 409);
+  assert.deepEqual((await app.api("/api/checkpoint-quotas")).value.checkpoints.map(item => item.targets), quotaBefore.checkpoints.map(item => item.targets));
   await assert.rejects(access(file), { code: "ENOENT" });
   assert.deepEqual(
     (await app.api("/api/roster")).value.members.map((m) => m.id),

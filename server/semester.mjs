@@ -180,6 +180,8 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     delete state.memberProfiles;
     delete state.creditRequests;
     delete state.profilePictures;
+    delete state.checkpointQuotas;
+    delete state.checkpointQuotaRevision;
     state.semesterGeneration = randomUUID();
     delete state.semesterPreview;
     state.semesterReset = job;

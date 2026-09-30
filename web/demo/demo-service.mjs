@@ -1,3 +1,4 @@
+import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../credit-data.mjs";
 import { profileView, validateCourses } from "../profile-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
@@ -33,6 +34,14 @@ const json = (data, status = 200) =>
 const fail = (status, message) => {
   throw Object.assign(Error(message), { status });
 };
+function quotaMember(state, member) {
+  if (member.role !== "member") return member;
+  const { checkpoints } = checkpointQuotaView(state);
+  const checkpoint = checkpoints.find(entry => entry.date >= TODAY) || checkpoints.at(-1);
+  return { ...member, credits: state.creditOverrides?.[member.id] ?? member.credits,
+    goal: checkpoints.at(-1).targets[member.tier - 1],
+    checkpoint: checkpoint.targets[member.tier - 1], checkpointDate: checkpoint.date };
+}
 export async function handle(req, path) {
   try {
     if (!["GET", "POST"].includes(req.method)) fail(405, "Method not allowed.");
@@ -51,7 +60,7 @@ export async function handle(req, path) {
       else if (input.persona) session.persona = input.persona;
       await save(session);
       return json({
-        user: { ...members.find((m) => m.id === session.persona), ...(session.data.creditOverrides?.[session.persona] !== undefined ? { credits: session.data.creditOverrides[session.persona] } : {}) },
+        user: quotaMember(session.data, members.find((m) => m.id === session.persona)),
         today: TODAY,
       });
     }
@@ -64,7 +73,7 @@ export async function handle(req, path) {
         409,
         "The demo account changed in another tab. Refresh before continuing.",
       );
-    const sessionMembers = members.map(member => ({ ...member, credits: session.data.creditOverrides?.[member.id] ?? member.credits }));
+    const sessionMembers = members.map(member => quotaMember(session.data, member));
     const state = session.data,
       user = sessionMembers.find((m) => m.id === session.persona);
     const chair = () => {
@@ -117,6 +126,18 @@ export async function handle(req, path) {
       }
       return json({ image: state.profilePictures?.[user.id] || null });
     }
+    if (path === "/api/checkpoint-quotas" && ["GET", "POST"].includes(req.method)) {
+      chair();
+      if (req.method === "POST") {
+        if (!input || Object.keys(input).sort().join(",") !== "targets,version" || typeof input.version !== "string") fail(422, "Provide checkpoint quotas and their version.");
+        const targets = validateCheckpointQuotas(input.targets);
+        if (input.version !== checkpointQuotaView(state).version) fail(409, "Checkpoint quotas changed. Reopen the editor before saving.");
+        state.checkpointQuotas = targets;
+        state.checkpointQuotaRevision = (state.checkpointQuotaRevision || 0) + 1;
+        await save(session);
+      }
+      return json(checkpointQuotaView(state));
+    }
     if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
       if (user.role !== "member") fail(403, "Profiles are available to members only.");
       if (req.method === "POST") {
@@ -147,12 +168,7 @@ export async function handle(req, path) {
         weeklyStudyHours: 5,
         weeklyMinorAssignments: 3,
         weekConvention: "Monday–Sunday (demo assumption)",
-        checkpoints: [
-          { date: "2026-09-12", targets: [10, 14, 18, 23, 30] },
-          { date: "2026-10-10", targets: [20, 28, 36, 46, 60] },
-          { date: "2026-11-06", targets: [30, 42, 54, 70, 90] },
-          { date: "2026-12-04", targets: [40, 55, 70, 90, 120] },
-        ],
+        checkpoints: checkpointQuotaView(state).checkpoints,
       });
     if (path === "/api/points" && req.method === "GET") {
       if (user.role !== "member")

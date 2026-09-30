@@ -50,3 +50,10 @@
 .checkpoint-calendar abbr { text-decoration: none; }
 .checkpoint-calendar .checkpoint-due { background: var(--gold); color: #16263b; font-weight: 700; outline: 1px solid var(--gold); }
 .checkpoint-remaining { text-align: center; font-size: 18px; font-weight: 600; margin-top: 12px; }
+
+.checkpoint-quota-table { min-width: 580px; }
+.checkpoint-quota-table input { width: 100%; min-width: 76px; padding: 10px; }
+.checkpoint-quota-table small { display: block; margin-top: 6px; font-weight: 400; }
+.checkpoint-quota-table td, .checkpoint-quota-table th { padding: 12px 8px; }
+.checkpoint-quota-table input { border: 1px solid var(--line); border-radius: 0; background: var(--paper); color: var(--ink); font: inherit; }
+.checkpoint-quota-table input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }

@@ -215,14 +215,35 @@ function membersPage() {
     ) +
     `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>Oct 10 target</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>Fictional member</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. This proof of concept does not determine disciplinary outcomes.</div>`;
 }
+async function openCheckpointQuotas() {
+  if (user.role !== "chair") return;
+  const owner = user.id;
+  openModal("CHECKPOINT QUOTAS", "", '<div id="checkpoint-editor"></div>');
+  const container = $("#checkpoint-editor");
+  const current = () => container.isConnected && modal.open && user?.id === owner;
+  try {
+    const { mountCheckpointEditor } = await import("/checkpoint-ui.mjs");
+    if (!current()) return;
+    await mountCheckpointEditor(container, { api, esc, loading, isCurrent: current,
+      onSaved: async () => {
+        rules = await api("/api/rules");
+        if (!current()) return;
+        await refresh();
+        if (current()) { modal.close(); toast("Checkpoint quotas saved."); }
+      } });
+  } catch (error) {
+    if (current()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
 function earnPage() {
   main.innerHTML =
     heading(
       "2026 SCHOLARSHIP PLAN",
       "POINT RULES",
       "Base points from your chapter plan. Approved credit-load multipliers apply.",
+      user.role === "chair" ? '<button class="button gold" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button>' : "",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · ${esc(rules.semester?.name || "Current semester")}</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 async function loadCreditPanel(container, chair) {
   const owner = user.id;
@@ -598,6 +619,7 @@ function identity(provider) {
 }
 async function handleAction(e) {
   const b = e.target.closest("[data-action]");
+  if (b?.dataset.action === "edit-checkpoint-quotas") { await openCheckpointQuotas(); return; }
   if (!b) return;
   const action = b.dataset.action;
   try {

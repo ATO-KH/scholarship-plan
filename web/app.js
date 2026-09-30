@@ -281,14 +281,35 @@ function membersPage() {
     ) +
     `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
 }
+async function openCheckpointQuotas() {
+  if (user.role !== "chair") return;
+  const owner = user.id;
+  openModal("CHECKPOINT QUOTAS", "", '<div id="checkpoint-editor"></div>');
+  const container = $("#checkpoint-editor");
+  const current = () => container.isConnected && modal.open && user?.id === owner;
+  try {
+    const { mountCheckpointEditor } = await import("/checkpoint-ui.mjs");
+    if (!current()) return;
+    await mountCheckpointEditor(container, { api, esc, loading, isCurrent: current,
+      onSaved: async () => {
+        rules = await api("/api/rules");
+        if (!current()) return;
+        await refresh();
+        if (current()) { modal.close(); toast("Checkpoint quotas saved."); }
+      } });
+  } catch (error) {
+    if (current()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
 function earnPage() {
   main.innerHTML =
     heading(
       "",
       "Point rules",
       "Point values, claim limits, and checkpoint targets.",
+      user.role === "chair" ? '<button class="button gold" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button>' : "",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · ${esc(rules.semester?.name || "Current semester")}</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 async function loadCreditPanel(container, chair) {
   const owner = user.id;
@@ -701,6 +722,7 @@ function identity(provider) {
 }
 async function handleAction(e) {
   const b = e.target.closest("[data-action]");
+  if (b?.dataset.action === "edit-checkpoint-quotas") { await openCheckpointQuotas(); return; }
   if (!b) return;
   const action = b.dataset.action;
   if (action === "account" && !isDemo()) {
@@ -1329,7 +1351,7 @@ async function semesterPage() {
       "Semester reset",
       "Clear the old semester’s academic records while keeping member accounts.",
     ) +
-    `<section class="panel" id="semester-panel">${loading("Loading semester…")}</section>`;
+    `<div class="page-actions"><button class="button ghost" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button></div><section class="panel" id="semester-panel">${loading("Loading semester…")}</section>`;
   const panel = $("#semester-panel");
   try {
     const result = await api("/api/semester");
@@ -1377,7 +1399,7 @@ async function semesterPage() {
       )
       .join(
         "",
-      )}</div><p class="muted">Point tiers stay the same. Enter the chapter’s approved dates for the new semester.</p><button class="button danger" type="submit">Review semester reset</button><p id="semester-error" role="alert"></p></form>`;
+      )}</div><p class="muted">Member tier assignments stay the same. Checkpoint quotas return to the standard plan values; edit them for the new semester under Point rules. Enter the chapter’s approved dates below.</p><button class="button danger" type="submit">Review semester reset</button><p id="semester-error" role="alert"></p></form>`;
     $("#semester-form").onsubmit = async (event) => {
       event.preventDefault();
       const button = event.target.querySelector('button[type="submit"]');
@@ -1396,7 +1418,7 @@ async function semesterPage() {
         openModal(
           "PERMANENTLY RESET THIS SEMESTER?",
           "Review what will be removed before continuing.",
-          `<p><strong>${preview.counts.submissions}</strong> submissions and <strong>${preview.counts.evidence}</strong> evidence records will be deleted. <strong>${preview.counts.accounts}</strong> member accounts will remain.</p><p>Next semester: <strong>${esc(semester.name)}</strong>, ${esc(semester.startDate)} to ${esc(semester.endDate)}.</p><p class="muted">${esc(preview.backupNotice)}</p><form id="confirm-semester-form"><div class="field"><label for="semester-confirm">Type DELETE SEMESTER to confirm</label><input id="semester-confirm" autocomplete="off" required></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button danger" type="submit">Delete semester records</button></div></form>`,
+          `<p><strong>${preview.counts.submissions}</strong> submissions and <strong>${preview.counts.evidence}</strong> evidence records will be deleted. <strong>${preview.counts.accounts}</strong> member accounts will remain. Custom checkpoint quotas will return to the standard plan values.</p><p>Next semester: <strong>${esc(semester.name)}</strong>, ${esc(semester.startDate)} to ${esc(semester.endDate)}.</p><p class="muted">${esc(preview.backupNotice)}</p><form id="confirm-semester-form"><div class="field"><label for="semester-confirm">Type DELETE SEMESTER to confirm</label><input id="semester-confirm" autocomplete="off" required></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button danger" type="submit">Delete semester records</button></div></form>`,
         );
         $("#confirm-semester-form").onsubmit = async (event) => {
           event.preventDefault();
@@ -1490,7 +1512,7 @@ function editAcademicSettings(member) {
   openModal(
     "EDIT MEMBER GOAL",
     `Set the tier and enrolled credits for ${esc(member.name)}. Changes take effect immediately.`,
-    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${[40, 55, 70, 90, 120][tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save goal</button></div></form>`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save goal</button></div></form>`,
   );
   $("#academic-settings-form").onsubmit = async (event) => {
     event.preventDefault();
