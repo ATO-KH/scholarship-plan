@@ -1005,6 +1005,9 @@ if (new URLSearchParams(location.search).get("preview") === "spinner") {
     const selector = controls.querySelector("select");
     const button = controls.querySelector("button");
     const slider = controls.querySelector("input");
+    const updateDuration = () => { slider.max = String(cross.duration); };
+    cross.addEventListener("animationchange", updateDuration);
+    updateDuration();
     selector.value = cross.getAttribute("animation") || "random";
     selector.onchange = () => {
       cross.setAnimation(selector.value);

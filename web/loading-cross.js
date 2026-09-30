@@ -1,8 +1,10 @@
 const TURN_MS = 1600;
 const CYCLE_MS = TURN_MS + 1000;
 const ARM_TRAVEL = 7;
-const ARM_STEP_MS = TURN_MS / 4;
+const ARM_PULSE_MS = 300;
+const ARM_STEP_MS = 225;
 const CLOCKWISE_FROM_BOTTOM = [2, 3, 0, 1];
+const SEQUENCE_CYCLE_MS = 3 * ARM_STEP_MS + ARM_PULSE_MS + 250;
 
 export function crossMotion(elapsed) {
   const phase = Math.max(0, elapsed) % CYCLE_MS;
@@ -15,13 +17,15 @@ export function crossMotion(elapsed) {
 }
 
 export function crossSequence(elapsed) {
-  const phase = Math.max(0, elapsed) % CYCLE_MS;
+  const phase = Math.max(0, elapsed) % SEQUENCE_CYCLE_MS;
   const spreads = [0, 0, 0, 0];
-  if (phase < TURN_MS) {
-    const step = Math.floor(phase / ARM_STEP_MS);
-    const t = (phase % ARM_STEP_MS) / ARM_STEP_MS;
-    spreads[CLOCKWISE_FROM_BOTTOM[step]] = ARM_TRAVEL * 16 * t ** 2 * (1 - t) ** 2;
-  }
+  // The next arm starts rising as the previous arm settles back into place.
+  CLOCKWISE_FROM_BOTTOM.forEach((arm, step) => {
+    const t = (phase - step * ARM_STEP_MS) / ARM_PULSE_MS;
+    if (t > 0 && t < 1) {
+      spreads[arm] = ARM_TRAVEL * 16 * t ** 2 * (1 - t) ** 2;
+    }
+  });
   return spreads;
 }
 
@@ -32,6 +36,10 @@ if (typeof customElements !== "undefined") {
     visible = false;
     frame = 0;
     variant = "spin";
+
+    get duration() {
+      return this.variant === "sequence" ? SEQUENCE_CYCLE_MS : CYCLE_MS;
+    }
 
     connectedCallback() {
       this.rotor = this.querySelector(".auth-cross-rotor");
@@ -80,6 +88,7 @@ if (typeof customElements !== "undefined") {
         ? preference
         : Math.random() < 0.5 ? "spin" : "sequence";
       this.setAttribute("data-cross-animation", this.variant);
+      this.dispatchEvent(new Event("animationchange"));
     }
 
     setAnimation(preference) {
@@ -89,7 +98,7 @@ if (typeof customElements !== "undefined") {
     }
 
     tick = (now) => {
-      this.elapsed = (now - this.startedAt) % CYCLE_MS;
+      this.elapsed = (now - this.startedAt) % this.duration;
       this.draw();
       this.frame = requestAnimationFrame(this.tick);
     };
@@ -109,7 +118,7 @@ if (typeof customElements !== "undefined") {
 
     pauseAt(elapsed = this.elapsed) {
       this.paused = true;
-      this.elapsed = Math.min(CYCLE_MS, Math.max(0, elapsed));
+      this.elapsed = Math.min(this.duration, Math.max(0, elapsed));
       this.draw();
       this.updatePlayback();
     }
