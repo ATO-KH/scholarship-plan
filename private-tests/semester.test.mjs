@@ -31,6 +31,7 @@ async function fixture(t, files = [local]) {
   await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify({
     submissions: [{ id: 'S-sensitive', owner: 'member', grade: 97, reviewNote: 'private academic comment' }],
     semester: { name: 'Fall 2026' }, semesterGeneration: 'old-generation',
+    pointAdjustments: [{ id: 'adjustment', owner: 'member', delta: 20, reason: 'private academic comment' }],
     profilePictures: { alex: 'test-upload' },
     creditRequests: [{ id: 'test-request', owner: 'alex', credits: 12, status: 'pending' }],
     memberProfiles: { alex: { courses: ['MTH 2002'], version: 'test' } },
@@ -51,7 +52,7 @@ async function fixture(t, files = [local]) {
       file.created_at ?? new Date(epoch).toISOString(), file.status, file.backend, file.final_path,
     );
   }
-  for (const [action, detail] of [['submission.approved', 'private academic comment'], ['roster.invite', 'retained identity event']]) {
+  for (const [action, detail] of [['points.adjustment', 'private academic comment'], ['submission.approved', 'private academic comment'], ['roster.invite', 'retained identity event']]) {
     await f.db.prepare('INSERT INTO audit(workspace,at,actor,action,subject,detail) VALUES (?,?,?,?,?,?)').run(
       'chapter', new Date(epoch).toISOString(), 'Chair', action, 'member', detail,
     );
@@ -134,6 +135,7 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.ok(audit.some(item => item.action === 'roster.invite'));
   assert.ok(audit.some(item => item.action === 'semester.reset.start'));
   assert.ok(!JSON.stringify(audit).includes('private academic comment'));
+  assert.equal((await f.state()).pointAdjustments, undefined);
   assert.throws(() => assertAcademicWritesAllowed(state), error => error.status === 423);
   assert.ok(!JSON.stringify(status).includes(local.filename));
   await assert.rejects(f.start(), error => error.status === 423);
@@ -294,4 +296,14 @@ test('expired, forged and stale preview tokens cannot authorize deletion of newl
   await assert.rejects(f.start({ previewToken: fresh.previewToken }), error => error.code === 'SEMESTER_PREVIEW_STALE');
   assert.equal((await f.state()).submissions.length, 2);
   assert.equal((await f.start()).status, 'purging');
+});
+
+test('a point adjustment invalidates a pending semester deletion preview', async t => {
+  const f = await fixture(t, []);
+  const preview = await previewSemesterReset({ db: f.db, workspace: 'chapter', now: f.now });
+  const state = await f.state();
+  state.pointAdjustments.push({ id: 'new-adjustment', owner: 'member', delta: 5 });
+  await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify(state), 'chapter');
+  await assert.rejects(f.start({ previewToken: preview.previewToken }), error => error.status === 409);
+  assert.equal((await f.state()).pointAdjustments.length, 2);
 });

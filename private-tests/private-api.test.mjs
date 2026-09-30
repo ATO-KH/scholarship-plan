@@ -1025,3 +1025,57 @@ test("profile pictures use owned image uploads and support removal", async () =>
   const document = await c.send("/api/uploads", { name: "document.pdf", mime: "application/pdf", base64: pdf.toString("base64") });
   assert.equal((await c.send("/api/profile/picture", { evidenceId: document.upload.id })).status, 422);
 });
+
+test("Chair point adjustments preserve submissions, isolate members and reject stale duplicate writes", async () => {
+  const isolated = await start("demo");
+  for (const module of ["point-adjustment-ui.mjs", "point-adjustment-data.mjs"]) {
+    const asset = await request(isolated, `/${module}`);
+    assert.equal(asset.status, 200);
+    assert.match(asset.headers.get("content-type"), /javascript/);
+  }
+  const c = client(isolated), other = client(isolated);
+  const path = "/api/members/alex/point-adjustments";
+  assert.equal((await c.send(path)).status, 401);
+  await c.send("/api/demo/session", {});
+  const before = await c.send("/api/points");
+  assert.equal((await c.send(path, {})).status, 403);
+  assert.equal((await c.send("/api/members/jordan/point-adjustments")).status, 404);
+  await c.send("/api/demo/session", { persona: "chair" });
+  const initial = await c.send(path);
+  assert.equal(initial.approved, before.approved);
+  const change = { version: initial.version, total: initial.approved + 20, reason: "20 points earned before rollout" };
+  assert.equal((await c.send(path, change, { "X-CSRF-Token": "wrong" })).status, 403);
+  assert.equal((await c.send(path, change, { Origin: "https://other.example" })).status, 403);
+  for (const total of [-1, 0.5, 10001, "20"]) assert.equal((await c.send(path, { ...change, total })).status, 422);
+  assert.equal((await c.send(path, { ...change, reason: " " })).status, 422);
+  const concurrent = await Promise.all([c.send(path, change), c.send(path, change)]);
+  assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 409]);
+  const saved = await c.send(path);
+  assert.equal(saved.approved, initial.approved + 20);
+  assert.equal(saved.history.length, 1);
+  assert.equal(saved.history[0].delta, 20);
+  const all = await c.send("/api/members");
+  assert.equal(all.members.find(member => member.id === "alex").approved, saved.approved);
+  const events = (await c.send("/api/audit")).events.filter(event => event.action === "points.adjustment");
+  assert.equal(events.length, 1);
+  const pending = (await c.send("/api/submissions")).submissions.find(item => item.owner === "alex" && item.status === "pending");
+  assert.equal((await c.send(`/api/submissions/${pending.id}/review`, { decision: "approved", points: 5, note: "Confirmed activity" })).status, 200);
+  assert.equal((await c.send(path, { version: saved.version, total: 12, reason: "Stale override" })).status, 409);
+  const afterReview = await c.send(path);
+  assert.equal(afterReview.approved, saved.approved + 5);
+  const corrected = await c.send(path, { version: afterReview.version, total: 10, reason: "Corrected prior credit" });
+  assert.equal(corrected.approved, 10);
+  assert.equal(corrected.history.length, 2);
+  assert.equal(corrected.submissionPoints, afterReview.submissionPoints);
+  await c.send("/api/demo/session", { persona: "alex" });
+  const own = await c.send(path);
+  assert.equal(own.history[0].reason, "Corrected prior credit");
+  const points = await c.send("/api/points");
+  assert.equal(points.approved, 10);
+  assert.equal(points.approvedCount, before.approvedCount + 1);
+  assert.equal((await c.send(path, { version: own.version, total: 100, reason: "No" })).status, 403);
+  await c.send("/api/demo/session", { persona: "jordan" });
+  assert.equal((await c.send(path)).status, 404);
+  await other.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await other.send(path)).history.length, 0);
+});

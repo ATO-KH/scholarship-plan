@@ -1,3 +1,4 @@
+import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
 import { profileView, validateCourses } from "../web/profile-data.mjs";
@@ -2157,6 +2158,35 @@ const server = http.createServer(async (req, res) => {
         });
         return res.end(bytes);
       }
+      const adjustmentRoute = path.match(/^\/api\/members\/([^/]+)\/point-adjustments$/);
+      if (adjustmentRoute && ["GET", "POST"].includes(req.method)) {
+        if (req.method === "POST") chair(user);
+        const targetId = adjustmentRoute[1];
+        const target = await member(session.workspace, targetId);
+        if (!target || target.role !== "member" || (user.role !== "chair" && user.id !== targetId))
+          fail(404, "Member not found.");
+        if (req.method === "GET") return json(res, 200,
+          pointAdjustmentView(await stateOf(session.workspace), target));
+        const result = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const currentUser = await member(session.workspace, user.id);
+          chair(currentUser);
+          const currentTarget = await member(session.workspace, targetId);
+          if (!currentTarget?.active || currentTarget.role !== "member") fail(404, "Active member not found.");
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          const result = applyPointAdjustment(state, currentTarget, input, currentUser,
+            randomUUID(), new Date().toISOString());
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?")
+            .run(JSON.stringify(state), session.workspace);
+          const entry = result.history[0];
+          await audit(session.workspace, currentUser.name, "points.adjustment", targetId,
+            `${entry.previousTotal} -> ${entry.total}; ${entry.reason}`);
+          return result;
+        });
+        return json(res, 200, result);
+      }
       if (path === "/api/points" && req.method === "GET") {
         individual(user);
         return json(res, 200, {
@@ -2762,6 +2792,8 @@ const server = http.createServer(async (req, res) => {
       "/checkpoint-data.mjs": "checkpoint-data.mjs",
       "/category-data.mjs": "category-data.mjs",
       "/category-ui.mjs": "category-ui.mjs",
+      "/point-adjustment-ui.mjs": "point-adjustment-ui.mjs",
+      "/point-adjustment-data.mjs": "point-adjustment-data.mjs",
       "/checkpoint-ui.mjs": "checkpoint-ui.mjs",
       "/loading-ui.js": "loading-ui.js",
       "/portal-components.css": "portal-components.css",

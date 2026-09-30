@@ -1,3 +1,4 @@
+import { pointBreakdown } from "../web/point-adjustment-data.mjs";
 import { DEFAULT_CATEGORIES, categoriesFor, categoryForSubmission, categoryView, scoreCategory } from "../web/category-data.mjs";
 export const TODAY = "2026-09-28";
 export const members = [
@@ -209,9 +210,7 @@ export function seed() {
 export function totals(state, member, today = TODAY) {
   const mine = state.submissions.filter((s) => s.owner === member.id);
   return {
-    approved: mine
-      .filter((s) => s.status === "approved")
-      .reduce((n, s) => n + s.awarded, 0),
+    ...pointBreakdown(state, member.id),
     pending: mine.filter((s) => s.status === "pending").length,
     pendingEstimate: mine
       .filter((s) => s.status === "pending")

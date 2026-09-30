@@ -1,3 +1,4 @@
+import { pointAdjustmentView, applyPointAdjustment } from "../point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../category-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../credit-data.mjs";
@@ -180,6 +181,16 @@ export async function handle(req, path) {
         weekConvention: "Monday–Sunday (demo assumption)",
         checkpoints: checkpointQuotaView(state).checkpoints,
       });
+    const adjustmentRoute = path.match(/^\/api\/members\/([^/]+)\/point-adjustments$/);
+    if (adjustmentRoute && ["GET", "POST"].includes(req.method)) {
+      if (req.method === "POST") chair();
+      const target = sessionMembers.find(member => member.id === adjustmentRoute[1] && member.role === "member");
+      if (!target || (user.role !== "chair" && target.id !== user.id)) fail(404, "Member not found.");
+      if (req.method === "GET") return json(pointAdjustmentView(state, target));
+      const result = applyPointAdjustment(state, target, input, user, crypto.randomUUID(), new Date().toISOString());
+      await save(session);
+      return json(result);
+    }
     if (path === "/api/points" && req.method === "GET") {
       if (user.role !== "member")
         fail(400, "Choose a member view for individual points.");

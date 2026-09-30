@@ -184,3 +184,9 @@ Local and provider-mock tests support the implementation, but do not establish l
 ### Controlled invitation rollout
 
 Production CHAPTER_EMAIL_READY was enabled on September 30, 2026 after the user confirmed SMTP setup. Delivery has not been tested. Chair → Chapter roster → Refresh roster now lists eligible, uninvited active and new members. Search or filter recipients, choose Review invitation, check the address/tier/credits, and confirm the second screen to send one setup link. Refreshing/importing the roster never sends invitations. Do not send rollout or test messages until explicitly authorized. The email content remains Supabase Auth’s Invite user template.
+
+### Points earned before rollout
+
+In the Chair view, open **Member points → Adjust points** beside a member. Enter the **new approved total**, including existing approved submissions plus points earned before the portal, and a reason. For example, if the portal shows 5 and the member earned 20 elsewhere this semester, enter 25. The preview shows the difference before saving. To correct a mistake, enter the corrected total and a new reason.
+
+Adjustments are stored as a separate semester ledger; submission awards and approved-submission counts are preserved. These are final points, so credit-load multipliers are not applied again. Members can read their own breakdown and reasons through **Point details**, while only the Chair can change totals. Each adjustment records its previous/new total, difference, actor, and timestamp. Stale or repeated submissions are rejected; the form must be reopened after another adjustment, approval, or semester change. Starting a new semester removes the adjustment ledger and related academic audit entries. The public sandbox implements the same workflow in tab-session storage only. No database schema migration is required.
