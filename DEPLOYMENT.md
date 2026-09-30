@@ -82,6 +82,14 @@ The first successful login of that exact identity creates the chair **only if no
 
 Microsoft support remains in the code only as an explicit legacy mode. It is not the chapter's planned login.
 
+### Invitation email wording
+
+The editable draft is `supabase/email-templates/invite.html`. Its subject is **Set up your ATO Scholarship account**. It identifies the recipient’s email as their username and provides a one-time setup link; no temporary password is sent. Supabase fills `{{ .Email }}` and `{{ .ConfirmationURL }}` for each recipient. Do not substitute a real member’s link in Git or a public preview.
+
+To install the draft, open Supabase Authentication → Emails → Templates → Invite user, paste the subject and HTML, preview, then save. This repository file does not automatically update the hosted Supabase template. No email is sent by editing the template; sending an invitation is a separate Chair action. Verify the saved hosted wording and delivery with one explicitly authorized recipient before rollout.
+
+After a successful password setup or email password reset, members see their new 16-word key immediately and acknowledge saving it before returning to sign-in. The next login in that semester does not issue a duplicate key. The Chair office account does not receive a member key.
+
 ### Chapter-managed login pilot
 
 The default `AUTH_MODE=chapter` uses Supabase Auth to verify email/password credentials and the portal's own membership database to authorize records. The chapter chair can invite a member, send a reset email, and deactivate access. Members may sign in using their verified email, assigned `KH-...` portal sign-in ID, or a chair-entered badge number. The immutable Portal Member ID remains the sheet eligibility key and never changes when a badge is assigned. No public self-registration or predictable temporary password is used.

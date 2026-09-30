@@ -1163,17 +1163,26 @@ const server = http.createServer(async (req, res) => {
         fail(403, "This account is not approved for the portal.");
       if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id)))
         fail(401, "This account link has expired. Request a new one.");
+      let recoveryKey;
       if (user) {
-        await atomic(async () => {
+        recoveryKey = await atomic(async () => {
           await lockWorkspace("chapter");
+          const currentUser = await member("chapter", user.id);
+          if (!currentUser?.active || currentUser.email !== account.email)
+            fail(403, "This account is not approved for the portal.");
           await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
             .run("chapter", user.id);
-          if (user.role === "member") await clearRecoveryKey(db, "chapter", user.id);
           await audit("chapter", user.name, "account.password_change", user.id,
             "Existing portal sessions revoked after password update.");
+          if (currentUser.role === "member") {
+            await clearRecoveryKey(db, "chapter", user.id);
+            return issueSemesterRecoveryKey(db, "chapter", user.id,
+              (await stateOf("chapter")).semesterGeneration || "initial");
+          }
         });
       }
-      return json(res, 200, { message: "Password set. Sign in to continue." });
+      return json(res, 200, { message: "Password set. Sign in to continue.",
+        ...(recoveryKey ? { recoveryKey } : {}) });
     }
     if (path === "/api/demo/session" && req.method === "POST" && !production) {
       requireOrigin(req);

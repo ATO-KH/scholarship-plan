@@ -1009,7 +1009,7 @@ function loginPage() {
       panel.innerHTML = `<h2>Recover your account</h2><p>Members can use their 16-word recovery key to set a new password.</p><button class="button gold" id="use-recovery-key" type="button">Use recovery key</button>${emailReady ? '<p class="footnote">Or request a link at your approved email.</p><form id="reset-request"><div class="field"><label for="reset-id">Email, badge number, or portal ID</label><input id="reset-id" name="identifier" autocomplete="username" required maxlength="254"></div><div id="form-error" role="alert"></div><button class="button ghost" type="submit">Request email reset</button></form>' : '<p class="footnote">Email resets are not available yet. If you do not have your key, contact the portal administrator. The Scholarship Chair office account must also use the administrator until chapter email is ready.</p>'}<button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
       $("#back-login").onclick = loginPage;
       $("#use-recovery-key").onclick = () => {
-        panel.innerHTML = `<h2>Use your recovery key</h2><p>Enter the 16 words you saved after your first sign-in this semester.</p><form id="key-recovery"><div class="field"><label for="recovery-id">Email, badge number, or portal ID</label><input id="recovery-id" name="identifier" autocomplete="username" maxlength="254" required></div><div class="field"><label for="recovery-words">16-word recovery key</label><textarea id="recovery-words" name="recoveryKey" rows="4" autocomplete="off" spellcheck="false" required maxlength="256"></textarea></div><div class="field"><label for="recovery-password">New password</label><input id="recovery-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="recovery-confirm-password">Confirm new password</label><input id="recovery-confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Reset password</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
+        panel.innerHTML = `<h2>Use your recovery key</h2><p>Enter the 16 words you saved after setting your password or signing in for a new semester.</p><form id="key-recovery"><div class="field"><label for="recovery-id">Email, badge number, or portal ID</label><input id="recovery-id" name="identifier" autocomplete="username" maxlength="254" required></div><div class="field"><label for="recovery-words">16-word recovery key</label><textarea id="recovery-words" name="recoveryKey" rows="4" autocomplete="off" spellcheck="false" required maxlength="256"></textarea></div><div class="field"><label for="recovery-password">New password</label><input id="recovery-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="recovery-confirm-password">Confirm new password</label><input id="recovery-confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Reset password</button></form><button class="text-btn" id="back-login" type="button">Back to sign in</button>`;
         $("#back-login").onclick = loginPage;
         $("#key-recovery").onsubmit = async (event) => {
           event.preventDefault();
@@ -1065,20 +1065,32 @@ function accountSetupPage() {
   main.innerHTML = heading("", "Set your password", "This link can be used only for account setup or recovery.") +
     `<section class="panel login-panel">${accountToken ? '<form id="account-setup"><div class="field"><label for="new-password">New password</label><input id="new-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Save password</button></form>' : '<p>That account link is missing or has expired. Ask the chair for a new invitation or request a password reset.</p><a class="button ghost" href="/">Go to sign in</a>'}</section>`;
   if (!accountToken) return;
+  let setupPending = false;
   $("#account-setup").onsubmit = async (event) => {
     event.preventDefault();
+    if (setupPending) return;
     const values = Object.fromEntries(new FormData(event.target));
     if (values.password !== values.confirm) {
       $("#form-error").textContent = "Passwords do not match.";
       return;
     }
+    setupPending = true;
+    setAuthLoading(true, "Saving your password…");
     try {
-      await api("/api/auth/complete", { method: "POST", body: { accessToken: accountToken, password: values.password } });
+      const result = await api("/api/auth/complete", { method: "POST", body: { accessToken: accountToken, password: values.password } });
+      setAuthLoading(false);
       accountToken = null;
       history.replaceState(null, "", "/");
-      loginPage();
-      toast("Password saved. Sign in to continue.");
+      const continueToLogin = () => {
+        loginPage();
+        toast("Password saved. Sign in to continue.");
+      };
+      if (result.recoveryKey) {
+        main.innerHTML = '<section class="panel login-panel"><h2>Password saved</h2><p>Save your recovery key before continuing to sign in.</p></section>';
+        showRecoveryKeyModal(result.recoveryKey, continueToLogin);
+      } else continueToLogin();
     } catch (error) { $("#form-error").textContent = error.message; }
+    finally { setupPending = false; setAuthLoading(false); }
   };
 }
 
