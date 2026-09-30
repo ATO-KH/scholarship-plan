@@ -7,6 +7,7 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const PUBLIC_CSV_MODE = "public_email_csv";
 const ID_MODE = "service_account_ids";
+const PUBLIC_ELIGIBILITY_VERSION = "active-or-new-member-v1";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const rosterError = (message) =>
   Object.assign(new Error(message), { status: 503 });
@@ -27,7 +28,7 @@ export function rosterStatus(env = process.env) {
       configured: /^[A-Za-z0-9_-]{20,150}$/.test(id) && validGid,
       required: true,
       maxAgeMs: 15 * 60 * 1000,
-      source: digest(JSON.stringify([mode, id, validGid ? gid : gidText])),
+      source: digest(JSON.stringify([mode, id, validGid ? gid : gidText, PUBLIC_ELIGIBILITY_VERSION])),
     };
   }
   const range = String(env.ROSTER_SHEET_RANGE || "'Roster'!D1:E1002").trim();
@@ -184,7 +185,8 @@ export function parsePublicRosterCsv(csv) {
     const [first = "", last = "", status = "", email = ""] =
       columns.map(cleanCell);
     if (first || last || status || email) populatedRows++;
-    if (status.toLowerCase() !== "active") continue;
+    const membership = status.toLowerCase().replace(/\s+/g, " ");
+    if (!["active", "new mem.", "new member"].includes(membership)) continue;
     const normalizedEmail = email.toLowerCase();
     if (
       !first ||
@@ -196,14 +198,15 @@ export function parsePublicRosterCsv(csv) {
       last.length > 100
     )
       throw rosterError(
-        "An active roster member is missing a valid name or email.",
+        "An eligible roster member is missing a valid name or email.",
       );
     if (emails.has(normalizedEmail))
-      throw rosterError("Public roster contains a duplicate active email.");
+      throw rosterError("Public roster contains a duplicate eligible email.");
     emails.add(normalizedEmail);
     directory.push({
       name: `${first.replace(/\s+/g, " ")} ${last.replace(/\s+/g, " ")}`,
       email: normalizedEmail,
+      membership: membership === "active" ? "active" : "new_member",
     });
   }
   if (!populatedRows)

@@ -238,6 +238,9 @@ function rosterView(state) {
     fetchedAt: snapshot?.fetchedAt || null,
     revision: snapshot?.revision || null,
     activeCount: active?.length || 0,
+    newMemberCount: config.mode === "public_email_csv"
+      ? snapshot?.directory?.filter((entry) => entry.membership === "new_member").length || 0
+      : 0,
     refreshing: (state.rosterSyncAttempt?.expiresAt || 0) > Date.now(),
     retryAt: state.rosterSyncError?.retryAt || null,
     lastError: state.rosterSyncError
@@ -2010,7 +2013,7 @@ const server = http.createServer(async (req, res) => {
             if (!rosterView(state).fresh)
               fail(503, "Current roster eligibility is unavailable. Refresh the roster before inviting members.");
             if (!state.roster.emails.includes(invited.email))
-              fail(422, "This email is not active on the connected chapter roster.");
+              fail(422, "This email is not eligible on the connected chapter roster.");
           }
           const existing = await db
             .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")

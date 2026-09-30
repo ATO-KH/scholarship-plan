@@ -61,7 +61,7 @@ const publicEnv = {
   ROSTER_SHEET_GID: "0",
 };
 const publicCsv =
-  '\ufeffFirst Name,Last Name,Status,Student Email\r\n"Noah, Jr.",Knickerbocker,Active,NOAH@my.fit.edu\r\nFormer,Member,Alumni,former@example.org\r\nMatas,Vaitkevicius,ACTIVE,matas@my.fit.edu\r\n,,,\r\n';
+  '\ufeffFirst Name,Last Name,Status,Student Email\r\n"Noah, Jr.",Knickerbocker,Active,NOAH@my.fit.edu\r\nFormer,Member,Alumni,former@example.org\r\nMatas,Vaitkevicius,ACTIVE,matas@my.fit.edu\r\nNew,Member,New Mem.,new@my.fit.edu\r\n,,,\r\n';
 
 test("public roster mode needs only a valid sheet ID and numeric GID", () => {
   const status = rosterStatus(publicEnv);
@@ -88,16 +88,21 @@ test("public roster mode needs only a valid sheet ID and numeric GID", () => {
   );
 });
 
-test("projected public CSV reads active names and normalized emails only", () => {
+test("projected public CSV includes active and new members only", () => {
   const parsed = parsePublicRosterCsv(publicCsv);
   assert.deepEqual(parsed, {
-    emails: ["matas@my.fit.edu", "noah@my.fit.edu"],
+    emails: ["matas@my.fit.edu", "new@my.fit.edu", "noah@my.fit.edu"],
     directory: [
-      { name: "Matas Vaitkevicius", email: "matas@my.fit.edu" },
-      { name: "Noah, Jr. Knickerbocker", email: "noah@my.fit.edu" },
+      { name: "Matas Vaitkevicius", email: "matas@my.fit.edu", membership: "active" },
+      { name: "New Member", email: "new@my.fit.edu", membership: "new_member" },
+      { name: "Noah, Jr. Knickerbocker", email: "noah@my.fit.edu", membership: "active" },
     ],
   });
   assert.doesNotMatch(JSON.stringify(parsed), /Former|former@example/);
+  assert.equal(
+    parsePublicRosterCsv("First Name,Last Name,Status,Student Email\nNew,Member,NEW MEMBER,new@my.fit.edu\n").directory[0].membership,
+    "new_member",
+  );
   assert.deepEqual(
     parsePublicRosterCsv(
       "First Name,Last Name,Status,Student Email\nFormer,Member,Alumni,former@example.org\n",
@@ -110,7 +115,9 @@ test("public CSV rejects ambiguous active rows, malformed exports, and excess ro
   const csvHeader = "First Name,Last Name,Status,Student Email\n";
   const invalid = [
     csvHeader + "A,B,Active,a@example.org\nA,B,Active,A@example.org\n",
+    csvHeader + "A,B,Active,a@example.org\nC,D,New Mem.,A@example.org\n",
     csvHeader + "A,B,Active,\n",
+    csvHeader + "A,B,New Mem.,\n",
     csvHeader + ",B,Active,a@example.org\n",
     csvHeader + "A,B,Active,not-an-email\n",
     csvHeader + "A,B,Active,a@example.org,unexpected\n",
@@ -146,7 +153,7 @@ test("public reader fetches only one A,B,C,I projection without credentials", as
     },
   });
   assert.equal(calls, 1);
-  assert.deepEqual(snapshot.emails, ["matas@my.fit.edu", "noah@my.fit.edu"]);
+  assert.deepEqual(snapshot.emails, ["matas@my.fit.edu", "new@my.fit.edu", "noah@my.fit.edu"]);
   assert.equal(snapshot.fetchedAt, new Date(now).toISOString());
   assert.equal(snapshot.source, rosterStatus(publicEnv).source);
   assert.match(snapshot.revision, /^[a-f0-9]{64}$/);
