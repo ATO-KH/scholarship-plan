@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { generateKeyPair, exportPKCS8, jwtVerify } from "jose";
 import {
   fetchRosterSnapshot,
+  parsePublicRosterCsv,
   parseRosterValues,
   rosterStatus,
 } from "../server/roster.mjs";
@@ -39,6 +40,7 @@ test("roster membership requires explicit IDs and active values, never inferred 
 
 test("partial roster configuration requires sync and cannot silently disable eligibility", () => {
   assert.equal(rosterStatus({}).required, false);
+  assert.equal(rosterStatus({}).mode, "service_account_ids");
   for (const env of [
     { ROSTER_REQUIRED: "true" },
     { ROSTER_SHEET_ID: "partial" },
@@ -50,6 +52,130 @@ test("partial roster configuration requires sync and cannot silently disable eli
   assert.notEqual(
     rosterStatus({ ROSTER_SHEET_ID: "first" }).source,
     rosterStatus({ ROSTER_SHEET_ID: "second" }).source,
+  );
+});
+
+const publicEnv = {
+  ROSTER_SOURCE_MODE: "public_email_csv",
+  ROSTER_SHEET_ID: "a".repeat(44),
+  ROSTER_SHEET_GID: "0",
+};
+const publicCsv =
+  '\ufeffFirst Name,Last Name,Status,Student Email\r\n"Noah, Jr.",Knickerbocker,Active,NOAH@my.fit.edu\r\nFormer,Member,Alumni,former@example.org\r\nMatas,Vaitkevicius,ACTIVE,matas@my.fit.edu\r\n,,,\r\n';
+
+test("public roster mode needs only a valid sheet ID and numeric GID", () => {
+  const status = rosterStatus(publicEnv);
+  assert.equal(status.mode, "public_email_csv");
+  assert.equal(status.required, true);
+  assert.equal(status.configured, true);
+  assert.notEqual(
+    status.source,
+    rosterStatus({ ...publicEnv, ROSTER_SHEET_GID: "1" }).source,
+  );
+  for (const env of [
+    { ...publicEnv, ROSTER_SHEET_ID: "short" },
+    { ...publicEnv, ROSTER_SHEET_GID: "-1" },
+    { ...publicEnv, ROSTER_SHEET_GID: "1.2" },
+    { ...publicEnv, ROSTER_SHEET_GID: "not-a-number" },
+    { ...publicEnv, ROSTER_SOURCE_MODE: "unknown" },
+  ]) {
+    assert.equal(rosterStatus(env).required, true);
+    assert.equal(rosterStatus(env).configured, false);
+  }
+  assert.equal(
+    rosterStatus({ ...publicEnv, ROSTER_SHEET_GID: "" }).source,
+    status.source,
+  );
+});
+
+test("projected public CSV reads active names and normalized emails only", () => {
+  const parsed = parsePublicRosterCsv(publicCsv);
+  assert.deepEqual(parsed, {
+    emails: ["matas@my.fit.edu", "noah@my.fit.edu"],
+    directory: [
+      { name: "Matas Vaitkevicius", email: "matas@my.fit.edu" },
+      { name: "Noah, Jr. Knickerbocker", email: "noah@my.fit.edu" },
+    ],
+  });
+  assert.doesNotMatch(JSON.stringify(parsed), /Former|former@example/);
+  assert.deepEqual(
+    parsePublicRosterCsv(
+      "First Name,Last Name,Status,Student Email\nFormer,Member,Alumni,former@example.org\n",
+    ),
+    { emails: [], directory: [] },
+  );
+});
+
+test("public CSV rejects ambiguous active rows, malformed exports, and excess rows", () => {
+  const csvHeader = "First Name,Last Name,Status,Student Email\n";
+  const invalid = [
+    csvHeader + "A,B,Active,a@example.org\nA,B,Active,A@example.org\n",
+    csvHeader + "A,B,Active,\n",
+    csvHeader + ",B,Active,a@example.org\n",
+    csvHeader + "A,B,Active,not-an-email\n",
+    csvHeader + "A,B,Active,a@example.org,unexpected\n",
+    csvHeader + '"unterminated,B,Active,a@example.org\n',
+    csvHeader + 'A"bad,B,Active,a@example.org\n',
+    "Wrong,Last Name,Status,Student Email\nA,B,Active,a@example.org\n",
+    csvHeader,
+    csvHeader + "A,B,Inactive,\n".repeat(1001),
+  ];
+  for (const csv of invalid)
+    assert.throws(() => parsePublicRosterCsv(csv), (error) => error.status === 503);
+});
+
+test("public reader fetches only one A,B,C,I projection without credentials", async () => {
+  const expected =
+    "https://docs.google.com/spreadsheets/d/" +
+    publicEnv.ROSTER_SHEET_ID +
+    "/gviz/tq?gid=0&tqx=out%3Acsv&tq=select%20A%2CB%2CC%2CI";
+  const now = Date.now();
+  let calls = 0;
+  const snapshot = await fetchRosterSnapshot({
+    env: publicEnv,
+    now: () => now,
+    fetchImpl: async (url, options) => {
+      assert.equal(url, expected);
+      assert.equal(options.redirect, "error");
+      assert.ok(options.signal instanceof AbortSignal);
+      assert.equal(options.headers, undefined);
+      calls++;
+      return new Response(publicCsv, {
+        headers: { "Content-Type": "text/csv" },
+      });
+    },
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(snapshot.emails, ["matas@my.fit.edu", "noah@my.fit.edu"]);
+  assert.equal(snapshot.fetchedAt, new Date(now).toISOString());
+  assert.equal(snapshot.source, rosterStatus(publicEnv).source);
+  assert.match(snapshot.revision, /^[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify(snapshot), /former@example|Former/);
+});
+
+test("public reader rejects provider errors, redirects, and oversized downloads", async () => {
+  await assert.rejects(
+    fetchRosterSnapshot({
+      env: publicEnv,
+      fetchImpl: async () => new Response(null, { status: 307, headers: { Location: "https://example.com" } }),
+    }),
+    (error) => error.status === 503,
+  );
+  await assert.rejects(
+    fetchRosterSnapshot({
+      env: publicEnv,
+      fetchImpl: async () => new Response("private-provider-text", { status: 403 }),
+    }),
+    (error) => error.status === 503 && !error.message.includes("private-provider-text"),
+  );
+  await assert.rejects(
+    fetchRosterSnapshot({
+      env: publicEnv,
+      fetchImpl: async () => new Response(
+        "First Name,Last Name,Status,Student Email\n" + "x".repeat(256 * 1024),
+      ),
+    }),
+    /too large/,
   );
 });
 

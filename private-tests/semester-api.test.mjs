@@ -304,3 +304,38 @@ test("roster eligibility uses fresh explicit IDs and keeps chair recovery availa
   assert.equal((await app.api("/api/session")).status, 503);
   assert.equal((await app.api("/api/logout", {})).status, 200);
 });
+
+test("read-only email roster gates members by exact verified account email", async (t) => {
+  const app = await portal(t, {
+    ROSTER_SOURCE_MODE: "public_email_csv",
+    ROSTER_SHEET_ID: "a".repeat(44),
+    ROSTER_SHEET_GID: "0",
+  });
+  await app.switchTo("chair");
+  app.editState((state) => {
+    state.roster = {
+      emails: ["noah.knickerbocker@example.edu", "new.member@example.edu"],
+      directory: [
+        { name: "Noah Knickerbocker", email: "noah.knickerbocker@example.edu" },
+        { name: "New Member", email: "new.member@example.edu" },
+      ],
+      fetchedAt: new Date().toISOString(),
+      revision: "test-revision",
+      source: rosterStatus(app.env).source,
+    };
+  });
+  const source = await app.api("/api/admin/roster-sync");
+  assert.equal(source.status, 200);
+  assert.equal(source.value.mode, "public_email_csv");
+  assert.equal(source.value.activeCount, 2);
+  assert.deepEqual(source.value.candidates.map((entry) => entry.accountStatus), ["missing_sign_in", "not_invited"]);
+  await app.switchTo("alex");
+  assert.equal((await app.api("/api/session")).value.rosterEligibility.eligible, true);
+  assert.equal((await app.api("/api/admin/roster-sync")).status, 403);
+  app.editState((state) => {
+    state.roster.emails = ["jordan.ellis@example.edu"];
+  });
+  assert.equal((await app.api("/api/session")).status, 403);
+  await app.switchTo("chair");
+  assert.equal((await app.api("/api/session")).status, 200);
+});

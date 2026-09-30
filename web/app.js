@@ -35,6 +35,7 @@ let user,
   submissions = [],
   points = {},
   roster = [],
+  rosterCandidates = [],
   filter = "all",
   logs = [],
   busy = false;
@@ -128,7 +129,10 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   }
 }
 function heading(kicker, title, description, action = "") {
-  return `<div class="page-heading"><div>${kicker ? `<p class="eyebrow">${kicker}</p>` : ""}<h1>${title}</h1>${description ? `<p>${description}</p>` : ""}</div>${action}</div>`;
+  const signedIn = Boolean(user);
+  const titleMarkup = `<h1${signedIn ? ' class="sr-only"' : ""}>${title}</h1>`;
+  if (signedIn && !kicker && !description && !action) return titleMarkup;
+  return `<div class="page-heading${signedIn ? " page-heading-compact" : ""}"><div>${kicker ? `<p class="eyebrow">${kicker}</p>` : ""}${titleMarkup}${description ? `<p>${description}</p>` : ""}</div>${action}</div>`;
 }
 function newButton() {
   return '<button class="button gold" data-action="new">+ New submission</button>';
@@ -169,7 +173,7 @@ function navigation() {
   nav.innerHTML = links
     .map(
       ([id, name, count]) =>
-        `<a href="#${id}" class="${route() === id ? "active" : ""}">${name}${count ? `<span class="nav-count">${count}</span>` : ""}</a>`,
+        `<a href="#${id}" class="${route() === id ? "active" : ""}"${route() === id ? ' aria-current="page"' : ""}>${name}${count ? `<span class="nav-count">${count}</span>` : ""}</a>`,
     )
     .join("");
   nav.scrollLeft = previousScroll;
@@ -1208,10 +1212,26 @@ async function rosterPage() {
 }
 async function loadRosterSync() {
   const panel = $("#roster-sync");
+  rosterCandidates = [];
   try {
     const result = await api("/api/admin/roster-sync");
     if (!panel.isConnected) return;
-    panel.innerHTML = `<div class="section-heading"><h2>ROSTER SHEET</h2><span class="status ${result.fresh ? "approved" : "pending"}">${result.fresh ? "Up to date" : result.required ? "Refresh required" : "Not connected"}</span></div><p>Copy each Portal Member ID below into the sheet, then use TRUE or FALSE in its Active column. Chapter sign-in identifies the member; the sheet controls continuing access.</p><p class="muted">${result.fetchedAt ? `Last successful refresh: ${esc(new Date(result.fetchedAt).toLocaleString())}. ${result.activeCount} active IDs.` : "Connect the sheet in the hosting settings to enable automatic eligibility checks."} Members need a successful refresh at least every 15 minutes. Chair access remains available for recovery.</p>${result.lastError ? `<p class="error">${esc(result.lastError)}</p>` : ""}<button class="button ghost" id="sync-roster" ${result.configured ? "" : "disabled"}>Refresh roster now</button>`;
+    const emailMode = result.mode === "public_email_csv";
+    const candidates = emailMode && result.fresh ? (result.candidates || []) : [];
+    rosterCandidates = candidates.filter((entry) => entry.accountStatus === "not_invited");
+    const needsAttention = candidates.filter((entry) => ["inactive", "missing_sign_in"].includes(entry.accountStatus)).length;
+    const description = emailMode
+      ? "The portal reads active names and university emails from the chapter sheet. The Chair reviews each invitation; the sheet is never edited by this portal."
+      : "Copy each Portal Member ID below into the sheet, then use TRUE or FALSE in its Active column. Chapter sign-in identifies the member; the sheet controls continuing access.";
+    const count = result.fetchedAt
+      ? `Last successful refresh: ${esc(new Date(result.fetchedAt).toLocaleString())}. ${result.activeCount} active ${emailMode ? "email addresses" : "IDs"}.`
+      : "Connect the sheet in the hosting settings to enable automatic eligibility checks.";
+    const candidateList = emailMode && result.fresh
+      ? `<div class="section-heading" style="margin-top:22px"><h3>READY TO INVITE</h3><span class="muted">${rosterCandidates.length} of ${result.activeCount} active members</span></div>${rosterCandidates.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Member</th><th>University email</th><th></th></tr></thead><tbody>${rosterCandidates.map((entry, index) => `<tr><td><strong>${esc(entry.name)}</strong></td><td>${esc(entry.email)}</td><td><button class="table-link" data-action="invite-roster-member" data-index="${index}" ${appConfig.chapterAuth?.emailReady ? "" : "disabled"}>Invite</button></td></tr>`).join("")}</tbody></table></div>`
+        : '<p class="muted">No active roster entries need a new invitation.</p>'}${needsAttention ? `<p class="muted">${needsAttention} existing ${needsAttention === 1 ? "account needs" : "accounts need"} attention in the member table below.</p>` : ""}${appConfig.chapterAuth?.emailReady ? "" : '<p class="muted">Email delivery must be configured before invitations can be sent.</p>'}`
+      : "";
+    panel.innerHTML = `<div class="section-heading"><h2>ROSTER SHEET</h2><span class="status ${result.fresh ? "approved" : "pending"}">${result.fresh ? "Up to date" : result.required ? "Refresh required" : "Not connected"}</span></div><p>${description}</p><p class="muted">${count} Members need a successful refresh at least every 15 minutes. Chair access remains available for recovery.</p>${result.lastError ? `<p class="error">${esc(result.lastError)}</p>` : ""}<button class="button ghost" id="sync-roster" ${result.configured ? "" : "disabled"}>Refresh roster now</button>${candidateList}`;
     $("#sync-roster").onclick = async (event) => {
       event.target.disabled = true;
       try {
@@ -1350,7 +1370,7 @@ async function updateSemesterState() {
   points = {};
   await refresh();
 }
-function addMember() {
+function addMember(prefill = {}) {
   if (appConfig.chapterAuth?.enabled) {
     if (!appConfig.chapterAuth.emailReady) {
       openModal("MEMBER INVITATIONS ARE NOT READY", "Chapter email delivery has not been configured.",
@@ -1358,7 +1378,7 @@ function addMember() {
       return;
     }
     openModal("ADD A CHAPTER MEMBER", "An invitation will be emailed. The member chooses their own password.",
-      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
+      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
     $("#roster-form").onsubmit = async (event) => {
       event.preventDefault();
       const body = Object.fromEntries(new FormData(event.target));
@@ -1422,6 +1442,10 @@ document.addEventListener("click", async (e) => {
       logs = [];
       loginPage();
     } else if (b.dataset.action === "add-member") addMember();
+    else if (b.dataset.action === "invite-roster-member") {
+      const entry = rosterCandidates[Number(b.dataset.index)];
+      if (entry) addMember(entry);
+    }
     else if (b.dataset.action === "reset-member-password") {
       openModal("SEND PASSWORD RESET?", "A reset link will go to this member’s approved email. You will not see their password.",
         `<div class="modal-actions"><button class="button ghost" data-action="close">Cancel</button><button class="button gold" data-action="confirm-member-reset" data-id="${esc(b.dataset.id)}">Send reset link</button></div>`);

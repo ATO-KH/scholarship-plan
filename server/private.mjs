@@ -222,11 +222,13 @@ function rosterView(state) {
   const config = rosterStatus(env);
   const snapshot = state.roster;
   const age = Date.now() - Date.parse(snapshot?.fetchedAt);
+  const active = config.mode === "public_email_csv" ? snapshot?.emails : snapshot?.ids;
   const fresh =
     config.configured &&
     !state.rosterSyncError &&
     snapshot?.source === config.source &&
-    Array.isArray(snapshot?.ids) &&
+    Array.isArray(active) &&
+    (config.mode !== "public_email_csv" || Array.isArray(snapshot?.directory)) &&
     Number.isFinite(age) &&
     age >= 0 &&
     age < config.maxAgeMs;
@@ -235,13 +237,19 @@ function rosterView(state) {
     fresh,
     fetchedAt: snapshot?.fetchedAt || null,
     revision: snapshot?.revision || null,
-    activeCount: snapshot?.ids?.length || 0,
+    activeCount: active?.length || 0,
     refreshing: (state.rosterSyncAttempt?.expiresAt || 0) > Date.now(),
     retryAt: state.rosterSyncError?.retryAt || null,
     lastError: state.rosterSyncError
       ? "Roster synchronization failed. Check the configured sheet and try again."
       : null,
   };
+}
+function listedOnRoster(state, user) {
+  const snapshot = state.roster;
+  return rosterStatus(env).mode === "public_email_csv"
+    ? snapshot?.emails?.includes(user.email?.trim().toLowerCase()) === true
+    : snapshot?.ids?.includes(user.id) === true;
 }
 function assertRosterEligibility(state, user) {
   const status = rosterView(state);
@@ -251,7 +259,7 @@ function assertRosterEligibility(state, user) {
       503,
       "Current roster eligibility is unavailable. Ask the Scholarship Chair to refresh the roster.",
     );
-  if (!state.roster.ids.includes(user.id))
+  if (!listedOnRoster(state, user))
     fail(
       403,
       "Your account is not active on the current chapter roster. Contact the Scholarship Chair.",
@@ -333,7 +341,7 @@ async function refreshRoster(session, user, force = false) {
       user.name,
       "roster.sync",
       "",
-      `${state.roster.ids.length} eligible member IDs`,
+      `${rosterView(state).activeCount} eligible roster entries`,
     );
     return state;
   });
@@ -581,7 +589,7 @@ async function sessionPayload(session, user) {
       eligible:
         user.role === "chair" ||
         !rosterStatus(env).required ||
-        (rosterView(state).fresh && state.roster.ids.includes(user.id)),
+        (rosterView(state).fresh && listedOnRoster(state, user)),
       fresh: rosterView(state).fresh,
       fetchedAt: state.roster?.fetchedAt || null,
     },
@@ -1298,7 +1306,24 @@ const server = http.createServer(async (req, res) => {
           req.method === "POST"
             ? await refreshRoster(session, user, true)
             : await stateOf(session.workspace);
-        return json(res, 200, rosterView(state));
+        const view = rosterView(state);
+        if (view.mode === "public_email_csv" && view.fresh) {
+          const enrolled = new Map((await listMembers(session.workspace))
+            .filter((entry) => entry.role === "member")
+            .map((entry) => [entry.email.toLowerCase(), entry]));
+          const linked = new Set((await db.prepare(
+            "SELECT member_id FROM identities WHERE workspace=? AND provider='supabase'",
+          ).all(session.workspace)).map((entry) => entry.member_id));
+          view.candidates = state.roster.directory.map((entry) => {
+            const account = enrolled.get(entry.email);
+            return {
+              ...entry,
+              accountStatus: !account ? "not_invited" : !account.active ? "inactive" :
+                linked.has(account.id) ? "invited" : "missing_sign_in",
+            };
+          });
+        }
+        return json(res, 200, view);
       }
       if (path === "/api/semester" && req.method === "GET") {
         const state = await stateOf(session.workspace);
@@ -1979,6 +2004,14 @@ const server = http.createServer(async (req, res) => {
           if (!chapterAuthConfigured(env)) fail(503, "Chapter invitations are not ready.");
           if (!chapterEmailReady) fail(503, "Member invitations require email delivery. The Chair must configure and test chapter email first.");
           const invited = validateChapterMember(input);
+          if (rosterStatus(env).mode === "public_email_csv") {
+            let state = await stateOf(session.workspace);
+            if (!rosterView(state).fresh) state = await refreshRoster(session, user);
+            if (!rosterView(state).fresh)
+              fail(503, "Current roster eligibility is unavailable. Refresh the roster before inviting members.");
+            if (!state.roster.emails.includes(invited.email))
+              fail(422, "This email is not active on the connected chapter roster.");
+          }
           const existing = await db
             .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
             .get(session.workspace, invited.email);

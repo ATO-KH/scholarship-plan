@@ -5,12 +5,31 @@ const MAX_ROWS = 1000;
 const MAX_BYTES = 256 * 1024;
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const PUBLIC_CSV_MODE = "public_email_csv";
+const ID_MODE = "service_account_ids";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const rosterError = (message) =>
   Object.assign(new Error(message), { status: 503 });
 
 export function rosterStatus(env = process.env) {
+  const requestedMode = String(env.ROSTER_SOURCE_MODE || "").trim();
+  const mode = requestedMode || ID_MODE;
   const id = String(env.ROSTER_SHEET_ID || "").trim();
+  const gidText = String(env.ROSTER_SHEET_GID ?? "").trim() || "0";
+  const gid = Number(gidText);
+  const validGid =
+    /^\d{1,15}$/.test(gidText) &&
+    Number.isSafeInteger(gid) &&
+    gid >= 0;
+  if (mode === PUBLIC_CSV_MODE) {
+    return {
+      mode,
+      configured: /^[A-Za-z0-9_-]{20,150}$/.test(id) && validGid,
+      required: true,
+      maxAgeMs: 15 * 60 * 1000,
+      source: digest(JSON.stringify([mode, id, validGid ? gid : gidText])),
+    };
+  }
   const range = String(env.ROSTER_SHEET_RANGE || "'Roster'!D1:E1002").trim();
   const email = String(env.ROSTER_SERVICE_ACCOUNT_EMAIL || "").trim();
   const key = String(env.ROSTER_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(
@@ -19,14 +38,18 @@ export function rosterStatus(env = process.env) {
   );
   const required =
     env.ROSTER_REQUIRED === "true" ||
-    Boolean(id || email || key || env.ROSTER_SHEET_RANGE);
+    Boolean(
+      id || email || key || env.ROSTER_SHEET_RANGE || requestedMode || env.ROSTER_SHEET_GID,
+    );
   const configured =
+    mode === ID_MODE &&
     /^[A-Za-z0-9_-]{20,150}$/.test(id) &&
     /^[^\s@]+@[^\s@]+\.iam\.gserviceaccount\.com$/.test(email) &&
     key.includes("-----BEGIN PRIVATE KEY-----") &&
     range.length > 0 &&
     range.length <= 200;
   return {
+    mode,
     configured,
     required,
     maxAgeMs: 15 * 60 * 1000,
@@ -34,8 +57,8 @@ export function rosterStatus(env = process.env) {
   };
 }
 
-// Only explicit portal IDs are authorization inputs. Names, phone numbers, and
-// inferred email addresses never reach the membership comparison.
+// The legacy service-account mode authorizes only explicit portal IDs. It
+// never infers membership from names, phone numbers, or guessed email addresses.
 export function parseRosterValues(values) {
   if (
     !Array.isArray(values) ||
@@ -80,6 +103,149 @@ export function parseRosterValues(values) {
   return ids.sort();
 }
 
+function parseCSV(csv) {
+  if (!csv) throw rosterError("The public roster export is empty.");
+  const text = csv.charCodeAt(0) === 0xfeff ? csv.slice(1) : csv;
+  const rows = [];
+  let row = [];
+  let field = "";
+  let state = "start";
+  let lastWasLineBreak = false;
+  const finishField = () => {
+    row.push(field);
+    field = "";
+    state = "start";
+  };
+  const finishRow = () => {
+    finishField();
+    rows.push(row);
+    if (rows.length > MAX_ROWS + 1)
+      throw rosterError("Roster exceeds the 1,000-member limit.");
+    row = [];
+    lastWasLineBreak = true;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (state === "quoted") {
+      if (char === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (char === '"') state = "afterQuote";
+      else field += char;
+      continue;
+    }
+    if (char === '"') {
+      if (state !== "start") throw rosterError("Public roster CSV is malformed.");
+      state = "quoted";
+      lastWasLineBreak = false;
+      continue;
+    }
+    if (char === "," || char === "\n" || char === "\r") {
+      if (char === ",") {
+        finishField();
+        lastWasLineBreak = false;
+      } else {
+        if (char === "\r" && text[i + 1] === "\n") i++;
+        finishRow();
+      }
+      continue;
+    }
+    if (state === "afterQuote")
+      throw rosterError("Public roster CSV is malformed.");
+    field += char;
+    state = "unquoted";
+    lastWasLineBreak = false;
+  }
+  if (state === "quoted") throw rosterError("Public roster CSV is malformed.");
+  if (!lastWasLineBreak) finishRow();
+  return rows;
+}
+
+const cleanCell = (value) => String(value ?? "").trim();
+
+export function parsePublicRosterCsv(csv) {
+  const rows = parseCSV(csv);
+  const expectedHeaders = ["first name", "last name", "status", "student email"];
+  if (
+    rows.length < 2 ||
+    rows[0].length !== expectedHeaders.length ||
+    expectedHeaders.some(
+      (header, index) => cleanCell(rows[0][index]).toLowerCase() !== header,
+    )
+  )
+    throw rosterError("Public roster columns do not match.");
+
+  const emails = new Set();
+  const directory = [];
+  let populatedRows = 0;
+  for (const columns of rows.slice(1)) {
+    if (columns.length > 4)
+      throw rosterError("Public roster contains an invalid row.");
+    const [first = "", last = "", status = "", email = ""] =
+      columns.map(cleanCell);
+    if (first || last || status || email) populatedRows++;
+    if (status.toLowerCase() !== "active") continue;
+    const normalizedEmail = email.toLowerCase();
+    if (
+      !first ||
+      !last ||
+      !/^[^\s@,<>"()]+@[^\s@,<>"()]+\.[^\s@,<>"()]+$/.test(normalizedEmail) ||
+      normalizedEmail.length > 254 ||
+      /[\u0000-\u001f\u007f]/.test(`${first}${last}`) ||
+      first.length > 100 ||
+      last.length > 100
+    )
+      throw rosterError(
+        "An active roster member is missing a valid name or email.",
+      );
+    if (emails.has(normalizedEmail))
+      throw rosterError("Public roster contains a duplicate active email.");
+    emails.add(normalizedEmail);
+    directory.push({
+      name: `${first.replace(/\s+/g, " ")} ${last.replace(/\s+/g, " ")}`,
+      email: normalizedEmail,
+    });
+  }
+  if (!populatedRows)
+    throw rosterError(
+      "An empty roster cannot replace the current access list.",
+    );
+  directory.sort((a, b) => a.email.localeCompare(b.email));
+  return { emails: [...emails].sort(), directory };
+}
+
+async function readPublicCSV(response, budget) {
+  if (!response.ok || !response.body)
+    throw rosterError("The public Google roster could not be read.");
+  const reader = response.body.getReader();
+  const chunks = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      budget.remaining -= value.byteLength;
+      if (budget.remaining < 0)
+        throw rosterError("Roster response is too large.");
+      chunks.push(Buffer.from(value));
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.concat(chunks),
+    );
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
+async function fetchPublicCSV(id, gid, fetchImpl, signal) {
+  // This projection reads A, B, C, and I from one consistent sheet response.
+  // The unselected D–H columns are never downloaded by the portal.
+  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?gid=${gid}&tqx=out%3Acsv&tq=select%20A%2CB%2CC%2CI`;
+  return readPublicCSV(
+    await fetchImpl(url, { redirect: "error", signal }),
+    { remaining: MAX_BYTES },
+  );
+}
+
 async function readJSON(response) {
   if (!response.ok || !response.body)
     throw rosterError(
@@ -116,9 +282,20 @@ export async function fetchRosterSnapshot({
       "Roster sync is required but its Google Sheets settings are incomplete.",
     );
   const startedAt = now();
-  const seconds = Math.floor(startedAt / 1000);
   const signal = AbortSignal.timeout(15_000);
   try {
+    if (status.mode === PUBLIC_CSV_MODE) {
+      const id = String(env.ROSTER_SHEET_ID).trim();
+      const gid = Number(String(env.ROSTER_SHEET_GID ?? "").trim() || "0");
+      const csv = await fetchPublicCSV(id, gid, fetchImpl, signal);
+      return {
+        ...parsePublicRosterCsv(csv),
+        fetchedAt: new Date(startedAt).toISOString(),
+        revision: digest(csv),
+        source: status.source,
+      };
+    }
+    const seconds = Math.floor(startedAt / 1000);
     const key = await importPKCS8(
       env.ROSTER_SERVICE_ACCOUNT_PRIVATE_KEY.replace(/\\n/g, "\n"),
       "RS256",

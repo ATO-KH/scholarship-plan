@@ -92,35 +92,26 @@ The chapter selected `scholarshipchair.kappaeta@gmail.com` as a temporary sender
 
 `SUPABASE_PUBLISHABLE_KEY`, `CHAIR_ACCOUNT_EMAIL`, and `CHAIR_AUTH_USER_ID` are in Vercel Production. The confirmed Chair office user exists in Supabase Auth. Keep `SUPABASE_SECRET_KEY` server-side; the browser never receives it. Custom SMTP is still off because the chapter inbox owner has not yet provided an App Password. `CHAPTER_EMAIL_READY` defaults to false and disables invitations and email resets in the interface and server. After SMTP is configured, test delivery to an authorized address, set `CHAPTER_EMAIL_READY=true` in Vercel Production, and redeploy. Do not infer Chair identity from an email pattern or the first visitor.
 
-The Chair account can be piloted now using the password entered directly in Supabase. The shared office account does not get a member recovery key, so protect that password until email delivery is available. After SMTP and the explicit-ID roster are working, pilot with fictional members: confirm invite delivery, password setup, login by all assigned aliases, own-record isolation, chair-only controls, email and 16-word-key recovery, session revocation, deactivation, and semester key rotation. Before members rely on key recovery, add confirmed key receipt/reissue so a lost first response cannot strand them, and reconcile an interrupted password update so an old key cannot become reusable after a provider/DB failure. The live site's `/demo/` opens public fictional member and Chair views directly for showcasing both interfaces. This browser-only sandbox does not exercise Supabase Auth or the chapter database and must not be used as an authentication acceptance test.
+The Chair account can be piloted now using the password entered directly in Supabase. The shared office account does not get a member recovery key, so protect that password until email delivery is available. After SMTP and the read-only email roster are working, pilot with consenting members: confirm invite delivery, password setup, login by all assigned aliases, own-record isolation, chair-only controls, email and 16-word-key recovery, session revocation, deactivation, and semester key rotation. Before members rely on key recovery, add confirmed key receipt/reissue so a lost first response cannot strand them, and reconcile an interrupted password update so an old key cannot become reusable after a provider/DB failure. The live site's `/demo/` opens public fictional member and Chair views directly for showcasing both interfaces. This browser-only sandbox does not exercise Supabase Auth or the chapter database and must not be used as an authentication acceptance test.
 
-## 5. Connect the roster eligibility sheet
+## 5. Connect the read-only roster
 
-The chair first creates each portal account with its verified stable identity. The portal assigns a **Portal Member ID**. The sheet is an additional active-membership allowlist; it does not create identity bindings, assign chair permissions, or infer accounts from existing contact details.
+The chapter's existing link-viewable sheet already has `First Name` (A), `Last Name` (B), `Status` (C), and `Student Email` (I). The portal reads only those columns through Google's CSV feed; it never edits the sheet and needs no Google Cloud account, API key, or service-account secret. The source is used only for eligibility and Chair invitation prefill. The Chair still reviews each invitation; accounts are created through Supabase Auth only after an email invitation, and the verified Auth user ID remains the account binding. The Chair office account is independent of this sheet.
 
-In the controlled roster sheet, add these columns, preserving any existing A–C contact columns:
-
-| Column      | Header                       | Value                                                      |
-| ----------- | ---------------------------- | ---------------------------------------------------------- |
-| D           | `Portal Member ID`           | Exact portal-issued member ID copied from the chair roster |
-| E           | `Active`                     | Explicit `TRUE` or `FALSE`                                 |
-| F, optional | `Confirmed university email` | Human reference only; ignored for access                   |
-
-Use at most **1,000 member rows**. The default range is `'Roster'!D1:E1002`: the extra row detects an over-limit roster rather than silently accepting truncation. The selected range must contain exactly the D/E headers and their two columns; adjust the tab name through `ROSTER_SHEET_RANGE` if necessary. Duplicate/missing IDs, ambiguous active flags, an empty roster, or an over-limit response are rejected. Optional column F must stay outside the authorization range.
-
-Create a dedicated Google Cloud service account, enable the Google Sheets API, and share **only this spreadsheet** with that service-account address as **Viewer**. Do not enable domain-wide delegation. The connector requests only `spreadsheets.readonly`; sharing determines which spreadsheet it can read. Configure:
+Set these **Production** environment variables on the Vercel project:
 
 ```text
 ROSTER_REQUIRED=true
-ROSTER_SHEET_ID=YOUR_PRIVATE_SPREADSHEET_ID
-ROSTER_SHEET_RANGE='Roster'!D1:E1002
-ROSTER_SERVICE_ACCOUNT_EMAIL=YOUR_SERVICE_ACCOUNT_ADDRESS
-ROSTER_SERVICE_ACCOUNT_PRIVATE_KEY=YOUR_SERVER_ONLY_PEM_KEY
+ROSTER_SOURCE_MODE=public_email_csv
+ROSTER_SHEET_ID=THE_ID_BETWEEN_D_AND_EDIT_IN_THE_SHEET_URL
+ROSTER_SHEET_GID=0
 ```
 
-Keep the real sheet link/ID and key in configuration, not this repository. In Vercel's value field, the range includes the single quotes around `Roster`; the PEM key can contain actual newlines or literal `\n` sequences. Setting any roster source field also enables the requirement, so partial configuration blocks ordinary-member access instead of disabling the check.
+Use only the ID, not the full URL. `ROSTER_SHEET_GID` is the number after `gid=` in the sheet link. The sheet must remain link-viewable for this public-export mode. The parser accepts exactly `Active` in column C as eligible; every other status is ineligible. Active rows need a name and valid unique email. At most 1,000 rows are accepted. The portal requests only A, B, C, and I in one read, discards inactive rows, and retains only active names/emails in the chapter database. Do not put actual roster rows in Git or Vercel environment variables.
 
-A snapshot is accepted for **15 minutes**. A shared 45-second refresh lease prevents simultaneous refreshes, and failures have a 30-second retry cooldown. The next member request after it becomes stale attempts a refresh; if current eligibility cannot be established, member access is blocked. Sheet changes can take up to that freshness interval to affect existing sessions unless the chair refreshes sooner through the roster control (`POST /api/admin/roster-sync`). Explicit portal deactivation remains available for immediate application access removal. The active chair bypasses the sheet eligibility check to repair a broken sheet or refresh failure; chair authentication and the portal's active-account check still apply. Do not remove that recovery path or use it to share evidence access with general officers.
+After deployment, sign in as Chair → **Roster** → **Refresh roster now**. The page should show the active count and a list of people ready to invite. Once chapter SMTP is tested and `CHAPTER_EMAIL_READY=true`, choose an active member, review the prefilled name/email, enter tier and credits, and send an invitation. A member's confirmed email must remain active on the sheet to access the portal. The sheet is refreshed at most every 15 minutes; Chair can force a refresh. If the export becomes unavailable or its columns change, member access fails closed while Chair access remains available to repair the connection.
+
+The older Portal Member ID integration remains available with `ROSTER_SOURCE_MODE=service_account_ids` (the default), `'Roster'!D1:E1002`, and Viewer service-account credentials. It requires adding IDs and active flags to an editable sheet. Do not configure both modes at once.
 
 ## 6. Optional Canvas connection
 
