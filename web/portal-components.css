@@ -57,3 +57,11 @@
 .checkpoint-quota-table td, .checkpoint-quota-table th { padding: 12px 8px; }
 .checkpoint-quota-table input { border: 1px solid var(--line); border-radius: 0; background: var(--paper); color: var(--ink); font: inherit; }
 .checkpoint-quota-table input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.checkpoint-calendar td { position: relative; height: 38px; vertical-align: middle; }
+.checkpoint-calendar td small { display: block; font-size: 9px; line-height: 11px; }
+.checkpoint-calendar .checkpoint-due { background: transparent; color: var(--ink); outline: 1px solid var(--gold); }
+.checkpoint-calendar .calendar-today { background: var(--gold); color: #16263b; font-weight: 700; }
+.calendar-due-dot { display: block; width: 4px; height: 4px; margin: 2px auto 0; background: var(--gold); }
+.calendar-today .calendar-due-dot { background: #16263b; }
+
+.overview-greeting { margin: 0 0 24px; font-size: clamp(22px, 3vw, 30px); font-weight: 500; }
