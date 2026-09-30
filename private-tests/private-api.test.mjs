@@ -904,3 +904,19 @@ test("credit hours require private image evidence and Chair approval", async () 
   await c.send("/api/demo/session", { persona: "alex" });
   assert.equal((await c.send("/api/credit-requests")).credits, 12);
 });
+
+test("profile pictures use owned image uploads and support removal", async () => {
+  const c = client();
+  await c.send("/api/demo/session", { persona: "alex" });
+  const image = await c.send("/api/uploads", { name: "profile.png", mime: "image/png", base64: png.toString("base64") });
+  const saved = await c.send("/api/profile/picture", { evidenceId: image.upload.id });
+  assert.equal(saved.status, 200);
+  assert.equal((await c.send("/api/profile/picture")).image, saved.image);
+  await c.send("/api/demo/session", { persona: "jordan" });
+  assert.equal((await c.send("/api/profile/picture")).image, null);
+  assert.equal((await c.send("/api/profile/picture", { evidenceId: image.upload.id })).status, 404);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/profile/picture", { evidenceId: null })).image, null);
+  const document = await c.send("/api/uploads", { name: "document.pdf", mime: "application/pdf", base64: pdf.toString("base64") });
+  assert.equal((await c.send("/api/profile/picture", { evidenceId: document.upload.id })).status, 422);
+});

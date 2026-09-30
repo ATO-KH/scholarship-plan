@@ -1,4 +1,4 @@
-async function readImage(file) {
+export async function readImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -6,7 +6,7 @@ async function readImage(file) {
     reader.readAsDataURL(file);
   });
 }
-async function uploadImage(file, api, config) {
+export async function uploadImage(file, api, config) {
   if (config.uploadMode === "direct") {
     const { uploadUrl, id } = await api("/api/uploads/init", { method: "POST", body: { name: file.name, mime: file.type, size: file.size } });
     const url = new URL(uploadUrl);

@@ -1510,6 +1510,31 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 200, { request: result });
       }
+      if (path === "/api/profile/picture" && ["GET", "POST"].includes(req.method)) {
+        individual(user);
+        if (req.method === "GET") {
+          const id = (await stateOf(session.workspace)).profilePictures?.[user.id];
+          return json(res, 200, { image: id ? `/api/uploads/${id}` : null });
+        }
+        const image = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          let id = null;
+          if (input.evidenceId !== null) {
+            const upload = await getUpload(input.evidenceId, session, user, true);
+            if (!["image/png", "image/jpeg"].includes(upload.mime)) fail(422, "Choose a PNG or JPEG profile picture.");
+            id = upload.id;
+          }
+          state.profilePictures ||= {};
+          if (id) state.profilePictures[user.id] = id;
+          else delete state.profilePictures[user.id];
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          return id ? `/api/uploads/${id}` : null;
+        });
+        return json(res, 200, { image });
+      }
       if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
         if (user.role !== "member") fail(403, "Profiles are available to members only.");
         if (req.method === "GET") return json(res, 200, profileView(await stateOf(session.workspace), user.id));
@@ -2691,6 +2716,8 @@ const server = http.createServer(async (req, res) => {
       "/profile-ui.mjs": "profile-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",
       "/credit-ui.mjs": "credit-ui.mjs",
+      "/picture-ui.mjs": "picture-ui.mjs",
+      "/checkpoint-calendar.js": "checkpoint-calendar.js",
       "/loading-ui.js": "loading-ui.js",
       "/portal-components.css": "portal-components.css",
       "/loading-cross.js": "loading-cross.js",

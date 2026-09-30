@@ -106,6 +106,17 @@ export async function handle(req, path) {
         return json({ request: creditSummary(item) });
       }
     }
+    if (path === "/api/profile/picture" && ["GET", "POST"].includes(req.method)) {
+      if (user.role !== "member") fail(403, "Use a member account.");
+      if (req.method === "POST") {
+        if (input.image !== null && (typeof input.image !== "string" || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(input.image) || input.image.length > 1400000)) fail(422, "Choose a PNG or JPEG image under 1 MB.");
+        state.profilePictures ||= {};
+        if (input.image) state.profilePictures[user.id] = input.image;
+        else delete state.profilePictures[user.id];
+        await save(session);
+      }
+      return json({ image: state.profilePictures?.[user.id] || null });
+    }
     if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
       if (user.role !== "member") fail(403, "Profiles are available to members only.");
       if (req.method === "POST") {
