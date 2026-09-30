@@ -1322,11 +1322,28 @@ async function loadRosterSync() {
       ? `Last successful refresh: ${esc(new Date(result.fetchedAt).toLocaleString())}. ${result.activeCount} eligible ${emailMode ? `members (${result.newMemberCount || 0} new)` : "IDs"}.`
       : "Connect the sheet in the hosting settings to enable automatic eligibility checks.";
     const candidateList = emailMode && result.fresh
-      ? `<div class="section-heading" style="margin-top:22px"><h3>READY TO INVITE</h3><span class="muted">${rosterCandidates.length} of ${result.activeCount} eligible members</span></div>${rosterCandidates.length
-        ? `<div class="table-wrap"><table class="roster-candidate-table"><thead><tr><th>Member</th><th>Status</th><th>University email</th><th>Tier</th><th></th></tr></thead><tbody>${rosterCandidates.map((entry, index) => `<tr><td><strong>${esc(entry.name)}</strong></td><td>${entry.membership === "new_member" ? "New member" : "Active"}</td><td>${esc(entry.email)}</td><td>${entry.assignedTier ? `Tier ${entry.assignedTier}` : "Needs assignment"}</td><td><button class="table-link" data-action="invite-roster-member" data-index="${index}" ${appConfig.chapterAuth?.emailReady ? "" : "disabled"}>Invite</button></td></tr>`).join("")}</tbody></table></div>`
+      ? `<div class="section-heading" style="margin-top:22px"><h3>INVITATION RECIPIENTS</h3><span class="muted">${rosterCandidates.length} of ${result.activeCount} eligible members</span></div>${rosterCandidates.length
+        ? `<p class="muted">New roster entries appear here after refresh. No email is sent until you review and confirm an invitation.</p><div class="invitation-filters"><div class="field"><label for="invite-search">Find a recipient</label><input id="invite-search" type="search" placeholder="Name or email"></div><div class="field"><label for="invite-membership">Membership</label><select id="invite-membership"><option value="all">All eligible members</option><option value="new_member">New members</option><option value="active">Active members</option></select></div></div><p id="invite-visible-count" class="muted"></p><div class="table-wrap"><table class="roster-candidate-table"><thead><tr><th>Member</th><th>Status</th><th>University email</th><th>Tier</th><th></th></tr></thead><tbody>${rosterCandidates.map((entry, index) => `<tr data-candidate-index="${index}"><td><strong>${esc(entry.name)}</strong></td><td>${entry.membership === "new_member" ? "New member" : "Active"}</td><td>${esc(entry.email)}</td><td>${entry.assignedTier ? `Tier ${entry.assignedTier}` : "Needs assignment"}</td><td><button class="table-link" data-action="invite-roster-member" data-index="${index}" ${appConfig.chapterAuth?.emailReady ? "" : "disabled"}>Review invitation</button></td></tr>`).join("")}</tbody></table></div>`
         : '<p class="muted">No eligible roster entries need a new invitation.</p>'}${needsAttention ? `<p class="muted">${needsAttention} existing ${needsAttention === 1 ? "account needs" : "accounts need"} attention in the member table below.</p>` : ""}${appConfig.chapterAuth?.emailReady ? "" : '<p class="muted">Email delivery must be configured before invitations can be sent.</p>'}`
       : "";
     panel.innerHTML = `<div class="section-heading"><h2>ROSTER SHEET</h2><span class="status ${result.fresh ? "approved" : "pending"}">${result.fresh ? "Up to date" : result.required ? "Refresh required" : "Not connected"}</span></div><p>${description}</p><p class="muted">${count} Members need a successful refresh at least every 15 minutes. Chair access remains available for recovery.</p>${result.lastError ? `<p class="error">${esc(result.lastError)}</p>` : ""}<button class="button ghost" id="sync-roster" ${result.configured ? "" : "disabled"}>Refresh roster now</button>${candidateList}`;
+    const search = panel.querySelector("#invite-search"), membership = panel.querySelector("#invite-membership");
+    if (search && membership) {
+      const filterRecipients = () => {
+        let visible = 0;
+        panel.querySelectorAll("[data-candidate-index]").forEach(row => {
+          const entry = rosterCandidates[Number(row.dataset.candidateIndex)];
+          const matches = `${entry.name} ${entry.email}`.toLowerCase().includes(search.value.trim().toLowerCase()) &&
+            (membership.value === "all" || (entry.membership === "new_member" ? "new_member" : "active") === membership.value);
+          row.hidden = !matches;
+          if (matches) visible++;
+        });
+        panel.querySelector("#invite-visible-count").textContent = `${visible} recipients shown`;
+      };
+      search.oninput = membership.onchange = filterRecipients;
+      filterRecipients();
+    }
+
     $("#sync-roster").onclick = async (event) => {
       event.target.disabled = true;
       try {
@@ -1473,18 +1490,33 @@ function addMember(prefill = {}) {
       return;
     }
     openModal("ADD A CHAPTER MEMBER", "An invitation will be emailed. The member chooses their own password.",
-      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option value="${t}"${Number(prefill.assignedTier) === t ? " selected" : ""}>${t}</option>`).join("")}</select><small>${prefill.membership === "new_member" ? "New members use Tier 1." : prefill.assignedTier ? "From the Chair's reviewed GPA import." : "Use the page-5 GPA ranges."}</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
+      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32" value="${esc(prefill.badge || "")}"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option value="${t}"${Number(prefill.assignedTier) === t ? " selected" : ""}>${t}</option>`).join("")}</select><small>${prefill.membership === "new_member" ? "New members use Tier 1." : prefill.assignedTier ? "From the Chair's reviewed GPA import." : "Use the page-5 GPA ranges."}</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="${esc(prefill.credits ?? 15)}"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Review invitation</button></div></form>`);
     $("#roster-form").onsubmit = async (event) => {
       event.preventDefault();
       const body = Object.fromEntries(new FormData(event.target));
       body.tier = Number(body.tier);
       body.credits = Number(body.credits);
-      try {
-        const result = await api("/api/roster", { method: "POST", body });
-        modal.close();
-        await rosterPage();
-        toast(`Invitation sent. Sign-in ID: ${result.loginId}`);
-      } catch (error) { formError(error.message); }
+      openModal("REVIEW INVITATION", "Nothing has been sent yet.",
+        `<dl class="details"><div><dt>Recipient</dt><dd>${esc(body.name)}</dd></div><div><dt>To</dt><dd>${esc(body.email)}</dd></div><div><dt>Tier / credits</dt><dd>Tier ${body.tier} · ${body.credits} credits</dd></div><div><dt>Sign-in ID</dt><dd>${esc(body.badge || "Assigned automatically")}</dd></div></dl><p>This sends the account-setup email with a one-time link to choose a password. It does not send a temporary password. The email wording is managed in Supabase’s Invite user template.</p><form id="confirm-invitation"><label class="checkbox-line"><input type="checkbox" required><span>I checked this recipient and want to send this invitation now.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button id="edit-invitation" class="button ghost" type="button">Back</button><button class="button gold" type="submit">Send invitation to this member</button></div></form>`);
+      $("#edit-invitation").onclick = () => addMember({ ...prefill, ...body, assignedTier: body.tier });
+      $("#confirm-invitation").onsubmit = async confirmEvent => {
+        confirmEvent.preventDefault();
+        const form = confirmEvent.target, owner = user?.id;
+        const buttons = [...form.querySelectorAll("button,input")];
+        if (form.dataset.sending) return;
+        form.dataset.sending = "true";
+        buttons.forEach(button => button.disabled = true);
+        $("#form-error").innerHTML = loading("Sending invitation…", true);
+        try {
+          const result = await api("/api/roster", { method: "POST", body });
+          if (user?.id !== owner) return;
+          modal.close();
+          await rosterPage();
+          toast(`Invitation sent. Sign-in ID: ${result.loginId}`);
+        } catch (error) {
+          if (form.isConnected) { form.querySelector("#form-error").textContent = error.message; delete form.dataset.sending; buttons.forEach(button => button.disabled = false); }
+        }
+      };
     };
     return;
   }
