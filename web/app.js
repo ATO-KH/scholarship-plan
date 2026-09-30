@@ -77,7 +77,6 @@ function toast(message) {
   toast.timer = setTimeout(() => $("#toast").classList.remove("visible"), 4000);
 }
 async function api(path, { method = "GET", body, raw = false } = {}) {
-  const finishLoading = window.atoLoading.begin(method === "POST" ? "Saving…" : "Loading…");
   const start = performance.now();
   const sensitive = path.startsWith("/api/admin/tier-import");
   const epoch = sessionEpoch,
@@ -129,8 +128,6 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
         response: { error: e.message },
       });
     throw e;
-  } finally {
-    finishLoading();
   }
 }
 const loading = (message, compact = false) => window.atoLoading.markup(message, compact);
@@ -1127,7 +1124,7 @@ async function uploadEvidence(e) {
   }
   submit.disabled = true;
   input.disabled = true;
-  const finishLoading = window.atoLoading.begin("Uploading evidence…");
+  attachment.innerHTML = loading("Uploading evidence…", true);
   try {
     let result;
     if (appConfig.uploadMode === "direct") {
@@ -1184,9 +1181,11 @@ async function uploadEvidence(e) {
       " KB</small></div></div>";
     toast("Evidence uploaded. Submit the form to attach it to your claim.");
   } catch (err) {
-    if (current()) formError(err.message);
+    if (current()) {
+      attachment.innerHTML = '<p class="muted">No verified attachment selected.</p>';
+      formError(err.message);
+    }
   } finally {
-    finishLoading();
     if (current()) {
       submit.disabled = false;
       input.disabled = false;

@@ -50,7 +50,6 @@ function toast(message) {
   toast.timer = setTimeout(() => $("#toast").classList.remove("visible"), 4000);
 }
 async function api(path, { method = "GET", body, raw = false } = {}) {
-  const finishLoading = window.atoLoading.begin(method === "POST" ? "Saving…" : "Loading…");
   const start = performance.now();
   let response, payload;
   try {
@@ -90,8 +89,6 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
         response: { error: e.message },
       });
     throw e;
-  } finally {
-    finishLoading();
   }
 }
 const loading = (message, compact = false) => window.atoLoading.markup(message, compact);

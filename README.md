@@ -22,7 +22,7 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 - Read-only Google Sheets eligibility using exact school emails and Active/New Member status, with a 15-minute freshness requirement and chair recovery access. Legacy explicit portal-ID mode remains available.
 - Confirmed semester reset with a durable deletion manifest, retryable cleanup, preserved member accounts, and configurable next-semester dates.
 - Centered expandable FAQ, with Chair-managed questions and answers shared across signed-in members and preserved between semesters.
-- Shared Maltese-cross animations for page loading, requests, evidence uploads, and import preparation.
+- Shared Maltese-cross animations for page loading, evidence uploads, and import preparation.
 
 **Live chapter login, roster-sheet, and complete evidence workflows still need acceptance testing.** Canvas import is deferred and hidden from navigation. Provider tests use local fixtures and mocks; they are not proof of a successful live connection.
 
