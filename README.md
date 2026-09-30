@@ -178,3 +178,5 @@ The public test credentials `test1` / `1234` on the chapter sign-in screen open 
 Members manage up to 20 current-semester classes in My profile. Class lists are private to the member and selectable in submissions; previous submission labels remain unchanged when classes are removed. Semester reset clears class lists.
 
 The public browser sandbox uses tab sessionStorage, never the chapter database or IndexedDB. Refreshing and switching demo roles in the same tab preserve its temporary records; ending the tab session clears them. Browser session restoration may restore sessionStorage; Reset demo explicitly erases the current sandbox records.
+
+Members can submit enrolled credit hours with a PNG/JPEG enrollment image from My profile. The Chair reviews these in Credit hours; approval alone updates enrolled credits for future point estimates, while existing awarded points remain unchanged. One pending request per member is allowed. Evidence is private to its owner and Chair, and semester cleanup removes credit requests and their uploads. The public sandbox keeps its image in tab sessionStorage (1 MB per image); real uploads use the private evidence store (5 MB).

@@ -29,3 +29,12 @@
 .profile-course-row { display: flex; align-items: end; gap: 12px; margin: 18px 0; }
 .profile-course-row .field { flex: 1; min-width: 0; margin: 0; }
 .profile-feedback { margin-top: 16px; }
+
+.profile-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.profile-layout .profile-shell { max-width: none; margin: 0; }
+.profile-layout .panel { min-width: 0; }
+.credit-request { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
+.credit-feedback { margin: 12px 0; }
+.credit-evidence-image { display: block; max-width: 100%; max-height: 500px; object-fit: contain; margin: 16px 0; }
+.credit-review-actions { display: flex; gap: 12px; }
+@media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; } }

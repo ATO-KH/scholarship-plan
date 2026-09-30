@@ -157,6 +157,7 @@ function navigation() {
     ? [
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
+        ["credit-review", "Credit hours"],
         ["roster", "Chapter roster"],
         ["semester", "Semester settings"],
         ["audit", "Review history"],
@@ -209,7 +210,7 @@ function route() {
     p = "queue";
   if (
     user?.role === "member" &&
-    ["queue", "members", "roster", "audit", "semester"].includes(p)
+    ["queue", "members", "roster", "audit", "semester", "credit-review"].includes(p)
   )
     p = "overview";
   return p;
@@ -289,11 +290,25 @@ function earnPage() {
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
+async function loadCreditPanel(container, chair) {
+  const owner = user.id;
+  const isCurrent = () => user?.id === owner && container.isConnected;
+  try {
+    const { mountCreditRequests } = await import("/credit-ui.mjs");
+    if (isCurrent()) await mountCreditRequests(container, { api, esc, loading, isCurrent, chair, config: appConfig });
+  } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
+}
+function creditReviewPage() {
+  if (user.role !== "chair") return;
+  main.innerHTML = heading("", "Credit hours", "") + `<section class="panel credit-review-shell">${loading("Loading credit-hours requests…")}</section>`;
+  loadCreditPanel(main.querySelector(".credit-review-shell"), true);
+}
 async function profilePage() {
   if (user.role !== "member") return;
   const owner = user.id;
-  main.innerHTML = heading("", "My profile", "") + `<section class="profile-shell panel">${loading("Loading profile…")}</section>`;
+  main.innerHTML = heading("", "My profile", "") + `<div class="profile-layout"><section class="profile-shell panel">${loading("Loading profile…")}</section><section class="credit-shell panel">${loading("Loading credit hours…")}</section></div>`;
   const container = main.querySelector(".profile-shell");
+  loadCreditPanel(main.querySelector(".credit-shell"), false);
   try {
     const { mountProfile } = await import("/profile-ui.mjs");
     if (user?.id !== owner || route() !== "profile" || !container.isConnected) return;
@@ -356,6 +371,7 @@ function render() {
       canvas: canvasPage,
       faq: faqPage,
       profile: profilePage,
+      "credit-review": creditReviewPage,
       api: apiPage,
       setup: setupPage,
       roster: rosterPage,
@@ -1692,13 +1708,29 @@ document.addEventListener("click", async (e) => {
   if (!b) return;
   try {
     if (b.dataset.action === "logout") {
+      if (b.disabled) return;
+      b.disabled = true;
       sessionEpoch++;
-      await api("/api/logout", { method: "POST", body: {} });
       modal.close();
-      logs = [];
-      rosterAccounts = [];
-      rosterCandidates = [];
-      loginPage();
+      setAuthLoading(true, "Signing out…");
+      try {
+        // Finish server revocation independently of stale in-flight view requests.
+        const response = await fetch("/api/logout", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken || "", "X-ATO-Expected-User": user?.id || "", "X-ATO-Demo": "1" },
+          body: "{}", signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok && response.status !== 401) {
+          const result = await response.json();
+          throw Error(result.error || "Sign-out failed. Please try again.");
+        }
+        logs = []; rosterAccounts = []; rosterCandidates = [];
+        location.replace("/");
+      } catch (error) {
+        setAuthLoading(false);
+        b.disabled = false;
+        throw error;
+      }
     } else if (b.dataset.action === "add-member") addMember();
     else if (b.dataset.action === "import-gpa-tiers") await openTierImport();
     else if (b.dataset.action === "invite-roster-member") {

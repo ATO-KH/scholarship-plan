@@ -1,3 +1,4 @@
+import { validateCreditRequest, validateCreditReview, creditSummary } from "../credit-data.mjs";
 import { profileView, validateCourses } from "../profile-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
@@ -50,7 +51,7 @@ export async function handle(req, path) {
       else if (input.persona) session.persona = input.persona;
       await save(session);
       return json({
-        user: members.find((m) => m.id === session.persona),
+        user: { ...members.find((m) => m.id === session.persona), ...(session.data.creditOverrides?.[session.persona] !== undefined ? { credits: session.data.creditOverrides[session.persona] } : {}) },
         today: TODAY,
       });
     }
@@ -63,8 +64,9 @@ export async function handle(req, path) {
         409,
         "The demo account changed in another tab. Refresh before continuing.",
       );
+    const sessionMembers = members.map(member => ({ ...member, credits: session.data.creditOverrides?.[member.id] ?? member.credits }));
     const state = session.data,
-      user = members.find((m) => m.id === session.persona);
+      user = sessionMembers.find((m) => m.id === session.persona);
     const chair = () => {
       if (user.role !== "chair")
         fail(403, "Only the Scholarship Chair can review submissions.");
@@ -77,6 +79,33 @@ export async function handle(req, path) {
     };
     if (path === "/api/me" && req.method === "GET")
       return json({ user, today: TODAY });
+    if (path === "/api/credit-requests" && req.method === "GET")
+      return json({ credits: user.credits, requests: (state.creditRequests || []).filter(item => user.role === "chair" || item.owner === user.id).map(creditSummary) });
+    if (path === "/api/credit-requests" && req.method === "POST") {
+      if (user.role !== "member") fail(403, "Use a member account to submit.");
+      state.creditRequests ||= [];
+      validateCreditRequest(input, state.creditRequests, user.id);
+      if (typeof input.image !== "string" || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(input.image) || input.image.length > 1400000) fail(422, "Choose a PNG or JPEG image under 1 MB for the sandbox.");
+      const item = { id: crypto.randomUUID(), owner: user.id, memberName: user.name, credits: input.credits, previousCredits: user.credits, image: input.image, status: "pending", createdAt: new Date().toISOString() };
+      state.creditRequests.unshift(item);
+      await save(session);
+      return json({ request: creditSummary(item) }, 201);
+    }
+    const creditRoute = path.match(/^\/api\/credit-requests\/([a-f0-9-]{36})\/(evidence|review)$/);
+    if (creditRoute) {
+      const item = state.creditRequests?.find(item => item.id === creditRoute[1]);
+      if (!item || (user.role !== "chair" && item.owner !== user.id)) fail(404, "Request not found.");
+      if (req.method === "GET" && creditRoute[2] === "evidence") return json({ image: item.image });
+      if (req.method === "POST" && creditRoute[2] === "review") {
+        chair();
+        const target = sessionMembers.find(member => member.id === item.owner);
+        validateCreditReview(input, item, target.credits);
+        if (input.decision === "approved") { state.creditOverrides ||= {}; state.creditOverrides[item.owner] = item.credits; }
+        Object.assign(item, { status: input.decision, reviewNote: input.note.trim(), reviewer: user.name, reviewedAt: new Date().toISOString() });
+        await save(session);
+        return json({ request: creditSummary(item) });
+      }
+    }
     if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
       if (user.role !== "member") fail(403, "Profiles are available to members only.");
       if (req.method === "POST") {
@@ -122,7 +151,7 @@ export async function handle(req, path) {
     if (path === "/api/members" && req.method === "GET") {
       chair();
       return json({
-        members: members
+        members: sessionMembers
           .filter((m) => m.role === "member")
           .map((m) => ({ ...m, ...totals(state, m) })),
       });

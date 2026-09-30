@@ -178,6 +178,7 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     // accounts remain; the Chair reviews their tiers for the new semester.
     delete state.tierAssignments;
     delete state.memberProfiles;
+    delete state.creditRequests;
     state.semesterGeneration = randomUUID();
     delete state.semesterPreview;
     state.semesterReset = job;

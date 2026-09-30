@@ -343,7 +343,7 @@ test("Chair tier import accepts only roster emails and tiers, then updates membe
   assert.equal(settings.member.credits, 12);
   const audit = await chairClient.send("/api/audit");
   assert.equal(JSON.stringify(audit).includes("900123456"), false);
-  assert.equal(JSON.stringify(audit).includes("2.6"), false);
+  assert.equal(JSON.stringify(audit.events.map(({ at, ...event }) => event)).includes("2.6"), false);
 });
 
 test("shared FAQ is readable by members, editable only by Chair, and rejects stale changes", async () => {
@@ -871,4 +871,36 @@ test("member class profiles are isolated, validated, and reject stale saves", as
   assert.equal((await c.send("/api/profile")).status, 403);
   await c.send("/api/demo/session", { persona: "alex" });
   assert.deepEqual((await c.send("/api/profile")).courses, saved.courses);
+});
+
+test("credit hours require private image evidence and Chair approval", async () => {
+  const c = client();
+  await c.send("/api/demo/session", { persona: "alex" });
+  const uploaded = await c.send("/api/uploads", { name: "enrollment.png", mime: "image/png", base64: png.toString("base64") });
+  const before = await c.send("/api/points");
+  assert.equal((await c.send("/api/credit-requests", { credits: 12 })).status, 404);
+  assert.equal((await c.send("/api/credit-requests", { credits: -1, evidenceId: uploaded.upload.id })).status, 422);
+  const created = await c.send("/api/credit-requests", { credits: 12, evidenceId: uploaded.upload.id });
+  assert.equal(created.status, 201);
+  assert.equal((await c.send("/api/points")).multiplier, before.multiplier);
+  assert.equal((await c.send("/api/credit-requests", { credits: 10, evidenceId: uploaded.upload.id })).status, 409);
+  const path = `/api/credit-requests/${created.request.id}`;
+  assert.equal((await c.send(path + "/review", { decision: "approved", note: "" })).status, 403);
+  await c.send("/api/demo/session", { persona: "jordan" });
+  assert.deepEqual((await c.send("/api/credit-requests")).requests, []);
+  assert.equal((await c.send(path + "/evidence")).status, 404);
+  assert.equal((await c.send("/api/credit-requests", { credits: 12, evidenceId: uploaded.upload.id })).status, 404);
+  await c.send("/api/demo/session", { persona: "chair" });
+  assert.equal((await c.send(path + "/evidence")).status, 200);
+  assert.equal((await c.send(path + "/review", { decision: "denied", note: "" })).status, 422);
+  assert.equal((await c.send(path + "/review", { decision: "approved", note: "Verified enrollment" })).status, 200);
+  assert.equal((await c.send(path + "/review", { decision: "approved", note: "" })).status, 409);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/credit-requests")).credits, 12);
+  assert.equal((await c.send("/api/points")).multiplier, 1.15);
+  const second = await c.send("/api/credit-requests", { credits: 9, evidenceId: uploaded.upload.id });
+  await c.send("/api/demo/session", { persona: "chair" });
+  assert.equal((await c.send(`/api/credit-requests/${second.request.id}/review`, { decision: "denied", note: "Image does not show current enrollment" })).status, 200);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/credit-requests")).credits, 12);
 });

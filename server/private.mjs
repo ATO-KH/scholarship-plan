@@ -1,3 +1,4 @@
+import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
 import { profileView, validateCourses } from "../web/profile-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
@@ -1459,6 +1460,56 @@ const server = http.createServer(async (req, res) => {
           semester: semesterSettings(state),
         });
       }
+      if (path === "/api/credit-requests" && req.method === "GET") {
+        const state = await stateOf(session.workspace);
+        return json(res, 200, { credits: user.credits, requests: (state.creditRequests || []).filter(item => user.role === "chair" || item.owner === user.id).map(creditSummary) });
+      }
+      if (path === "/api/credit-requests" && req.method === "POST") {
+        individual(user);
+        const result = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          state.creditRequests ||= [];
+          validateCreditRequest(input, state.creditRequests, user.id);
+          const upload = await getUpload(input.evidenceId, session, user, true);
+          if (!["image/png", "image/jpeg"].includes(upload.mime)) fail(422, "Upload a PNG or JPEG image of your enrolled credit hours.");
+          const current = await member(session.workspace, user.id);
+          const item = { id: randomUUID(), owner: user.id, memberName: current.name, credits: input.credits, previousCredits: current.credits, evidenceId: upload.id, status: "pending", createdAt: new Date().toISOString() };
+          state.creditRequests.unshift(item);
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          await audit(session.workspace, user.name, "credits.submit", item.id, "Credit-hours request submitted");
+          return creditSummary(item);
+        });
+        return json(res, 201, { request: result });
+      }
+      const creditRoute = path.match(/^\/api\/credit-requests\/([a-f0-9-]{36})\/(evidence|review)$/);
+      if (creditRoute && req.method === "GET" && creditRoute[2] === "evidence") {
+        const item = (await stateOf(session.workspace)).creditRequests?.find(item => item.id === creditRoute[1]);
+        if (!item || (user.role !== "chair" && item.owner !== user.id)) fail(404, "Request not found.");
+        const upload = await getUpload(item.evidenceId, session, user);
+        return json(res, 200, { image: `/api/uploads/${upload.id}` });
+      }
+      if (creditRoute && req.method === "POST" && creditRoute[2] === "review") {
+        chair(user);
+        const result = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          const item = state.creditRequests?.find(item => item.id === creditRoute[1]);
+          const target = item && await member(session.workspace, item.owner);
+          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+          validateCreditReview(input, item, target.credits);
+          if (input.decision === "approved") await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(item.credits, session.workspace, target.id);
+          Object.assign(item, { status: input.decision, reviewNote: input.note.trim(), reviewer: user.name, reviewedAt: new Date().toISOString() });
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          await audit(session.workspace, user.name, `credits.${item.status}`, item.owner, `${item.previousCredits} to ${item.credits} credits; ${item.reviewNote}`);
+          return creditSummary(item);
+        });
+        return json(res, 200, { request: result });
+      }
       if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
         if (user.role !== "member") fail(403, "Profiles are available to members only.");
         if (req.method === "GET") return json(res, 200, profileView(await stateOf(session.workspace), user.id));
@@ -2638,6 +2689,8 @@ const server = http.createServer(async (req, res) => {
       "/faq-ui.mjs": "faq-ui.mjs",
       "/profile-data.mjs": "profile-data.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
+      "/credit-data.mjs": "credit-data.mjs",
+      "/credit-ui.mjs": "credit-ui.mjs",
       "/loading-ui.js": "loading-ui.js",
       "/portal-components.css": "portal-components.css",
       "/loading-cross.js": "loading-cross.js",
