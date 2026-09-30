@@ -135,3 +135,12 @@
   }
   .theme-toggle::before { content: "◐"; font-size: 20px; line-height: 1; }
 }
+
+/* Keep the original PNG letters and rotate only its cross, around its center. */
+.brand-interactive { --logo-width: 160px; position: relative; }
+.brand-interactive .brand-logo { clip-path: inset(0 26.11683849% 0 0); }
+.brand-spin { position: absolute; left: calc(var(--logo-width) * 506 / 582); top: 50%; transform: translate(-50%, -50%); width: max(44px, calc(var(--logo-width) * 152 / 582)); height: max(44px, calc(var(--logo-width) * 152 / 582)); border: 0; padding: 0; background: transparent; cursor: pointer; touch-action: manipulation; }
+.brand-spin-art { position: absolute; left: 50%; top: 50%; width: calc(var(--logo-width) * 152 / 582); height: calc(var(--logo-width) * 152 / 582); margin-left: calc(var(--logo-width) * -76 / 582); margin-top: calc(var(--logo-width) * -76 / 582); background: url('/ato-logo.png') right center / 382.894736842% 100% no-repeat; transform-origin: 50% 50%; pointer-events: none; }
+.brand-spin:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+@media (max-width: 800px) { .brand-interactive { --logo-width: 125px; } }
+@media (max-width: 560px) { .brand-interactive { --logo-width: 94px; } }
