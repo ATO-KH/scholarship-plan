@@ -12,6 +12,8 @@ import {
 const epoch = Date.parse('2026-12-20T12:00:00.000Z');
 const nextSemester = { name: 'Spring 2027', startDate: '2027-01-10', checkpointDates: ['2027-02-01', '2027-03-01', '2027-04-01'],
   targetDate: '2027-05-01', endDate: '2027-05-08' };
+const importMapping = { headerRow: 1, firstDataRow: 2, nameMode: 'full',
+  columns: { first: -1, last: -1, full: 0, gpa: 1, schoolId: -1, email: -1 } };
 const local = { id: '0a608529-4d42-4332-a996-fca00a3ce2e0', backend: 'local',
   filename: '0a608529-4d42-4332-a996-fca00a3ce2e0.bin', final_path: null, status: 'ready' };
 const hosted = { id: '01bbbc31-b15a-4e7d-a28f-313ac9b76c2e', backend: 'supabase',
@@ -27,6 +29,8 @@ async function fixture(t, files = [local]) {
   await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify({
     submissions: [{ id: 'S-sensitive', owner: 'member', grade: 97, reviewNote: 'private academic comment' }],
     semester: { name: 'Fall 2026' }, semesterGeneration: 'old-generation',
+    tierAssignments: { 'future@example.edu': 4 }, gpaImportMapping: importMapping,
+    faqEntries: [{ id: 'shared-question', question: 'Test question?', answer: 'Shared answer.' }], faqRevision: 'test-revision',
   }), 'chapter');
   await f.db.prepare('INSERT INTO members(workspace,id,name,email,role,tier,credits) VALUES (?,?,?,?,?,?,?)').run(
     'chapter', 'member', 'Retained Member', 'member@example.edu', 'member', 2, 15,
@@ -100,6 +104,10 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.equal(status.status, 'purging');
   assert.equal(status.remaining, 1);
   assert.deepEqual(state.submissions, []);
+  assert.equal(state.tierAssignments, undefined, 'old-semester staged tiers are cleared');
+  assert.deepEqual(state.gpaImportMapping, importMapping, 'column layout remains available');
+  assert.equal(state.faqEntries[0].answer, 'Shared answer.', 'shared FAQ survives semester resets');
+  assert.equal(state.faqRevision, 'test-revision');
   assert.notEqual(state.semesterGeneration, 'old-generation');
   assert.equal(state.semester.name, 'Fall 2026', 'next term must not activate before storage deletion');
   assert.equal(state.semesterReset.objects[0].path, local.filename);

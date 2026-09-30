@@ -875,6 +875,20 @@ dialog {
   box-shadow: 0 15px 70px #15243d45;
   color: var(--ink);
 }
+.heading-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+dialog.tier-import-dialog { width: min(1040px, calc(100% - 28px)); }
+.import-layout { border: 1px solid var(--line); padding: 20px; margin: 20px 0; }
+.import-layout .heading-actions { margin-top: 18px; }
+.import-layout-sample { margin-top: 20px; }
+.import-layout-sample table { font-size: 14px; }
+#gpa-import-preview { margin-top: 24px; }
+#gpa-import-status { margin-top: 16px; }
+.tier-import-table { max-height: 48vh; overflow: auto; border: 1px solid var(--line); }
+.tier-import-table table { min-width: 740px; }
+.tier-import-table th { position: sticky; top: 0; background: var(--white); z-index: 1; }
+.tier-import-table td { vertical-align: top; }
+.tier-import-table td small { display: block; color: var(--muted); }
+.tier-import-table select { width: 100%; min-width: 220px; color: var(--ink); background: var(--white); border: 1px solid var(--line); padding: 7px; }
 dialog::backdrop {
   background: #11233dc4;
 }

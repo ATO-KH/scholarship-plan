@@ -96,7 +96,7 @@ The Chair account can be piloted now using the password entered directly in Supa
 
 ## 5. Connect the read-only roster
 
-The chapter's existing link-viewable sheet already has `First Name` (A), `Last Name` (B), `Status` (C), and `Student Email` (I). The portal reads only those columns through Google's CSV feed; it never edits the sheet and needs no Google Cloud account, API key, or service-account secret. The source is used only for eligibility and Chair invitation prefill. The Chair still reviews each invitation; accounts are created through Supabase Auth only after an email invitation, and the verified Auth user ID remains the account binding. The Chair office account is independent of this sheet.
+The chapter's existing link-viewable sheet has `First Name` (A), `Last Name` (B), `Status` (C), `900 Number` (E), and `Student Email` (I). Ordinary eligibility refreshes read only A, B, C, and I through Google's CSV feed. The Chair's GPA import separately reads E for transient matching; 900 numbers are not saved in the roster snapshot. The portal never edits the sheet and needs no Google Cloud account, API key, or service-account secret. The Chair reviews each invitation; accounts are created through Supabase Auth only after an email invitation, and the verified Auth user ID remains the account binding. The Chair office account is independent of this sheet.
 
 Set these **Production** environment variables on the Vercel project:
 
@@ -112,6 +112,24 @@ Use only the ID, not the full URL. `ROSTER_SHEET_GID` is the number after `gid=`
 After deployment, sign in as Chair → **Roster** → **Refresh roster now**. The page should show the eligible count, including new members, and a list of people ready to invite. Once chapter SMTP is tested and `CHAPTER_EMAIL_READY=true`, choose an eligible member, review the prefilled name/email, enter tier and credits, and send an invitation. A member's confirmed email must remain Active or New Mem. on the sheet to access the portal. The sheet is refreshed at most every 15 minutes; Chair can force a refresh. If the export becomes unavailable or its columns change, member access fails closed while Chair access remains available to repair the connection.
 
 The older Portal Member ID integration remains available with `ROSTER_SOURCE_MODE=service_account_ids` (the default), `'Roster'!D1:E1002`, and Viewer service-account credentials. It requires adding IDs and active flags to an editable sheet. Do not configure both modes at once.
+
+### Import GPA tiers as Scholarship Chair
+
+The Chair downloads the GPA worksheet as **CSV** and opens **Roster → Import GPA tiers**. The source does not need to be shared with the portal developer or made public. Excel worksheets must first be saved as CSV; direct `.xlsx` uploads are not supported.
+
+1. Choose the CSV. Set **Header row** and **First member row** to the spreadsheet's row numbers. Use header row `0` for a file without headers.
+2. Choose separate first/last names or one full-name column. Select the column for each name field, previous-semester GPA, and optionally 900 number or email. Letters and header labels identify the columns, and a sample shows the chosen cells. **Match header names** can fill common labels automatically.
+3. Optionally **Save layout for next time**. Only row numbers, column positions, and name format are saved; source cell values are not.
+4. Select **Preview tiers**. Review every match and proposed tier. Exact 900 number and name matches are preferred; exact email/name or unique name matches are used when no number is supplied. Select a roster member manually or skip unresolved rows. Duplicate member selections and invalid GPAs block applying the batch. A changed layout clears the previous preview.
+5. Check the review confirmation and **Apply reviewed tiers**. Existing active member goals update; eligible members without accounts receive a staged tier for their later invitation. No invitation is sent by this operation. A changed roster, semester, or tier snapshot requires a new preview.
+
+The page-5 ranges are authoritative: 3.50+ → Tier 1; 3.00–3.49 → Tier 2; 2.70–2.99 → Tier 3; 2.50–2.69 → Tier 4; below 2.50 → Tier 5. New members use Tier 1. GPA comparisons use the original value without rounding.
+
+The CSV is read in the Chair's browser. Only roster emails and resulting tiers are sent in the apply request; raw GPAs, 900 numbers, and the file are not saved by the portal. Import API activity is redacted. Closing the dialog removes the preview and source cells from the page. Semester reset clears staged tiers, retains column layout settings, and preserves existing member accounts and their current tiers for the Chair to review. The **Edit** control beside an active member's tier can adjust tier and enrolled credits without entering a GPA.
+
+### Maintain the shared FAQ
+
+Sign in as Scholarship Chair and open **FAQ → Add question**. Enter plain-text question and answer, then choose **Save for all members**. Each question expands separately. The Chair can expand an item to edit or remove it; removal asks for confirmation. Members can read the entries but cannot change them. Changes persist between semesters. Simultaneous edits require the stale editor to reload before saving. The public `/demo/` uses the same controls with fictional, browser-local records; its FAQ changes do not change the chapter FAQ.
 
 ## 6. Optional Canvas connection
 

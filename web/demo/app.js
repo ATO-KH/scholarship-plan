@@ -50,6 +50,7 @@ function toast(message) {
   toast.timer = setTimeout(() => $("#toast").classList.remove("visible"), 4000);
 }
 async function api(path, { method = "GET", body, raw = false } = {}) {
+  const finishLoading = window.atoLoading.begin(method === "POST" ? "Saving…" : "Loading…");
   const start = performance.now();
   let response, payload;
   try {
@@ -89,10 +90,13 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
         response: { error: e.message },
       });
     throw e;
+  } finally {
+    finishLoading();
   }
 }
+const loading = (message, compact = false) => window.atoLoading.markup(message, compact);
 function heading(kicker, title, description, action = "") {
-  return `<div class="page-heading"><div><p class="eyebrow">${kicker}</p><h1>${title}</h1><p>${description}</p></div>${action}</div>`;
+  return `<h1 class="sr-only">${title}</h1>${action ? `<div class="page-actions">${action}</div>` : ""}`;
 }
 function newButton() {
   return '<button class="button gold" data-action="new">+ New submission</button>';
@@ -216,17 +220,22 @@ function earnPage() {
       "POINT RULES",
       "Base points from your chapter plan. Approved credit-load multipliers apply.",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
-function faqPage() {
-  main.innerHTML =
-    heading(
-      "WORK IN PROGRESS",
-      "FAQ",
-      "Answers to common questions about the scholarship portal.",
-    ) +
-    `<div class="notice info"><strong>This FAQ is still being built.</strong> Ask the Scholarship Chair if you need help beyond these basics.</div><section class="panel prose"><h2>How do I get an account or reset my password?</h2><p>The Scholarship Chair manages member access. Ask the chair for an invitation or password-reset link. Once your chapter account is active, you can sign in with your email, badge number, or assigned portal ID.</p><h2>Why are my pending points missing from my total?</h2><p>Pending points are estimates. Only points approved by the Scholarship Chair count toward your semester goal.</p><h2>Who can see my submissions?</h2><p>Members see their own submissions, points, and review notes. The Scholarship Chair can review member submissions and supporting evidence.</p><p class="footnote">This demo uses fictional accounts and records. It does not create a chapter login.</p></section>`;
+async function faqPage() {
+  const owner = user.id;
+  main.innerHTML = heading("", "FAQ", "") + `<section class="faq-shell" aria-label="Frequently asked questions">${loading("Loading FAQ…")}</section>`;
+  const container = main.querySelector(".faq-shell");
+  try {
+    const { mountFaq } = await import(new URL("../faq-ui.mjs", SITE_BASE));
+    if (!container.isConnected || user?.id !== owner) return;
+    await mountFaq({ container, user, api, demo: true,
+      isCurrent: () => user?.id === owner && route() === "faq" });
+  } catch (error) {
+    if (container.isConnected) container.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
+  }
 }
+
 function apiPage() {
   main.innerHTML =
     heading(
@@ -512,7 +521,7 @@ async function switchUser(id) {
     submissions = [];
     roster = [];
     points = {};
-    main.innerHTML = '<p role="status">Loading the selected demo account…</p>';
+    main.innerHTML = loading("Loading the selected demo account…");
     await refresh();
     location.hash = user.role === "chair" ? "queue" : "overview";
     toast("Now viewing " + user.name + "’s demo account.");
@@ -754,12 +763,13 @@ async function importCanvas() {
 }
 
 async function startApp() {
+  main.innerHTML = loading("Loading demo…");
   if (PAGES_MODE) {
     try {
       if (!("serviceWorker" in navigator))
         throw Error("This browser does not support the hosted demo.");
       await navigator.serviceWorker.register(
-        new URL("demo-worker.js?v=2026-09-29", SITE_BASE),
+        new URL("demo-worker.js?v=2026-09-30-faq", SITE_BASE),
         { scope: SITE_BASE.pathname, type: "module" },
       );
       await navigator.serviceWorker.ready;

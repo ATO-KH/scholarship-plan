@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const root = resolve(import.meta.dirname, "..");
 const chairId = "aab93409-383f-4d8a-b443-3d940a277153";
@@ -34,7 +35,8 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
         SUPABASE_PUBLISHABLE_KEY: `sb_publishable_${"a".repeat(32)}`,
         SUPABASE_SECRET_KEY: `sb_secret_${"b".repeat(32)}`,
         SUPABASE_STORAGE_BUCKET: "",
-        ROSTER_REQUIRED: "", ROSTER_SHEET_ID: "", ROSTER_SHEET_RANGE: "",
+        TEST_PUBLIC_ROSTER: "true", ROSTER_REQUIRED: "true",
+        ROSTER_SOURCE_MODE: "public_email_csv", ROSTER_SHEET_ID: "a".repeat(44), ROSTER_SHEET_GID: "0", ROSTER_SHEET_RANGE: "",
         ROSTER_SERVICE_ACCOUNT_EMAIL: "", ROSTER_SERVICE_ACCOUNT_PRIVATE_KEY: "",
         CHAIR_AUTH_USER_ID: chairId, CHAIR_ACCOUNT_EMAIL: "chair@example.edu",
         CHAPTER_EMAIL_READY: "true",
@@ -94,12 +96,37 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal(chair.payload.recoveryKey, undefined);
     const chairCookie = chair.cookie;
     const chairCsrf = chair.payload.csrfToken;
+    assert.equal((await request("/api/admin/roster-sync", {}, chairCookie, chairCsrf)).status, 200);
+    const tierPreview = await request("/api/admin/tier-import", undefined, chairCookie);
+    assert.equal(tierPreview.status, 200);
+    assert.equal(tierPreview.payload.targets.find((entry) => entry.email === "member@example.edu").schoolId, "900123456");
+    assert.equal((await request("/api/admin/tier-import", {
+      snapshot: tierPreview.payload.snapshot, assignments: [{ email: "new@example.edu", tier: 4 }],
+    }, chairCookie, chairCsrf)).status, 422);
+    const staged = await request("/api/admin/tier-import", {
+      snapshot: tierPreview.payload.snapshot,
+      assignments: [{ email: "member@example.edu", tier: 4 }, { email: "new@example.edu", tier: 1 }],
+    }, chairCookie, chairCsrf);
+    assert.equal(staged.status, 200, JSON.stringify(staged.payload));
+    assert.equal(staged.payload.staged, 2);
+    const candidates = await request("/api/admin/roster-sync", undefined, chairCookie);
+    assert.equal(candidates.payload.candidates.find((entry) => entry.email === "member@example.edu").assignedTier, 4);
+    const storage = new DatabaseSync(join(directory, "production", "chapter.sqlite"));
+    try {
+      const state = storage.prepare("SELECT data FROM chapters WHERE workspace='chapter'").get().data;
+      assert.equal(state.includes("900123456"), false);
+      assert.equal(state.includes("900999999"), false);
+      assert.equal(state.includes('"gpa"'), false);
+    } finally { storage.close(); }
     assert.equal((await request("/api/roster", { name: "Member" })).status, 401);
     const added = await request("/api/roster", {
       name: "Sample Member", email: "member@example.edu", badge: "1234",
       tier: 1, credits: 15,
     }, chairCookie, chairCsrf);
     assert.equal(added.status, 201, JSON.stringify(added.payload));
+    assert.equal(added.payload.member.tier, 4, "reviewed staged tier is used during invitation");
+    const afterInvite = await request("/api/admin/tier-import", undefined, chairCookie);
+    assert.equal(afterInvite.payload.targets.find((entry) => entry.email === "member@example.edu").stagedTier, null);
     assert.match(added.payload.loginId, /^KH-[A-F0-9]{10}$/);
     assert.equal((await request("/api/roster", {
       name: "Duplicate", email: "member@example.edu", tier: 1, credits: 15,
@@ -117,7 +144,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     const progress = await request("/api/members", undefined, chairCookie);
     assert.equal(progress.status, 200);
     assert.deepEqual(progress.payload.members.map((entry) => entry.id), [added.payload.member.id]);
-    assert.equal(progress.payload.members[0].goal, 40);
+    assert.equal(progress.payload.members[0].goal, 90);
     assert.equal(progress.payload.members[0].checkpointDate, "2026-10-10");
 
     const member = await request("/api/auth/login", {

@@ -280,6 +280,106 @@ test("member data access is scoped to identity, including direct foreign record 
   assert.equal((await c.send("/api/submissions/S-1008")).status, 404);
 });
 
+test("Chair tier import accepts only roster emails and tiers, then updates member goals", async () => {
+  const isolated = await start("demo");
+  const memberClient = client(isolated);
+  await memberClient.send("/api/demo/session", {});
+  assert.equal((await memberClient.send("/api/admin/tier-import")).status, 403);
+  assert.equal((await memberClient.send("/api/admin/tier-import", {
+    snapshot: "a".repeat(64), assignments: [{ email: "other@example.edu", tier: 1 }],
+  })).status, 403);
+  assert.equal((await memberClient.send("/api/admin/tier-import/settings", { mapping: {} })).status, 403);
+  assert.equal((await memberClient.send("/api/roster/alex/academic-settings", { tier: 1, credits: 15 })).status, 403);
+
+  const chairClient = client(isolated);
+  await chairClient.send("/api/demo/session", { persona: "chair" });
+  const preview = await chairClient.send("/api/admin/tier-import");
+  assert.equal(preview.status, 200);
+  assert.match(preview.snapshot, /^[a-f0-9]{64}$/);
+  const mapping = { headerRow: 3, firstDataRow: 4, nameMode: "split",
+    columns: { first: 3, last: 1, full: -1, schoolId: 2, gpa: 0, email: 4 } };
+  assert.equal((await chairClient.send("/api/admin/tier-import/settings", {
+    mapping: { ...mapping, gpa: "2.60" },
+  })).status, 422);
+  assert.equal((await chairClient.send("/api/admin/tier-import/settings", { mapping })).status, 200);
+  const saved = await chairClient.send("/api/admin/tier-import");
+  assert.deepEqual(saved.mapping, mapping);
+  assert.equal(saved.snapshot, preview.snapshot);
+  const target = preview.targets.find((entry) => entry.accountId && entry.currentTier !== 4);
+  assert.ok(target);
+  assert.equal((await chairClient.send("/api/admin/tier-import", {
+    snapshot: preview.snapshot,
+    assignments: [{ email: target.email, tier: 4, gpa: 2.6, schoolId: "900123456" }],
+  })).status, 422);
+  assert.equal((await chairClient.send("/api/admin/tier-import", {
+    snapshot: preview.snapshot,
+    assignments: [{ email: target.email, tier: 4 }, { email: "not-on-roster@example.edu", tier: 2 }],
+  })).status, 422);
+  assert.equal((await chairClient.send("/api/admin/tier-import")).snapshot, preview.snapshot);
+  assert.equal((await chairClient.send("/api/admin/tier-import", {
+    snapshot: preview.snapshot,
+    assignments: [{ email: "not-on-roster@example.edu", tier: 4 }],
+  })).status, 422);
+  const applied = await chairClient.send("/api/admin/tier-import", {
+    snapshot: preview.snapshot,
+    assignments: [{ email: target.email, tier: 4 }],
+  });
+  assert.equal(applied.status, 200);
+  assert.equal(applied.updated, 1);
+  assert.equal((await chairClient.send("/api/admin/tier-import", {
+    snapshot: preview.snapshot,
+    assignments: [{ email: target.email, tier: 3 }],
+  })).status, 409);
+  const roster = await chairClient.send("/api/roster");
+  assert.equal(roster.members.find((entry) => entry.id === target.accountId).goal, 90);
+  assert.equal((await chairClient.send(`/api/roster/${target.accountId}/academic-settings`, {
+    tier: 3, credits: 12, gpa: "2.60",
+  })).status, 422);
+  const settings = await chairClient.send(`/api/roster/${target.accountId}/academic-settings`, {
+    tier: 3, credits: 12,
+  });
+  assert.equal(settings.status, 200);
+  assert.equal(settings.member.goal, 70);
+  assert.equal(settings.member.credits, 12);
+  const audit = await chairClient.send("/api/audit");
+  assert.equal(JSON.stringify(audit).includes("900123456"), false);
+  assert.equal(JSON.stringify(audit).includes("2.6"), false);
+});
+
+test("shared FAQ is readable by members, editable only by Chair, and rejects stale changes", async () => {
+  const isolated = await start("demo");
+  const member = client(isolated);
+  assert.equal((await member.send("/api/faq")).status, 401);
+  await member.send("/api/demo/session", {});
+  // Use the same demo workspace to demonstrate shared FAQ content across roles.
+  const initial = await member.send("/api/faq");
+  assert.equal(initial.entries.find((entry) => entry.id === "faq-noah").answer, "tbh idk");
+  const change = { version: initial.version, operation: "upsert",
+    entry: { id: null, question: "Who assigns my tier?", answer: "The Scholarship Chair.\nAsk before changing it." } };
+  assert.equal((await member.send("/api/faq", change)).status, 403);
+  await member.send("/api/demo/session", { persona: "chair" });
+  const added = await member.send("/api/faq", change);
+  assert.equal(added.status, 200);
+  assert.notEqual(added.version, initial.version);
+  const entry = added.entries.find((item) => item.question === change.entry.question);
+  assert.ok(entry.id);
+  assert.equal((await member.send("/api/faq", change)).status, 409);
+  assert.equal((await member.send("/api/faq", { ...change, version: added.version,
+    entry: { ...change.entry, question: " " },
+  })).status, 422);
+  const edited = await member.send("/api/faq", { version: added.version, operation: "upsert",
+    entry: { ...entry, answer: "Chair assigns tiers after reviewing the import." } });
+  assert.equal(edited.status, 200);
+  await member.send("/api/demo/session", { persona: "alex" });
+  const shared = await member.send("/api/faq");
+  assert.equal(shared.entries.find((item) => item.id === entry.id).answer, "Chair assigns tiers after reviewing the import.");
+  assert.equal((await member.send("/api/faq", { version: shared.version, operation: "delete", id: entry.id })).status, 403);
+  await member.send("/api/demo/session", { persona: "chair" });
+  const removed = await member.send("/api/faq", { version: shared.version, operation: "delete", id: entry.id });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.entries.some((item) => item.id === entry.id), false);
+});
+
 test("mutation requires CSRF token and exact origin; switching persona invalidates the old token", async () => {
   const c = client();
   await c.send("/api/demo/session", {});

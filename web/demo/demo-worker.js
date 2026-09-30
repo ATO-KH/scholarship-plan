@@ -10,6 +10,7 @@ import {
   validateClaim,
 } from "./demo-domain.mjs";
 import { canvasAssignments, sampleAssignments } from "./demo-canvas.mjs";
+import { faqView, validateFaqChange, applyFaqChange } from "../faq-data.mjs";
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 const scope = new URL(self.registration.scope).pathname;
@@ -116,6 +117,17 @@ async function handle(req, path) {
     };
     if (path === "/api/me" && req.method === "GET")
       return json({ user, today: TODAY });
+    if (path === "/api/faq" && req.method === "GET") return json(faqView(state));
+    if (path === "/api/faq" && req.method === "POST") {
+      chair();
+      const change = validateFaqChange(input);
+      const view = faqView(state);
+      if (input.version !== view.version) fail(409, "The FAQ changed. Reload the page before saving.");
+      state.faqEntries = applyFaqChange(view.entries, change, () => crypto.randomUUID());
+      state.faqRevision = crypto.randomUUID();
+      await save(session);
+      return json(faqView(state));
+    }
     if (path === "/api/rules" && req.method === "GET")
       return json({
         activities,

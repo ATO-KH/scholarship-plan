@@ -12,6 +12,13 @@ const respond = (body, status = 200) => new Response(JSON.stringify(body), {
 
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(String(input));
+  if (process.env.TEST_PUBLIC_ROSTER === "true" && url.origin === "https://docs.google.com") {
+    const withNumber = url.searchParams.get("tq") === "select A,B,C,E,I";
+    const csv = withNumber
+      ? "First Name,Last Name,Status,900 Number,Student Email\nSample,Member,Active,900123456,member@example.edu\nNew,Member,New Mem.,900999999,new@example.edu\n"
+      : "First Name,Last Name,Status,Student Email\nSample,Member,Active,member@example.edu\nNew,Member,New Mem.,new@example.edu\n";
+    return new Response(csv, { headers: { "Content-Type": "text/csv" } });
+  }
   if (url.origin !== "https://chapter-test.supabase.co")
     return originalFetch(input, options);
   if (url.pathname === "/auth/v1/token") {

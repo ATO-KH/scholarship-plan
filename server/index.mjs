@@ -174,7 +174,7 @@ const server = http.createServer(async (req, res) => {
         weeklyMinorAssignments: 3,
         weekConvention: "Monday–Sunday (demo assumption)",
         rounding: "Chair must enter whole points and explain any difference.",
-        tierSource: "Chair-assigned; GPA tier boundaries in the plan conflict.",
+        tierSource: "Page 5 GPA ranges; Chair assigns tiers. New members use Tier 1.",
         checkpoints: [
           { date: "2026-09-12", targets: [10, 14, 18, 23, 30] },
           { date: "2026-10-10", targets: [20, 28, 36, 46, 60] },

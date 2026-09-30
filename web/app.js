@@ -35,6 +35,7 @@ let user,
   submissions = [],
   points = {},
   roster = [],
+  rosterAccounts = [],
   rosterCandidates = [],
   filter = "all",
   logs = [],
@@ -76,7 +77,9 @@ function toast(message) {
   toast.timer = setTimeout(() => $("#toast").classList.remove("visible"), 4000);
 }
 async function api(path, { method = "GET", body, raw = false } = {}) {
+  const finishLoading = window.atoLoading.begin(method === "POST" ? "Saving…" : "Loading…");
   const start = performance.now();
+  const sensitive = path.startsWith("/api/admin/tier-import");
   const epoch = sessionEpoch,
     owner = user?.id,
     csrf = csrfToken;
@@ -105,8 +108,8 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
       status: response.status,
       ms: Math.round(performance.now() - start),
       time: new Date().toLocaleTimeString(),
-      request: body ? redact(body) : null,
-      response: redact(payload),
+      request: sensitive ? "[redacted]" : body ? redact(body) : null,
+      response: sensitive ? "[redacted]" : redact(payload),
     });
     logs = logs.slice(0, 50);
     if (!response.ok)
@@ -122,16 +125,19 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
         status: "Network error",
         ms: Math.round(performance.now() - start),
         time: new Date().toLocaleTimeString(),
-        request: body ? redact(body) : null,
+        request: sensitive ? "[redacted]" : body ? redact(body) : null,
         response: { error: e.message },
       });
     throw e;
+  } finally {
+    finishLoading();
   }
 }
+const loading = (message, compact = false) => window.atoLoading.markup(message, compact);
 function heading(kicker, title, description, action = "") {
   const signedIn = Boolean(user);
   const titleMarkup = `<h1${signedIn ? ' class="sr-only"' : ""}>${title}</h1>`;
-  if (signedIn && !kicker && !description && !action) return titleMarkup;
+  if (signedIn) return `${titleMarkup}${action ? `<div class="page-actions">${action}</div>` : ""}`;
   return `<div class="page-heading${signedIn ? " page-heading-compact" : ""}"><div>${kicker ? `<p class="eyebrow">${kicker}</p>` : ""}${titleMarkup}${description ? `<p>${description}</p>` : ""}</div>${action}</div>`;
 }
 function newButton() {
@@ -283,16 +289,20 @@ function earnPage() {
       "Point rules",
       "Point values, claim limits, and checkpoint targets.",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The plan lists conflicting GPA boundaries for Tiers 3 and 4. It also prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
-function faqPage() {
-  main.innerHTML =
-    heading(
-      "WORK IN PROGRESS",
-      "FAQ",
-      "Answers to common questions about the scholarship portal.",
-    ) +
-    `<div class="notice info"><strong>This FAQ is still being built.</strong> Ask the Scholarship Chair if you need help beyond these basics.</div><section class="panel prose"><h2>How do I get an account or reset my password?</h2><p>The Scholarship Chair manages member access. Once your chapter account is active, you can sign in with your email, badge number, or assigned portal ID. ${appConfig.chapterAuth?.emailReady ? "Use the sign-in page to request a password-reset email." : "Email invitations and reset links are not available yet. Members who have already signed in can use their saved 16-word recovery key to reset a password."}</p><h2>Why are my pending points missing from my total?</h2><p>Pending points are estimates. Only points approved by the Scholarship Chair count toward your semester goal.</p><h2>Who can see my submissions?</h2><p>Members see their own submissions, points, and review notes. The Scholarship Chair can review member submissions and supporting evidence.</p>${isDemo() ? '<p class="footnote">The demo uses fictional accounts and records. It does not create a chapter login.</p>' : ""}</section>`;
+async function faqPage() {
+  const owner = user.id;
+  main.innerHTML = heading("", "FAQ", "") + `<section class="faq-shell" aria-label="Frequently asked questions">${loading("Loading FAQ…")}</section>`;
+  const container = main.querySelector(".faq-shell");
+  try {
+    const { mountFaq } = await import("/faq-ui.mjs");
+    if (!container.isConnected || user?.id !== owner) return;
+    await mountFaq({ container, user, api, demo: isDemo(),
+      isCurrent: () => user?.id === owner && route() === "faq" });
+  } catch (error) {
+    if (container.isConnected) container.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
+  }
 }
 
 function apiPage() {
@@ -613,7 +623,7 @@ async function switchUser(id) {
     submissions = [];
     roster = [];
     points = {};
-    main.innerHTML = '<p role="status">Loading the selected demo account…</p>';
+    main.innerHTML = loading("Loading the selected demo account…");
     await refresh();
     location.hash = user.role === "chair" ? "queue" : "overview";
     toast("Now viewing " + user.name + "’s demo account.");
@@ -1117,6 +1127,7 @@ async function uploadEvidence(e) {
   }
   submit.disabled = true;
   input.disabled = true;
+  const finishLoading = window.atoLoading.begin("Uploading evidence…");
   try {
     let result;
     if (appConfig.uploadMode === "direct") {
@@ -1175,6 +1186,7 @@ async function uploadEvidence(e) {
   } catch (err) {
     if (current()) formError(err.message);
   } finally {
+    finishLoading();
     if (current()) {
       submit.disabled = false;
       input.disabled = false;
@@ -1196,15 +1208,16 @@ async function rosterPage() {
       "",
       "Roster",
       "Manage member identities and access.",
-      '<button class="button gold" data-action="add-member">Add member</button>',
+      '<div class="heading-actions"><button class="button ghost" data-action="import-gpa-tiers">Import GPA tiers</button><button class="button gold" data-action="add-member">Add member</button></div>',
     ) +
-    `${appConfig.chapterAuth?.enabled ? '<div class="notice info"><strong>Scholarship Chair office account</strong><p>This account belongs to the office, not to a member. Transfer control of its chapter inbox to the incoming chair and reset its password during each transition. Other members have separate accounts.</p></div>' : ""}<section class="panel" id="roster-sync"><p>Checking sheet connection…</p></section><section class="panel recent" id="roster-table"><p>Loading roster…</p></section>`;
+    `${appConfig.chapterAuth?.enabled ? '<div class="notice info"><strong>Scholarship Chair office account</strong><p>This account belongs to the office, not to a member. Transfer control of its chapter inbox to the incoming chair and reset its password during each transition. Other members have separate accounts.</p></div>' : ""}<section class="panel" id="roster-sync">${loading("Checking sheet connection…")}</section><section class="panel recent" id="roster-table">${loading("Loading roster…")}</section>`;
   loadRosterSync();
   const destination = $("#roster-table");
   try {
     const result = await api("/api/roster");
     if (!destination.isConnected) return;
-    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.tier || "—"} / ${m.credits || "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+    rosterAccounts = result.members;
+    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.role === "member" ? `Tier ${m.tier} · ${m.credits} credits<small>${m.goal} point goal${m.active === false || m.active === 0 ? "" : ` · <button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}">Edit</button>`}</small>` : "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
   } catch (e) {
     if (destination.isConnected)
       destination.innerHTML = '<div class="error">' + esc(e.message) + "</div>";
@@ -1228,7 +1241,7 @@ async function loadRosterSync() {
       : "Connect the sheet in the hosting settings to enable automatic eligibility checks.";
     const candidateList = emailMode && result.fresh
       ? `<div class="section-heading" style="margin-top:22px"><h3>READY TO INVITE</h3><span class="muted">${rosterCandidates.length} of ${result.activeCount} eligible members</span></div>${rosterCandidates.length
-        ? `<div class="table-wrap"><table class="roster-candidate-table"><thead><tr><th>Member</th><th>Status</th><th>University email</th><th></th></tr></thead><tbody>${rosterCandidates.map((entry, index) => `<tr><td><strong>${esc(entry.name)}</strong></td><td>${entry.membership === "new_member" ? "New member" : "Active"}</td><td>${esc(entry.email)}</td><td><button class="table-link" data-action="invite-roster-member" data-index="${index}" ${appConfig.chapterAuth?.emailReady ? "" : "disabled"}>Invite</button></td></tr>`).join("")}</tbody></table></div>`
+        ? `<div class="table-wrap"><table class="roster-candidate-table"><thead><tr><th>Member</th><th>Status</th><th>University email</th><th>Tier</th><th></th></tr></thead><tbody>${rosterCandidates.map((entry, index) => `<tr><td><strong>${esc(entry.name)}</strong></td><td>${entry.membership === "new_member" ? "New member" : "Active"}</td><td>${esc(entry.email)}</td><td>${entry.assignedTier ? `Tier ${entry.assignedTier}` : "Needs assignment"}</td><td><button class="table-link" data-action="invite-roster-member" data-index="${index}" ${appConfig.chapterAuth?.emailReady ? "" : "disabled"}>Invite</button></td></tr>`).join("")}</tbody></table></div>`
         : '<p class="muted">No eligible roster entries need a new invitation.</p>'}${needsAttention ? `<p class="muted">${needsAttention} existing ${needsAttention === 1 ? "account needs" : "accounts need"} attention in the member table below.</p>` : ""}${appConfig.chapterAuth?.emailReady ? "" : '<p class="muted">Email delivery must be configured before invitations can be sent.</p>'}`
       : "";
     panel.innerHTML = `<div class="section-heading"><h2>ROSTER SHEET</h2><span class="status ${result.fresh ? "approved" : "pending"}">${result.fresh ? "Up to date" : result.required ? "Refresh required" : "Not connected"}</span></div><p>${description}</p><p class="muted">${count} Members need a successful refresh at least every 15 minutes. Chair access remains available for recovery.</p>${result.lastError ? `<p class="error">${esc(result.lastError)}</p>` : ""}<button class="button ghost" id="sync-roster" ${result.configured ? "" : "disabled"}>Refresh roster now</button>${candidateList}`;
@@ -1256,7 +1269,7 @@ async function semesterPage() {
       "Semester reset",
       "Clear the old semester’s academic records while keeping member accounts.",
     ) +
-    '<section class="panel" id="semester-panel"><p>Loading semester…</p></section>';
+    `<section class="panel" id="semester-panel">${loading("Loading semester…")}</section>`;
   const panel = $("#semester-panel");
   try {
     const result = await api("/api/semester");
@@ -1378,7 +1391,7 @@ function addMember(prefill = {}) {
       return;
     }
     openModal("ADD A CHAPTER MEMBER", "An invitation will be emailed. The member chooses their own password.",
-      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
+      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32"><small>New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option value="${t}"${Number(prefill.assignedTier) === t ? " selected" : ""}>${t}</option>`).join("")}</select><small>${prefill.membership === "new_member" ? "New members use Tier 1." : prefill.assignedTier ? "From the Chair's reviewed GPA import." : "Use the page-5 GPA ranges."}</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Send invitation</button></div></form>`);
     $("#roster-form").onsubmit = async (event) => {
       event.preventDefault();
       const body = Object.fromEntries(new FormData(event.target));
@@ -1413,6 +1426,214 @@ function addMember(prefill = {}) {
     }
   };
 }
+function editAcademicSettings(member) {
+  openModal(
+    "EDIT MEMBER GOAL",
+    `Set the tier and enrolled credits for ${esc(member.name)}. Changes take effect immediately.`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${[40, 55, 70, 90, 120][tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save goal</button></div></form>`,
+  );
+  $("#academic-settings-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.target));
+    try {
+      await api("/api/roster/" + encodeURIComponent(member.id) + "/academic-settings", {
+        method: "POST",
+        body: { tier: Number(values.tier), credits: Number(values.credits) },
+      });
+      modal.close();
+      await rosterPage();
+      toast("Member goal updated.");
+    } catch (error) { formError(error.message); }
+  };
+}
+async function openTierImport() {
+  if (user?.role !== "chair") return;
+  const owner = user.id, epoch = sessionEpoch;
+  let sheet = null, rows = [], targets = [], cancelled = false, fileVersion = 0;
+  const current = () => !cancelled && modal.open && user?.id === owner && sessionEpoch === epoch;
+  modal.classList.add("tier-import-dialog");
+  openModal("IMPORT GPA TIERS", "Scholarship Chair only", loading("Loading the eligible roster…"));
+  modal.addEventListener("close", () => {
+    cancelled = true;
+    sheet = null;
+    rows = [];
+    targets = [];
+    modal.classList.remove("tier-import-dialog");
+    $("#modal-content").replaceChildren();
+  }, { once: true });
+  try {
+    const [view, helpers] = await Promise.all([
+      api("/api/admin/tier-import"), import("/gpa-import.mjs"),
+    ]);
+    if (!current()) return;
+    const { readGpaSheet, detectGpaMapping, mapGpaSheet, suggestTarget, nameKey, reviewedTierAssignments } = helpers;
+    targets = view.targets.filter((entry) => entry.accountStatus !== "inactive");
+    const targetByEmail = new Map(targets.map((entry) => [entry.email, entry]));
+    const fields = [["first", "First name"], ["last", "Last name"], ["full", "Full name"],
+      ["schoolId", "900 number (optional)"], ["gpa", "Previous-semester GPA"], ["email", "Email (optional)"]];
+    const letter = (index) => {
+      let result = "";
+      for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26))
+        result = String.fromCharCode(65 + (value - 1) % 26) + result;
+      return result;
+    };
+    openModal("IMPORT GPA TIERS", "Choose the sheet layout, preview the results, then apply",
+      `<p class="footnote">Choose a CSV export from the GPA sheet. GPA and 900 numbers stay in this import session; only the reviewed tiers are saved.</p><div class="field"><label for="gpa-csv">GPA sheet CSV</label><input id="gpa-csv" type="file" accept=".csv,text/csv"><small>Google Sheets: File → Download → Comma-separated values (.csv).</small></div><section id="gpa-layout" class="import-layout" hidden><h3>SHEET LAYOUT</h3><div class="form-grid"><div class="field"><label for="gpa-header-row">Header row</label><input id="gpa-header-row" type="number" min="0" max="1000" value="1"><small>Use 0 if the sheet has no header.</small></div><div class="field"><label for="gpa-first-row">First member row</label><input id="gpa-first-row" type="number" min="1" max="1100" value="2"></div><div class="field span2"><label for="gpa-name-mode">Names are stored as</label><select id="gpa-name-mode"><option value="split">Separate first and last names</option><option value="full">One full-name column</option></select></div>${fields.map(([key, label]) => `<div class="field" data-gpa-field="${key}"><label for="gpa-column-${key}">${label}</label><select id="gpa-column-${key}"></select></div>`).join("")}</div><div id="gpa-layout-sample" class="import-layout-sample"></div><div class="heading-actions"><button class="button ghost small" id="detect-gpa-columns" type="button">Match header names</button><button class="button ghost small" id="save-gpa-layout" type="button">Save layout for next time</button><button class="button gold small" id="preview-gpa-tiers" type="button">Preview tiers</button></div></section><div id="gpa-import-preview"></div><p id="gpa-import-status" role="status"></p><label id="gpa-confirm-label" class="recovery-confirm" hidden><input type="checkbox" id="gpa-confirm"> I checked the member matches and proposed tiers.</label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="button" id="apply-gpa-tiers" disabled>Apply reviewed tiers</button></div>`);
+    const layout = $("#gpa-layout"), preview = $("#gpa-import-preview"), statusLine = $("#gpa-import-status"),
+      apply = $("#apply-gpa-tiers"), fileInput = $("#gpa-csv"), confirmed = $("#gpa-confirm");
+    const clearError = () => { $("#form-error").textContent = ""; };
+    function readMapping() {
+      return { headerRow: Number($("#gpa-header-row").value), firstDataRow: Number($("#gpa-first-row").value),
+        nameMode: $("#gpa-name-mode").value,
+        columns: Object.fromEntries(fields.map(([key]) => [key, Number($("#gpa-column-" + key).value)])) };
+    }
+    function updateColumnOptions(columns) {
+      const headerRow = Number($("#gpa-header-row").value);
+      const headers = headerRow > 0 ? sheet.rows[headerRow - 1] || [] : [];
+      for (const [key] of fields) {
+        const selector = $("#gpa-column-" + key), selected = columns?.[key] ?? Number(selector.value || -1);
+        selector.innerHTML = '<option value="-1">Not selected</option>' +
+          Array.from({ length: sheet.columnCount }, (_, index) =>
+            `<option value="${index}">${letter(index)}${headers[index] ? ` · ${esc(String(headers[index]).slice(0, 80))}` : ""}</option>`).join("");
+        selector.value = selected >= 0 && selected < sheet.columnCount ? String(selected) : "-1";
+      }
+    }
+    function showLayout(mapping) {
+      $("#gpa-header-row").value = mapping.headerRow;
+      $("#gpa-first-row").value = mapping.firstDataRow;
+      $("#gpa-name-mode").value = mapping.nameMode;
+      updateColumnOptions(mapping.columns);
+      updateLayoutSample();
+    }
+    function updateLayoutSample() {
+      const mapping = readMapping();
+      for (const key of ["first", "last", "full"])
+        $(`[data-gpa-field="${key}"]`).hidden = mapping.nameMode === "full" ? key !== "full" : key === "full";
+      const shown = fields.filter(([key]) => (mapping.nameMode === "full" ? !["first", "last"].includes(key) : key !== "full") && mapping.columns[key] >= 0);
+      const start = Math.max(0, mapping.firstDataRow - 1);
+      $("#gpa-layout-sample").innerHTML = shown.length ?
+        `<p class="footnote">Sample from the selected columns</p><div class="table-wrap"><table><thead><tr><th>Row</th>${shown.map(([, label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${sheet.rows.slice(start, start + 3).map((cells, index) => `<tr><td>${start + index + 1}</td>${shown.map(([key]) => `<td>${esc(cells[mapping.columns[key]] || "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : "";
+    }
+    function invalidatePreview() {
+      rows = [];
+      preview.replaceChildren();
+      confirmed.checked = false;
+      $("#gpa-confirm-label").hidden = true;
+      apply.disabled = true;
+      statusLine.textContent = "Choose the columns, then preview tiers.";
+    }
+    function selectedTier(item) {
+      return targetByEmail.get(item.email)?.membership === "new_member" ? 1 : item.row.tier;
+    }
+    function updateApply() {
+      try { reviewedTierAssignments(rows, targets); apply.disabled = !confirmed.checked; }
+      catch { apply.disabled = true; }
+    }
+    function renderPreview() {
+      const selected = rows.filter((item) => item.email && item.email !== "skip");
+      const duplicate = new Set(selected.map((item) => item.email)).size !== selected.length;
+      const unresolved = rows.filter((item) => !item.email).length;
+      const invalid = selected.filter((item) => !selectedTier(item)).length;
+      const skipped = rows.filter((item) => item.email === "skip").length;
+      statusLine.textContent = `${selected.length} selected · ${unresolved} need a match · ${skipped} skipped${duplicate ? " · duplicate member selected" : ""}${invalid ? ` · ${invalid} invalid GPA` : ""}.`;
+      $("#gpa-confirm-label").hidden = false;
+      preview.innerHTML = `<p class="footnote">Page 5: 3.50+ → Tier 1 · 3.00–3.49 → Tier 2 · 2.70–2.99 → Tier 3 · 2.50–2.69 → Tier 4 · below 2.50 → Tier 5. New members use Tier 1.</p><div class="table-wrap tier-import-table"><table><thead><tr><th>Sheet row</th><th>GPA</th><th>Roster match</th><th>Tier change</th></tr></thead><tbody>${rows.map((item, index) => {
+        const target = targetByEmail.get(item.email);
+        let note = "Choose a roster member or skip this row";
+        if (target) {
+          const numberMatches = item.row.schoolId && target.schoolId === item.row.schoolId;
+          const nameMatches = nameKey(target.name) === nameKey(item.row.name);
+          note = item.row.schoolId ? numberMatches ? nameMatches ? "900 and name match" : "900 matches; review the different name" : "Selected member's 900 differs—review this match" : nameMatches ? "Name match; no 900 supplied" : "Names differ—review this match";
+        }
+        const oldTier = target?.currentTier ?? target?.stagedTier;
+        return `<tr><td><strong>${esc(item.row.name || `Row ${item.row.line}`)}</strong><small>Row ${item.row.line}${item.row.schoolId ? ` · 900 ending ${esc(item.row.schoolId.slice(-4))}` : ""}</small><small>${esc(note)}</small></td><td>${esc(item.row.gpa || "—")}</td><td><label class="sr-only" for="gpa-match-${index}">Roster match for ${esc(item.row.name || `row ${item.row.line}`)}</label><select id="gpa-match-${index}" class="gpa-match" data-index="${index}"><option value=""${!item.email ? " selected" : ""}>Choose member</option><option value="skip"${item.email === "skip" ? " selected" : ""}>Skip this row</option>${targets.map((entry) => `<option value="${esc(entry.email)}"${item.email === entry.email ? " selected" : ""}>${esc(entry.name)} · ${esc(entry.email)}</option>`).join("")}</select>${target?.membership === "new_member" ? '<small>New member · Tier 1</small>' : ""}</td><td>${item.email === "skip" ? "Skipped" : selectedTier(item) ? `${oldTier ? `Tier ${oldTier}` : "Unassigned"} → Tier ${selectedTier(item)}` : "Check GPA"}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+      updateApply();
+    }
+    fileInput.onchange = async () => {
+      const version = ++fileVersion;
+      invalidatePreview();
+      sheet = null;
+      layout.hidden = true;
+      statusLine.innerHTML = loading("Reading the CSV in this browser…", true);
+      try {
+        const file = fileInput.files?.[0];
+        if (!file || file.size > 1_000_000) throw Error("Choose a CSV file under 1 MB.");
+        const parsed = readGpaSheet(await file.text());
+        if (!current() || version !== fileVersion) return;
+        sheet = parsed;
+        fileInput.value = "";
+        layout.hidden = false;
+        showLayout(view.mapping || detectGpaMapping(sheet));
+        clearError();
+        statusLine.textContent = `${sheet.rows.length} sheet rows read. Check the layout and preview tiers.`;
+      } catch (error) { if (current() && version === fileVersion) { statusLine.textContent = ""; formError(error.message); } }
+    };
+    layout.onchange = (event) => {
+      if (!sheet) return;
+      if (event.target.id === "gpa-header-row") updateColumnOptions(readMapping().columns);
+      updateLayoutSample();
+      invalidatePreview();
+      clearError();
+    };
+    $("#detect-gpa-columns").onclick = () => {
+      const mapping = detectGpaMapping(sheet, Number($("#gpa-header-row").value));
+      mapping.firstDataRow = Number($("#gpa-first-row").value);
+      showLayout(mapping);
+      invalidatePreview();
+      clearError();
+    };
+    $("#save-gpa-layout").onclick = async (event) => {
+      const button = event.target;
+      button.disabled = true;
+      try {
+        const mapping = readMapping();
+        mapGpaSheet(sheet, mapping);
+        await api("/api/admin/tier-import/settings", { method: "POST", body: { mapping } });
+        if (!current()) return;
+        view.mapping = mapping;
+        clearError();
+        toast("Sheet layout saved. No GPA data was saved.");
+      } catch (error) { if (current()) formError(error.message); }
+      finally { if (current()) button.disabled = false; }
+    };
+    $("#preview-gpa-tiers").onclick = () => {
+      try {
+        rows = mapGpaSheet(sheet, readMapping()).map((row) => ({ row, email: suggestTarget(row, targets) }));
+        confirmed.checked = false;
+        clearError();
+        renderPreview();
+      } catch (error) { invalidatePreview(); formError(error.message); }
+    };
+    preview.onchange = (event) => {
+      const selector = event.target.closest(".gpa-match");
+      if (!selector) return;
+      const index = Number(selector.dataset.index);
+      rows[index].email = selector.value;
+      confirmed.checked = false;
+      renderPreview();
+      $("#gpa-match-" + index).focus();
+    };
+    confirmed.onchange = updateApply;
+    apply.onclick = async () => {
+      apply.disabled = true;
+      try {
+        if (!confirmed.checked) throw Error("Check the member matches and proposed tiers before applying.");
+        const assignments = reviewedTierAssignments(rows, targets);
+        const result = await api("/api/admin/tier-import", {
+          method: "POST", body: { snapshot: view.snapshot, assignments },
+        });
+        if (!current()) return;
+        modal.close();
+        await rosterPage();
+        toast(`${result.updated} member tiers updated; ${result.staged} saved for later invitations.`);
+      } catch (error) { if (current()) { formError(error.message); updateApply(); } }
+    };
+  } catch (error) {
+    if (current()) openModal("GPA IMPORT UNAVAILABLE", "", `<p class="error">${esc(error.message)}</p><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`);
+  }
+}
+
 async function auditPage() {
   main.innerHTML =
     heading(
@@ -1420,7 +1641,7 @@ async function auditPage() {
       "Review history",
       "Decisions, membership changes, and evidence access.",
     ) +
-    '<section class="panel" id="audit-table"><p>Loading activity…</p></section>';
+    `<section class="panel" id="audit-table">${loading("Loading review history…")}</section>`;
   const destination = $("#audit-table");
   try {
     const result = await api("/api/audit");
@@ -1440,11 +1661,19 @@ document.addEventListener("click", async (e) => {
       await api("/api/logout", { method: "POST", body: {} });
       modal.close();
       logs = [];
+      rosterAccounts = [];
+      rosterCandidates = [];
       loginPage();
     } else if (b.dataset.action === "add-member") addMember();
+    else if (b.dataset.action === "import-gpa-tiers") await openTierImport();
     else if (b.dataset.action === "invite-roster-member") {
       const entry = rosterCandidates[Number(b.dataset.index)];
       if (entry) addMember(entry);
+    }
+    else if (b.dataset.action === "edit-academic-settings") {
+      const member = rosterAccounts.find((entry) => entry.id === b.dataset.id);
+      if (member?.role === "member" && member.active !== false && member.active !== 0)
+        editAcademicSettings(member);
     }
     else if (b.dataset.action === "reset-member-password") {
       openModal("SEND PASSWORD RESET?", "A reset link will go to this member’s approved email. You will not see their password.",

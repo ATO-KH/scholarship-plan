@@ -9,7 +9,8 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 ## What is implemented
 
 - Member submission forms, review status, notes, and approved point totals.
-- Scholarship Chair review queue, approval/denial, CSV export, member progress, roster controls, and audit history.
+- Scholarship Chair review queue, approval/denial, member progress, roster controls, and audit history.
+- Chair-only GPA CSV import with configurable header/data rows and field columns, reviewed member matching, tier-only persistence, and staged tiers for later invitations.
 - Private PDF/JPEG/PNG evidence uploads and authenticated downloads.
 - Server-side ownership and chair-role checks, session cookies, and CSRF validation.
 - Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets. Members receive a 16-word recovery key on their first sign-in each semester and can use it to reset a password without email. A dedicated office account holds the Chair role; Microsoft code remains inactive legacy support.
@@ -18,8 +19,10 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 - Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.
 - A demo mode for testing without university accounts and a production mode with no demo identity switch.
 - Hosted uploads that go directly to private Storage, followed by server-side byte validation and immutable final evidence storage.
-- Google Sheets eligibility using explicit portal member IDs and Active flags, with a 15-minute freshness requirement and chair recovery access.
+- Read-only Google Sheets eligibility using exact school emails and Active/New Member status, with a 15-minute freshness requirement and chair recovery access. Legacy explicit portal-ID mode remains available.
 - Confirmed semester reset with a durable deletion manifest, retryable cleanup, preserved member accounts, and configurable next-semester dates.
+- Centered expandable FAQ, with Chair-managed questions and answers shared across signed-in members and preserved between semesters.
+- Shared Maltese-cross animations for page loading, requests, evidence uploads, and import preparation.
 
 **Live chapter login, roster-sheet, and complete evidence workflows still need acceptance testing.** Canvas import is deferred and hidden from navigation. Provider tests use local fixtures and mocks; they are not proof of a successful live connection.
 
@@ -51,7 +54,9 @@ The local version uses Node's built-in SQLite module. The hosted version uses Po
 
 **Canvas (deferred):** the code for a read-only import exists, but the feature is hidden until the chapter decides to implement and test it.
 
-**Roster:** the Chair office account enters a member's verified email and optional badge number; an invitation lets that member set a password. The portal assigns a separate, immutable Portal Member ID for the eligibility sheet and a `KH-...` sign-in alias. The sheet reads only `Portal Member ID` and `Active`; names, badge numbers, and guessed email addresses do not authorize access. Deactivation blocks further portal access. The Chair office account is bound to one exact Supabase Auth user ID and the chapter-controlled inbox, not selected by the first visitor.
+**Roster:** the Chair office account refreshes the connected name-and-email roster, then reviews eligible member invitations. An invitation lets the member set a password. The portal assigns an immutable internal member ID and a `KH-...` sign-in alias; verified email eligibility and stable Supabase identity control access. Badge numbers are optional aliases. Deactivation blocks further portal access. The Chair office account is bound to one exact Supabase Auth user ID and the chapter-controlled inbox, not selected by the first visitor.
+
+**GPA tiers:** the Chair selects a CSV, chooses its header and data rows and each field's column, previews member matches and tier changes, then confirms the batch. The source stays in the Chair's browser; only resulting tiers are saved. Column layout settings can be reused. Eligible members without accounts receive a staged tier for later invitations; the import sends no email. See [the Chair's import steps](DEPLOYMENT.md#import-gpa-tiers-as-scholarship-chair).
 
 **Semester:** preview the records to be removed, provide the next semester's explicit dates, and type the confirmation. Old academic access is removed immediately; the new semester opens after durable evidence cleanup finishes. Member accounts remain. This does not erase separately retained backups or downloaded copies.
 
@@ -125,6 +130,10 @@ The original submission/points endpoints remain compatible with the public demo'
 | POST     | `/api/uploads/cleanup`                 | Chair cleanup of expired upload intents               |
 | GET/POST | `/api/roster`                          | Chair roster listing and creation                     |
 | POST     | `/api/roster/:id/deactivate`           | Deactivate member access                              |
+| POST     | `/api/roster/:id/academic-settings`    | Chair updates tier and credit load                    |
+| GET/POST | `/api/admin/tier-import`              | Preview eligible targets / apply reviewed tiers       |
+| POST     | `/api/admin/tier-import/settings`     | Save column layout metadata only                      |
+| GET/POST | `/api/faq`                            | Read shared FAQ / Chair creates, edits, removes items  |
 | GET      | `/api/audit`                           | Chair audit history                                   |
 | GET/POST | `/api/admin/roster-sync`               | Inspect/refresh sheet eligibility                     |
 | GET      | `/api/semester`                        | Current semester and cleanup status                   |
@@ -142,7 +151,7 @@ Authenticated mutations send `X-CSRF-Token` and are checked against the configur
 
 Based on the supplied 2026 scholarship plan; the original PDF is not committed:
 
-- Tier 3/4 GPA ranges conflict between pages. Use assigned tiers until the chair resolves the boundaries.
+- Use the GPA tier ranges on page 5 of the chapter plan. The Chair can import a CSV export in the Roster view; GPA and 900 numbers are processed in the Chair's browser, while the portal stores only tier assignments. New members use Tier 1.
 - Multipliers can produce decimals, while the plan prohibits fractional awards and does not define rounding. Require an explicit integer award and a reason for adjustments.
 - The demo uses Monday–Sunday weeks and reserves weekly capacity for pending claims; the chapter must confirm this convention.
 - Grade-posting date in America/New_York is the import claim date. Confirm that interpretation of the 14-day window.

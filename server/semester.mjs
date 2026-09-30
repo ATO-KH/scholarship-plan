@@ -174,6 +174,9 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     const job = { id: randomUUID(), status: 'purging', startedAt: iso(time), nextSemester,
       counts, count: objects.length, objects, lease: null, lastError: null };
     state.submissions = [];
+    // Pre-invitation tier decisions belong to the old semester. Member
+    // accounts remain; the Chair reviews their tiers for the new semester.
+    delete state.tierAssignments;
     state.semesterGeneration = randomUUID();
     delete state.semesterPreview;
     state.semesterReset = job;

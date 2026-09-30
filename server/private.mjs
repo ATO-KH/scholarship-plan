@@ -25,7 +25,9 @@ import {
   finishRecovery,
   clearRecoveryKey,
 } from "./recovery.mjs";
-import { rosterStatus, fetchRosterSnapshot } from "./roster.mjs";
+import { rosterStatus, fetchRosterSnapshot, fetchRosterImportIdentifiers } from "./roster.mjs";
+import { validateGpaImportMapping } from "./gpa-import-settings.mjs";
+import { faqView, validateFaqChange, applyFaqChange } from "../web/faq-data.mjs";
 import {
   storageStatus,
   verifyStorageConfiguration,
@@ -334,6 +336,11 @@ async function refreshRoster(session, user, force = false) {
     )
       return state;
     state.roster = snapshot;
+    if (state.tierAssignments) {
+      const eligible = new Set(snapshot.emails || []);
+      state.tierAssignments = Object.fromEntries(Object.entries(state.tierAssignments)
+        .filter(([email]) => eligible.has(email)));
+    }
     delete state.rosterSyncError;
     delete state.rosterSyncAttempt;
     await db
@@ -377,7 +384,6 @@ function memberView(row, checkpoint) {
           goal: [40, 55, 70, 90, 120][row.tier - 1],
           checkpoint: checkpoint.targets[row.tier - 1],
           checkpointDate: checkpoint.date,
-          gpa: "Chair assigned",
         }
       : {}),
   };
@@ -401,6 +407,39 @@ async function listMembers(workspace, state) {
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
   return rows.map((row) => memberView(row, checkpoint));
+}
+async function tierImportView(workspace, state) {
+  const existing = (await listMembers(workspace, state)).filter((entry) => entry.role === "member");
+  const byEmail = new Map(existing.map((entry) => [entry.email.toLowerCase(), entry]));
+  let directory;
+  if (production) {
+    if (rosterView(state).mode !== "public_email_csv" || !rosterView(state).fresh)
+      fail(503, "Refresh the connected name-and-email roster before importing tiers.");
+    directory = state.roster.directory;
+  } else {
+    directory = existing.filter((entry) => entry.active).map((entry) => ({
+      name: entry.name, email: entry.email, membership: "active",
+    }));
+  }
+  const targets = directory.map((entry) => {
+    const account = byEmail.get(entry.email.toLowerCase());
+    return {
+      name: entry.name,
+      email: entry.email.toLowerCase(),
+      membership: entry.membership,
+      accountId: account?.active ? account.id : null,
+      accountStatus: !account ? "not_invited" : account.active ? "active" : "inactive",
+      currentTier: account?.active ? account.tier : null,
+      stagedTier: state.tierAssignments?.[entry.email.toLowerCase()] ?? null,
+    };
+  });
+  const snapshot = sha(JSON.stringify({
+    roster: production ? state.roster?.revision : "demo",
+    generation: state.semesterGeneration || null,
+    targets: targets.map(({ email, membership, accountId, accountStatus, currentTier, stagedTier }) =>
+      [email, membership, accountId, accountStatus, currentTier, stagedTier]),
+  }));
+  return { snapshot, targets, mapping: state.gpaImportMapping || null };
 }
 async function insertMember(workspace, m) {
   await db
@@ -1321,6 +1360,8 @@ const server = http.createServer(async (req, res) => {
             const account = enrolled.get(entry.email);
             return {
               ...entry,
+              assignedTier: entry.membership === "new_member" ? 1 :
+                state.tierAssignments?.[entry.email] ?? null,
               accountStatus: !account ? "not_invited" : !account.active ? "inactive" :
                 linked.has(account.id) ? "invited" : "missing_sign_in",
             };
@@ -1412,10 +1453,29 @@ const server = http.createServer(async (req, res) => {
             "Monday–Sunday, America/New_York (portal convention; policy must confirm)",
           rounding: "Chair must enter whole points and explain any difference.",
           tierSource:
-            "Chair-assigned; GPA tier boundaries in the plan conflict.",
+            "Page 5 GPA ranges; Chair assigns tiers. New members use Tier 1.",
           checkpoints: semesterCheckpoints(state),
           semester: semesterSettings(state),
         });
+      }
+      if (path === "/api/faq" && req.method === "GET")
+        return json(res, 200, faqView(await stateOf(session.workspace)));
+      if (path === "/api/faq" && req.method === "POST") {
+        chair(user);
+        const change = validateFaqChange(input);
+        const updated = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          const view = faqView(state);
+          if (input.version !== view.version) fail(409, "The FAQ changed. Reload the page before saving.");
+          state.faqEntries = applyFaqChange(view.entries, change, randomUUID);
+          state.faqRevision = randomUUID();
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          await audit(session.workspace, user.name, change.operation === "delete" ? "faq.delete" : change.entry.id ? "faq.update" : "faq.create", "", "Shared FAQ updated");
+          return faqView(state);
+        });
+        return json(res, 200, updated);
       }
       if (path === "/api/integrations" && req.method === "GET")
         return json(res, 200, {
@@ -2001,6 +2061,101 @@ const server = http.createServer(async (req, res) => {
           })),
         });
       }
+      if (path === "/api/admin/tier-import" && req.method === "GET") {
+        chair(user);
+        const view = await tierImportView(session.workspace, await stateOf(session.workspace));
+        if (production) {
+          const identifiers = await fetchRosterImportIdentifiers({ env });
+          const byEmail = new Map(identifiers.map((entry) => [entry.email, entry]));
+          if (identifiers.length !== view.targets.length || view.targets.some((target) => {
+            const entry = byEmail.get(target.email);
+            return !entry || entry.name !== target.name || entry.membership !== target.membership;
+          })) fail(409, "The roster changed. Refresh it before importing tiers.");
+          view.targets = view.targets.map((target) => ({
+            ...target, schoolId: byEmail.get(target.email).schoolId,
+          }));
+        }
+        await assertActiveSession(session, user);
+        if ((await tierImportView(session.workspace, await stateOf(session.workspace))).snapshot !== view.snapshot)
+          fail(409, "The roster or tiers changed. Open the import again.");
+        return json(res, 200, view);
+      }
+      if (path === "/api/admin/tier-import/settings" && req.method === "POST") {
+        chair(user);
+        if (Object.keys(input).join(",") !== "mapping")
+          fail(422, "Only sheet layout settings can be saved here.");
+        const mapping = validateGpaImportMapping(input.mapping);
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          state.gpaImportMapping = mapping;
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?")
+            .run(JSON.stringify(state), session.workspace);
+          await audit(session.workspace, user.name, "roster.import_columns", "", "GPA import layout updated");
+        });
+        return json(res, 200, { mapping });
+      }
+      if (path === "/api/admin/tier-import" && req.method === "POST") {
+        chair(user);
+        if (Object.keys(input).sort().join(",") !== "assignments,snapshot" ||
+          typeof input.snapshot !== "string" || !/^[a-f0-9]{64}$/.test(input.snapshot) ||
+          !Array.isArray(input.assignments) || !input.assignments.length ||
+          input.assignments.length > 1000)
+          fail(422, "Submit a reviewed list of member emails and tiers only.");
+        const seen = new Set();
+        for (const assignment of input.assignments) {
+          if (!assignment || Array.isArray(assignment) ||
+            Object.keys(assignment).sort().join(",") !== "email,tier" ||
+            typeof assignment.email !== "string" ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(assignment.email) ||
+            !Number.isInteger(assignment.tier) || assignment.tier < 1 || assignment.tier > 5 ||
+            seen.has(assignment.email.toLowerCase()))
+            fail(422, "Every tier assignment needs one unique roster email and a tier from 1–5.");
+          seen.add(assignment.email.toLowerCase());
+        }
+        const result = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          const view = await tierImportView(session.workspace, state);
+          if (view.snapshot !== input.snapshot)
+            fail(409, "The roster or tiers changed. Review the import again before applying it.");
+          const targets = new Map(view.targets.map((target) => [target.email, target]));
+          for (const assignment of input.assignments) {
+            const target = targets.get(assignment.email.toLowerCase());
+            if (!target || target.accountStatus === "inactive")
+              fail(422, "Every selected row must match an eligible, active roster entry.");
+            if (target.membership === "new_member" && assignment.tier !== 1)
+              fail(422, "New members must be assigned Tier 1.");
+          }
+          state.tierAssignments ||= {};
+          let updated = 0, staged = 0;
+          for (const assignment of input.assignments) {
+            const target = targets.get(assignment.email.toLowerCase());
+            if (target.accountId) {
+              if (target.currentTier !== assignment.tier) {
+                await db.prepare("UPDATE members SET tier=? WHERE workspace=? AND id=? AND role='member' AND active=1")
+                  .run(assignment.tier, session.workspace, target.accountId);
+                await audit(session.workspace, user.name, "roster.tier_import", target.accountId,
+                  `tier ${target.currentTier} to ${assignment.tier}`);
+                updated++;
+              }
+              delete state.tierAssignments[target.email];
+            } else if (state.tierAssignments[target.email] !== assignment.tier) {
+              state.tierAssignments[target.email] = assignment.tier;
+              await audit(session.workspace, user.name, "roster.tier_staged", target.email,
+                `tier ${assignment.tier}`);
+              staged++;
+            }
+          }
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?")
+            .run(JSON.stringify(state), session.workspace);
+          return { updated, staged };
+        });
+        return json(res, 200, result);
+      }
       if (path === "/api/roster" && req.method === "POST") {
         chair(user);
         if (production && authMode === "chapter") {
@@ -2014,6 +2169,9 @@ const server = http.createServer(async (req, res) => {
               fail(503, "Current roster eligibility is unavailable. Refresh the roster before inviting members.");
             if (!state.roster.emails.includes(invited.email))
               fail(422, "This email is not eligible on the connected chapter roster.");
+            const listed = state.roster.directory.find((entry) => entry.email === invited.email);
+            invited.tier = listed?.membership === "new_member" ? 1 :
+              state.tierAssignments?.[invited.email] ?? invited.tier;
           }
           const existing = await db
             .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
@@ -2036,14 +2194,27 @@ const server = http.createServer(async (req, res) => {
               do { alias = loginAlias().toLowerCase(); }
               while (await identityMember(session.workspace, "login", alias));
               const id = randomUUID();
-              await insertMember(session.workspace, { ...invited, id, role: "member" });
+              const state = await stateOf(session.workspace);
+              academicGuard(state, requestGeneration);
+              if (rosterStatus(env).mode === "public_email_csv" &&
+                (!rosterView(state).fresh || !state.roster.emails.includes(invited.email)))
+                fail(409, "Roster eligibility changed while the invitation was being created.");
+              const listed = state.roster?.directory?.find((entry) => entry.email === invited.email);
+              const assignedTier = listed?.membership === "new_member" ? 1 :
+                state.tierAssignments?.[invited.email] ?? invited.tier;
+              await insertMember(session.workspace, { ...invited, tier: assignedTier, id, role: "member" });
+              if (state.tierAssignments?.[invited.email]) {
+                delete state.tierAssignments[invited.email];
+                await db.prepare("UPDATE chapters SET data=? WHERE workspace=?")
+                  .run(JSON.stringify(state), session.workspace);
+              }
               for (const [provider, subject] of [
                 ["supabase", authUserId], ["login", alias],
                 ...(invited.badge ? [["login", invited.badge]] : []),
               ]) await db.prepare("INSERT INTO identities VALUES (?,?,?,?)")
                 .run(session.workspace, provider, subject, id);
               await audit(session.workspace, user.name, "roster.invite", id,
-                `chapter account; tier ${invited.tier}; credits ${invited.credits}`);
+                `chapter account; tier ${assignedTier}; credits ${invited.credits}`);
               return { member: await member(session.workspace, id), loginId: alias.toUpperCase() };
             });
           } catch (error) {
@@ -2088,6 +2259,35 @@ const server = http.createServer(async (req, res) => {
           return await member(session.workspace, id);
         });
         return json(res, 201, { member: created });
+      }
+      const academicSettings = path.match(/^\/api\/roster\/([^/]+)\/academic-settings$/);
+      if (academicSettings && req.method === "POST") {
+        chair(user);
+        if (
+          Object.keys(input).sort().join(",") !== "credits,tier" ||
+          !Number.isInteger(input.tier) || input.tier < 1 || input.tier > 5 ||
+          !Number.isFinite(input.credits) || input.credits < 0 || input.credits > 30
+        ) fail(422, "Choose a tier from 1–5 and enrolled credits from 0–30.");
+        const updated = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          const target = await member(session.workspace, academicSettings[1]);
+          if (!target?.active || target.role !== "member")
+            fail(404, "Active member not found.");
+          if (state.roster?.directory?.find((entry) => entry.email === target.email)?.membership === "new_member" && input.tier !== 1)
+            fail(422, "New members must be assigned Tier 1.");
+          if (target.tier === input.tier && target.credits === input.credits)
+            return target;
+          await db.prepare(
+            "UPDATE members SET tier=?, credits=? WHERE workspace=? AND id=? AND role='member' AND active=1",
+          ).run(input.tier, input.credits, session.workspace, target.id);
+          await audit(session.workspace, user.name, "roster.academic_settings", target.id,
+            `tier ${target.tier} to ${input.tier}; credits ${target.credits} to ${input.credits}`);
+          return await member(session.workspace, target.id);
+        });
+        return json(res, 200, { member: updated });
       }
       const resetMember = path.match(/^\/api\/roster\/([^/]+)\/reset-password$/);
       if (resetMember && req.method === "POST" && production && authMode === "chapter") {
@@ -2416,6 +2616,11 @@ const server = http.createServer(async (req, res) => {
       "/theme.js": "theme.js",
       "/ato-logo.png": "ato-logo.png",
       "/app.js": "app.js",
+      "/gpa-import.mjs": "gpa-import.mjs",
+      "/faq-data.mjs": "faq-data.mjs",
+      "/faq-ui.mjs": "faq-ui.mjs",
+      "/loading-ui.js": "loading-ui.js",
+      "/portal-components.css": "portal-components.css",
       "/loading-cross.js": "loading-cross.js",
       "/demo/": "demo/index.html",
       "/demo/index.html": "demo/index.html",

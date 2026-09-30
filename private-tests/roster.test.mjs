@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { generateKeyPair, exportPKCS8, jwtVerify } from "jose";
 import {
   fetchRosterSnapshot,
+  fetchRosterImportIdentifiers,
   parsePublicRosterCsv,
+  parseRosterImportIdentifiers,
   parseRosterValues,
   rosterStatus,
 } from "../server/roster.mjs";
@@ -109,6 +111,30 @@ test("projected public CSV includes active and new members only", () => {
     ),
     { emails: [], directory: [] },
   );
+});
+
+test("Chair-only identifier projection reads column E transiently", async () => {
+  const csv = "First Name,Last Name,Status,900 Number,Student Email\n" +
+    "A,Member,Active,900123456,a@example.edu\n" +
+    "New,Member,New Mem.,900654321,new@example.edu\n" +
+    "Former,Member,Alumni,900111111,former@example.edu\n";
+  const rows = parseRosterImportIdentifiers(csv);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].schoolId, "900123456");
+  assert.doesNotMatch(JSON.stringify(rows), /former|900111111/i);
+  let calls = 0;
+  const fetched = await fetchRosterImportIdentifiers({
+    env: publicEnv,
+    fetchImpl: async (url, options) => {
+      calls++;
+      assert.match(url, /tq=select%20A%2CB%2CC%2CE%2CI$/);
+      assert.equal(options.redirect, "error");
+      return new Response(csv);
+    },
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(fetched, rows);
+  assert.throws(() => parseRosterImportIdentifiers(csv.replace("900654321", "900123456")), /duplicate/);
 });
 
 test("public CSV rejects ambiguous active rows, malformed exports, and excess rows", () => {

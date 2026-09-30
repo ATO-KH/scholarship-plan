@@ -217,6 +217,36 @@ export function parsePublicRosterCsv(csv) {
   return { emails: [...emails].sort(), directory };
 }
 
+// Only the Chair's import preview requests column E. These identifiers are
+// returned transiently and are never included in the stored roster snapshot.
+export function parseRosterImportIdentifiers(csv) {
+  const rows = parseCSV(csv);
+  if (rows.length < 2 || rows[0].length !== 5 ||
+    ["first name", "last name", "status", "student email"].some((header, index) =>
+      cleanCell(rows[0][index < 3 ? index : 4]).toLowerCase() !== header))
+    throw rosterError("Roster import columns do not match the connected sheet.");
+  const seenEmails = new Set(), seenNumbers = new Set(), directory = [];
+  for (const cells of rows.slice(1)) {
+    if (cells.length > 5) throw rosterError("Roster import contains an invalid row.");
+    const [first = "", last = "", status = "", schoolId = "", email = ""] = cells.map(cleanCell);
+    const membership = status.toLowerCase().replace(/\s+/g, " ");
+    if (!["active", "new mem.", "new member"].includes(membership)) continue;
+    const normalizedEmail = email.toLowerCase();
+    if (!first || !last || !/^[^\s@,<>"()]+@[^\s@,<>"()]+\.[^\s@,<>"()]+$/.test(normalizedEmail) ||
+      normalizedEmail.length > 254 || first.length > 100 || last.length > 100 ||
+      schoolId.length > 32 || /[\u0000-\u001f\u007f]/.test(`${first}${last}${schoolId}`) ||
+      seenEmails.has(normalizedEmail) || (schoolId && seenNumbers.has(schoolId)))
+      throw rosterError("Roster import has a missing or duplicate eligible identity.");
+    seenEmails.add(normalizedEmail);
+    if (schoolId) seenNumbers.add(schoolId);
+    directory.push({ name: `${first.replace(/\s+/g, " ")} ${last.replace(/\s+/g, " ")}`,
+      email: normalizedEmail,
+      membership: membership === "active" ? "active" : "new_member",
+      schoolId });
+  }
+  return directory.sort((a, b) => a.email.localeCompare(b.email));
+}
+
 async function readPublicCSV(response, budget) {
   if (!response.ok || !response.body)
     throw rosterError("The public Google roster could not be read.");
@@ -247,6 +277,19 @@ async function fetchPublicCSV(id, gid, fetchImpl, signal) {
     await fetchImpl(url, { redirect: "error", signal }),
     { remaining: MAX_BYTES },
   );
+}
+
+export async function fetchRosterImportIdentifiers({ env = process.env, fetchImpl = fetch } = {}) {
+  const status = rosterStatus(env);
+  if (!status.configured || status.mode !== PUBLIC_CSV_MODE)
+    throw rosterError("A connected name-and-email roster is required for tier import.");
+  const id = String(env.ROSTER_SHEET_ID).trim();
+  const gid = Number(String(env.ROSTER_SHEET_GID ?? "").trim() || "0");
+  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?gid=${gid}&tqx=out%3Acsv&tq=select%20A%2CB%2CC%2CE%2CI`;
+  const csv = await readPublicCSV(await fetchImpl(url, {
+    redirect: "error", signal: AbortSignal.timeout(15_000),
+  }), { remaining: MAX_BYTES });
+  return parseRosterImportIdentifiers(csv);
 }
 
 async function readJSON(response) {
