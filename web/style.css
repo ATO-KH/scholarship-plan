@@ -644,6 +644,15 @@ main {
 .table-wrap {
   overflow-x: auto;
 }
+.roster-candidate-table th:nth-child(2),
+.roster-candidate-table td:nth-child(2) {
+  min-width: 130px;
+  padding-right: 26px;
+}
+.roster-candidate-table th:nth-child(3),
+.roster-candidate-table td:nth-child(3) {
+  min-width: 240px;
+}
 table {
   width: 100%;
   border-collapse: collapse;
