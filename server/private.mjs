@@ -1,3 +1,4 @@
+import { profileView, validateCourses } from "../web/profile-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
 import { resolve, extname, basename } from "node:path";
@@ -1458,6 +1459,22 @@ const server = http.createServer(async (req, res) => {
           semester: semesterSettings(state),
         });
       }
+      if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
+        if (user.role !== "member") fail(403, "Profiles are available to members only.");
+        if (req.method === "GET") return json(res, 200, profileView(await stateOf(session.workspace), user.id));
+        const courses = validateCourses(input);
+        const updated = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          if (input.version !== profileView(state, user.id).version) fail(409, "Your classes changed in another tab. Reload this page before saving.");
+          state.memberProfiles ||= {};
+          state.memberProfiles[user.id] = { courses, version: randomUUID() };
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          return profileView(state, user.id);
+        });
+        return json(res, 200, updated);
+      }
       if (path === "/api/faq" && req.method === "GET")
         return json(res, 200, faqView(await stateOf(session.workspace)));
       if (path === "/api/faq" && req.method === "POST") {
@@ -2619,10 +2636,13 @@ const server = http.createServer(async (req, res) => {
       "/gpa-import.mjs": "gpa-import.mjs",
       "/faq-data.mjs": "faq-data.mjs",
       "/faq-ui.mjs": "faq-ui.mjs",
+      "/profile-data.mjs": "profile-data.mjs",
+      "/profile-ui.mjs": "profile-ui.mjs",
       "/loading-ui.js": "loading-ui.js",
       "/portal-components.css": "portal-components.css",
       "/loading-cross.js": "loading-cross.js",
       "/demo/": "demo/index.html",
+      "/demo/demo-service.mjs": "demo/demo-service.mjs",
       "/demo/index.html": "demo/index.html",
       "/demo/style.css": "demo/style.css",
       "/demo/app.js": "demo/app.js",

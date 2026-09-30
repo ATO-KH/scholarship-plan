@@ -167,6 +167,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
         ["setup", "Connections"],
@@ -204,7 +205,7 @@ function route() {
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
   if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (p === "access") p = "faq";
-  if (user?.role === "chair" && ["overview", "submissions"].includes(p))
+  if (user?.role === "chair" && ["overview", "submissions", "profile"].includes(p))
     p = "queue";
   if (
     user?.role === "member" &&
@@ -288,6 +289,35 @@ function earnPage() {
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
+async function profilePage() {
+  if (user.role !== "member") return;
+  const owner = user.id;
+  main.innerHTML = heading("", "My profile", "") + `<section class="profile-shell panel">${loading("Loading profile…")}</section>`;
+  const container = main.querySelector(".profile-shell");
+  try {
+    const { mountProfile } = await import("/profile-ui.mjs");
+    if (user?.id !== owner || route() !== "profile" || !container.isConnected) return;
+    await mountProfile(container, { api, esc, loading, name: user.name,
+      isCurrent: () => user?.id === owner && route() === "profile" && container.isConnected });
+  } catch (error) {
+    if (container.isConnected) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
+async function loadCoursePicker() {
+  const input = $("#course"), owner = user.id;
+  const indicator = document.createElement("div");
+  indicator.innerHTML = loading("Loading classes…", true);
+  input.after(indicator);
+  try {
+    const [profile, { mountCoursePicker }] = await Promise.all([api("/api/profile"), import("/profile-ui.mjs")]);
+    if (input.isConnected && user?.id === owner) mountCoursePicker(input, profile.courses, esc);
+  } catch {
+    if (input.isConnected) indicator.innerHTML = '<small>Saved classes unavailable. You can enter a course manually.</small>';
+    return;
+  } finally {
+    if (indicator.querySelector(".loading-state")) indicator.remove();
+  }
+}
 async function faqPage() {
   const owner = user.id;
   main.innerHTML = heading("", "FAQ", "") + `<section class="faq-shell" aria-label="Frequently asked questions">${loading("Loading FAQ…")}</section>`;
@@ -325,6 +355,7 @@ function render() {
       earn: earnPage,
       canvas: canvasPage,
       faq: faqPage,
+      profile: profilePage,
       api: apiPage,
       setup: setupPage,
       roster: rosterPage,
@@ -452,6 +483,7 @@ function newSubmission() {
   );
   wireActivityPicker();
   $("#evidence-file").addEventListener("change", uploadEvidence);
+  loadCoursePicker();
   $("#claim-form").addEventListener("input", estimate);
   $("#claim-form").addEventListener("submit", submitClaim);
   updateForm();
@@ -859,7 +891,7 @@ function loginPage() {
     "<strong>CHAPTER PORTAL</strong> Approved chapter membership required";
   if (appConfig.chapterAuth?.enabled) {
     main.innerHTML = heading("", "Sign in", "Use your chapter account.") +
-      `<section class="panel login-panel"><h2>Chapter account sign-in</h2><p>Members can use an approved email, badge number, or assigned portal ID. The Scholarship Chair uses the chapter office account.</p><form id="chapter-login"><div class="field"><label for="login-id">Email, badge number, or portal ID</label><input id="login-id" name="identifier" autocomplete="username" required maxlength="254"></div><div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Sign in</button></form><button class="text-btn" id="forgot-password" type="button" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Forgot password?</button>${appConfig.chapterAuth.configured ? "" : '<p class="footnote">Chapter accounts are being set up. Use the demo below to explore the portal in the meantime.</p>'}</section>` + sandboxLinks();
+      `<section class="panel login-panel"><h2>Chapter account sign-in</h2><p>Members can use an approved email, badge number, or assigned portal ID. The Scholarship Chair uses the chapter office account.</p><form id="chapter-login"><div class="field"><label for="login-id">Email, badge number, or portal ID</label><input id="login-id" name="identifier" autocomplete="username" required maxlength="254"></div><div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Sign in</button></form><button class="text-btn" id="forgot-password" type="button" ${appConfig.chapterAuth.configured ? "" : "disabled"}>Forgot password?</button>${appConfig.chapterAuth.configured ? "" : '<p class="footnote">Chapter accounts are being set up. Please check back soon.</p>'}</section>`;
     let loginPending = false;
     $("#chapter-login").onsubmit = async (event) => {
       event.preventDefault();
@@ -936,12 +968,10 @@ function loginPage() {
       "Sign in",
       "Use your approved university account.",
     ) +
-    `<section class="panel login-panel"><h2>University sign-in</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>` + sandboxLinks();
+    `<section class="panel login-panel"><h2>University sign-in</h2><p>Your university verifies your identity. The chapter roster determines access to the portal.</p>${appConfig.providers.map((p) => `<a class="button ${p.configured ? "gold" : "ghost"}" style="display:flex;margin:12px 0" ${p.configured ? `href="/auth/${p.id}"` : 'aria-disabled="true"'}>Continue with ${esc(p.name)}${p.configured ? "" : " · not configured"}</a>`).join("")}<p class="footnote">If your account is not on the roster, the chair must bind your verified identity before access is granted. This portal never asks for your university password.</p></section>`;
 }
 
-function sandboxLinks() {
-  return `<section class="panel login-panel sandbox-panel"><h2>Explore the demo</h2><p>Choose a view to explore fictional records in this browser. Demo accounts are separate from chapter accounts.</p><div class="sandbox-actions"><a class="button ghost" href="/demo/?account=member">Open member demo</a><a class="button ghost" href="/demo/?account=chair">Open Chair demo</a></div></section>`;
-}
+
 
 function accountSetupPage() {
   document.body.classList.remove("portal-loading");

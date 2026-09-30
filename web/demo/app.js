@@ -1,4 +1,5 @@
 "use strict";
+let demoService;
 const SITE_BASE = new URL(".", document.currentScript.src);
 const PAGES_MODE =
   location.hostname.endsWith(".github.io") ||
@@ -53,7 +54,9 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   const start = performance.now();
   let response, payload;
   try {
-    response = await fetch(new URL(path.replace(/^\//, ""), SITE_BASE), {
+    response = await (demoService
+      ? (url, options) => demoService(new Request(url, options), path)
+      : fetch)(new URL(path.replace(/^\//, ""), SITE_BASE), {
       method,
       credentials: "same-origin",
       headers: {
@@ -114,6 +117,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
       ];
@@ -137,7 +141,7 @@ function route() {
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
   if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (p === "access") p = "faq";
-  if (user?.role === "chair" && ["overview", "submissions"].includes(p))
+  if (user?.role === "chair" && ["overview", "submissions", "profile"].includes(p))
     p = "queue";
   if (user?.role === "member" && ["queue", "members"].includes(p))
     p = "overview";
@@ -219,6 +223,35 @@ function earnPage() {
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · FALL 2026</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
+async function profilePage() {
+  if (user.role !== "member") return;
+  const owner = user.id;
+  main.innerHTML = heading("", "My profile", "") + `<section class="profile-shell panel">${loading("Loading profile…")}</section>`;
+  const container = main.querySelector(".profile-shell");
+  try {
+    const { mountProfile } = await import("/profile-ui.mjs");
+    if (user?.id !== owner || route() !== "profile" || !container.isConnected) return;
+    await mountProfile(container, { api, esc, loading, name: user.name,
+      isCurrent: () => user?.id === owner && route() === "profile" && container.isConnected });
+  } catch (error) {
+    if (container.isConnected) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
+async function loadCoursePicker() {
+  const input = $("#course"), owner = user.id;
+  const indicator = document.createElement("div");
+  indicator.innerHTML = loading("Loading classes…", true);
+  input.after(indicator);
+  try {
+    const [profile, { mountCoursePicker }] = await Promise.all([api("/api/profile"), import("/profile-ui.mjs")]);
+    if (input.isConnected && user?.id === owner) mountCoursePicker(input, profile.courses, esc);
+  } catch {
+    if (input.isConnected) indicator.innerHTML = '<small>Saved classes unavailable. You can enter a course manually.</small>';
+    return;
+  } finally {
+    if (indicator.querySelector(".loading-state")) indicator.remove();
+  }
+}
 async function faqPage() {
   const owner = user.id;
   main.innerHTML = heading("", "FAQ", "") + `<section class="faq-shell" aria-label="Frequently asked questions">${loading("Loading FAQ…")}</section>`;
@@ -260,6 +293,7 @@ function render() {
       earn: earnPage,
       canvas: canvasPage,
       faq: faqPage,
+      profile: profilePage,
       api: apiPage,
     })[route()] || overview
   )();
@@ -364,6 +398,7 @@ function newSubmission() {
     `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="2026-09-28" min="2026-09-14" max="2026-09-28" required><small>Demo date: September 28, 2026.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>Use a fictional sample for this demonstration. Real file uploads are not enabled.</p><button class="button ghost small" type="button" data-action="sample">Attach sample evidence</button></div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
   wireActivityPicker();
+  loadCoursePicker();
   $("#claim-form").addEventListener("input", estimate);
   $("#claim-form").addEventListener("submit", submitClaim);
   updateForm();
@@ -763,21 +798,13 @@ async function startApp() {
   main.innerHTML = loading("Loading demo…");
   if (PAGES_MODE) {
     try {
-      if (!("serviceWorker" in navigator))
-        throw Error("This browser does not support the hosted demo.");
-      await navigator.serviceWorker.register(
-        new URL("demo-worker.js?v=2026-09-30-faq", SITE_BASE),
-        { scope: SITE_BASE.pathname, type: "module" },
-      );
-      await navigator.serviceWorker.ready;
-      if (!navigator.serviceWorker.controller)
-        await new Promise((resolve) =>
-          navigator.serviceWorker.addEventListener(
-            "controllerchange",
-            resolve,
-            { once: true },
-          ),
-        );
+      demoService = (await import(new URL("demo-service.mjs", SITE_BASE))).handle;
+      // Retire the old persistent sandbox without touching real chapter data.
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.filter(reg => reg.scope === SITE_BASE.href).map(reg => reg.unregister()));
+      }
+      indexedDB.deleteDatabase("ato-scholarship-pages-v1");
     } catch (e) {
       main.innerHTML = '<div class="error">' + esc(e.message) + "</div>";
       return;

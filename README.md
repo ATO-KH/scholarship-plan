@@ -110,7 +110,7 @@ Follow [DEPLOYMENT.md](DEPLOYMENT.md) and [.env.vercel.example](.env.vercel.exam
 - JSON and CSV responses have a 4 MiB guard. Large histories need pagination or a separate export mechanism before expanding beyond the pilot.
 - Back up database state, Storage object bytes, and the Canvas encryption key separately. A database backup does not include uploaded evidence bytes.
 
-Production starts without sample members and rejects demo-persona switching in its real API. Its sign-in screen opens the member or Chair view directly in `/demo/`, a separate browser-only sandbox on the same domain. A service worker scoped to `/demo/` handles demo API-shaped requests, so the sandbox never uses the chapter database. The demo is not real authentication. This repository is deployment preparation; it is not evidence that chapter accounts or a live chapter login have been created.
+Production starts without sample members and rejects demo-persona switching in its real API. The public test credentials open `/demo/`, a separate browser-only sandbox on the same domain. An in-tab service handles API-shaped requests and stores fictional records in sessionStorage, so the sandbox never uses the chapter database. The demo is not real authentication. This repository is deployment preparation; it is not evidence that chapter accounts or a live chapter login have been created.
 
 ## API surfaces
 
@@ -174,3 +174,7 @@ Based on the supplied 2026 scholarship plan; the original PDF is not committed:
 The design follows [ato.org](https://ato.org/). This is an unofficial chapter workflow project, not an official ATO, Florida Tech, Canvas, Google, or Microsoft product.
 
 The public test credentials `test1` / `1234` on the chapter sign-in screen open a browser-only sandbox member. They do not authenticate with Supabase or grant access to chapter records. Test submissions stay in that browser and can be reviewed in its Chair demo.
+
+Members manage up to 20 current-semester classes in My profile. Class lists are private to the member and selectable in submissions; previous submission labels remain unchanged when classes are removed. Semester reset clears class lists.
+
+The public browser sandbox uses tab sessionStorage, never the chapter database or IndexedDB. Refreshing and switching demo roles in the same tab preserve its temporary records; ending the tab session clears them. Browser session restoration may restore sessionStorage; Reset demo explicitly erases the current sandbox records.

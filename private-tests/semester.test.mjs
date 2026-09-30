@@ -29,6 +29,7 @@ async function fixture(t, files = [local]) {
   await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify({
     submissions: [{ id: 'S-sensitive', owner: 'member', grade: 97, reviewNote: 'private academic comment' }],
     semester: { name: 'Fall 2026' }, semesterGeneration: 'old-generation',
+    memberProfiles: { alex: { courses: ['MTH 2002'], version: 'test' } },
     tierAssignments: { 'future@example.edu': 4 }, gpaImportMapping: importMapping,
     faqEntries: [{ id: 'shared-question', question: 'Test question?', answer: 'Shared answer.' }], faqRevision: 'test-revision',
   }), 'chapter');
@@ -105,6 +106,7 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.equal(status.remaining, 1);
   assert.deepEqual(state.submissions, []);
   assert.equal(state.tierAssignments, undefined, 'old-semester staged tiers are cleared');
+  assert.equal(state.memberProfiles, undefined, 'old-semester classes are cleared');
   assert.deepEqual(state.gpaImportMapping, importMapping, 'column layout remains available');
   assert.equal(state.faqEntries[0].answer, 'Shared answer.', 'shared FAQ survives semester resets');
   assert.equal(state.faqRevision, 'test-revision');

@@ -853,3 +853,22 @@ test("production refuses startup without an explicit public origin", async () =>
   assert.notEqual(code, 0);
   assert.match(invalid.errorOutput, /PUBLIC_ORIGIN/);
 });
+
+test("member class profiles are isolated, validated, and reject stale saves", async () => {
+  const c = client();
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await request(demo, "/api/profile")).status, 401);
+  const initial = await c.send("/api/profile");
+  const saved = await c.send("/api/profile", { courses: [" MTH 2002 · Calculus II ", "PHY 1001"], version: initial.version });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.courses, ["MTH 2002 · Calculus II", "PHY 1001"]);
+  assert.equal((await c.send("/api/profile", { courses: [], version: initial.version })).status, 409);
+  assert.equal((await c.send("/api/profile", { courses: ["MTH", "mth"], version: saved.version })).status, 422);
+  assert.equal((await c.send("/api/profile", { courses: [], version: saved.version, id: "jordan" })).status, 422);
+  await c.send("/api/demo/session", { persona: "jordan" });
+  assert.deepEqual((await c.send("/api/profile")).courses, []);
+  await c.send("/api/demo/session", { persona: "chair" });
+  assert.equal((await c.send("/api/profile")).status, 403);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.deepEqual((await c.send("/api/profile")).courses, saved.courses);
+});
