@@ -1,3 +1,4 @@
+import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
 import { profileView, validateCourses } from "../web/profile-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
@@ -51,7 +52,6 @@ import {
 import {
   TODAY,
   members as demoMembers,
-  activities,
   seed,
   totals,
   validateClaim,
@@ -1436,14 +1436,15 @@ const server = http.createServer(async (req, res) => {
       if (path === "/api/rules" && req.method === "GET") {
         const state = await stateOf(session.workspace);
         return json(res, 200, {
-          activities: activities.map((a) => ({
+          categoryVersion: categoryView(state).version,
+          activities: categoriesFor(state).map((a) => ({
             ...a,
             proof: production ? a.proof.replaceAll("sample ", "") : a.proof,
           })),
           today: policyDay(),
           submissionWindowDays: 14,
           weeklyStudyHours: 5,
-          weeklyMinorAssignments: 3,
+          weeklyMinorAssignments: categoriesFor(state).find(category => category.id === "minor")?.weeklyLimit ?? null,
           weekConvention:
             "Monday–Sunday, America/New_York (portal convention; policy must confirm)",
           rounding: "Chair must enter whole points and explain any difference.",
@@ -1527,6 +1528,22 @@ const server = http.createServer(async (req, res) => {
           return id ? `/api/uploads/${id}` : null;
         });
         return json(res, 200, { image });
+      }
+      if (path === "/api/point-categories" && ["GET", "POST"].includes(req.method)) {
+        chair(user);
+        if (req.method === "GET") return json(res, 200, categoryView(await stateOf(session.workspace)));
+        const updated = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          academicGuard(state, requestGeneration);
+          const result = applyCategoryChange(state, input, () => `activity-${randomUUID()}`);
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+          const category = input.category.id ? result.categories.find(item => item.id === input.category.id) : result.categories.at(-1);
+          await audit(session.workspace, user.name, "categories.update", category.id, JSON.stringify({ name: category.name, enabled: category.enabled, mode: category.mode }));
+          return result;
+        });
+        return json(res, 200, updated);
       }
       if (path === "/api/checkpoint-quotas" && ["GET", "POST"].includes(req.method)) {
         chair(user);
@@ -2573,7 +2590,7 @@ const server = http.createServer(async (req, res) => {
               sample: true,
               submission: item.id,
               title: item.title,
-              activity: activities.find((a) => a.id === item.activity)?.name,
+              activity: categoryForSubmission(state, item)?.name,
               course: item.course,
               date: item.date,
               grade: item.grade,
@@ -2602,9 +2619,9 @@ const server = http.createServer(async (req, res) => {
               input.decision === "approved" &&
               (!Number.isInteger(input.points) ||
                 input.points < 0 ||
-                input.points > 100)
+                input.points > 10000)
             )
-              fail(422, "Award a whole number of points from 0 to 100.");
+              fail(422, "Award a whole number of points from 0 to 10,000.");
             if (
               (input.decision === "denied" || input.points !== item.estimate) &&
               note.length < 5
@@ -2734,6 +2751,8 @@ const server = http.createServer(async (req, res) => {
       "/picture-ui.mjs": "picture-ui.mjs",
       "/checkpoint-calendar.js": "checkpoint-calendar.js",
       "/checkpoint-data.mjs": "checkpoint-data.mjs",
+      "/category-data.mjs": "category-data.mjs",
+      "/category-ui.mjs": "category-ui.mjs",
       "/checkpoint-ui.mjs": "checkpoint-ui.mjs",
       "/loading-ui.js": "loading-ui.js",
       "/portal-components.css": "portal-components.css",

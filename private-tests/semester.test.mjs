@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDatabase } from '../server/database.mjs';
 import { checkpointQuotaView } from '../web/checkpoint-data.mjs';
+import { categoriesFor, categoryView } from '../web/category-data.mjs';
 import {
   SemesterError, UPLOAD_GRANT_DRAIN_MS, validateSemesterSettings, assertAcademicWritesAllowed,
   semesterResetStatus, previewSemesterReset, startSemesterReset, resumeSemesterReset,
@@ -33,6 +34,7 @@ async function fixture(t, files = [local]) {
     profilePictures: { alex: 'test-upload' },
     creditRequests: [{ id: 'test-request', owner: 'alex', credits: 12, status: 'pending' }],
     memberProfiles: { alex: { courses: ['MTH 2002'], version: 'test' } },
+    pointCategories: categoriesFor().map(item => item.id === 'major' ? { ...item, name: 'Retained rules' } : item), pointCategoryRevision: 7,
     checkpointQuotas: [[1, 2, 3, 4, 5], [2, 4, 6, 8, 10], [3, 6, 9, 12, 15], [4, 8, 12, 16, 20]], checkpointQuotaRevision: 2,
     tierAssignments: { 'future@example.edu': 4 }, gpaImportMapping: importMapping,
     faqEntries: [{ id: 'shared-question', question: 'Test question?', answer: 'Shared answer.' }], faqRevision: 'test-revision',
@@ -115,6 +117,9 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.equal(state.profilePictures, undefined, 'profile image references clear with semester uploads');
   assert.equal(state.checkpointQuotas, undefined, 'new semesters start with default quotas');
   assert.equal(state.checkpointQuotaRevision, undefined);
+  assert.equal(categoriesFor(state)[0].name, 'Retained rules', 'category templates survive semester resets');
+  assert.equal(state.pointCategoryRevision, 7);
+  assert.notEqual(categoryView(state).version, 'old-generation:7', 'old category forms cannot overwrite the new semester');
   assert.notEqual(checkpointQuotaView(state).version, 'old-generation:2', 'old quota forms cannot overwrite the new semester');
   assert.deepEqual(state.gpaImportMapping, importMapping, 'column layout remains available');
   assert.equal(state.faqEntries[0].answer, 'Shared answer.', 'shared FAQ survives semester resets');

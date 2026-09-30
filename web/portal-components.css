@@ -70,3 +70,28 @@
 
 .invitation-filters { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
 @media (max-width: 600px) { .invitation-filters { grid-template-columns: 1fr; } }
+
+.category-toolbar { display: flex; justify-content: flex-end; margin: 20px 0; }
+.category-list-item { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; border-top: 1px solid var(--line); }
+.category-list-item > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.category-list-item h3 { margin: 0 0 8px; }
+.category-list-item p { margin: 0 0 6px; }
+.category-list-item small, .category-status { display: block; color: var(--muted); }
+.category-status { margin-top: 8px; font-size: 13px; }
+.category-item-actions { display: flex; gap: 12px; flex-shrink: 0; }
+.category-feedback { margin-top: 20px; }
+.category-editor > h3 { margin-bottom: 24px; }
+.category-editor [hidden] { display: none; }
+.category-editor textarea { resize: vertical; }
+.category-editor .checkbox-line { align-items: center; }
+.category-band { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 12px; margin: 16px 0; }
+.category-band .field { margin: 0; }
+.category-band input { min-width: 0; width: 100%; }
+.category-band .button { min-height: 44px; }
+.category-rule-hint { margin-top: 10px; }
+@media (max-width: 600px) {
+  .category-list-item { align-items: stretch; flex-direction: column; gap: 14px; }
+  .category-item-actions > button { flex: 1; }
+  .category-band { grid-template-columns: 1fr 1fr; }
+  .category-band > button { grid-column: 1 / -1; justify-self: end; }
+}

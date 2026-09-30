@@ -1,3 +1,4 @@
+import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../category-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../credit-data.mjs";
 import { profileView, validateCourses } from "../profile-data.mjs";
@@ -126,6 +127,14 @@ export async function handle(req, path) {
       }
       return json({ image: state.profilePictures?.[user.id] || null });
     }
+    if (path === "/api/point-categories" && ["GET", "POST"].includes(req.method)) {
+      chair();
+      if (req.method === "POST") {
+        applyCategoryChange(state, input, () => crypto.randomUUID());
+        await save(session);
+      }
+      return json(categoryView(state));
+    }
     if (path === "/api/checkpoint-quotas" && ["GET", "POST"].includes(req.method)) {
       chair();
       if (req.method === "POST") {
@@ -162,11 +171,12 @@ export async function handle(req, path) {
     }
     if (path === "/api/rules" && req.method === "GET")
       return json({
-        activities,
+        activities: categoriesFor(state),
+        categoryVersion: categoryView(state).version,
         today: TODAY,
         submissionWindowDays: 14,
         weeklyStudyHours: 5,
-        weeklyMinorAssignments: 3,
+        weeklyMinorAssignments: categoriesFor(state).find(item => item.id === "minor")?.weeklyLimit ?? null,
         weekConvention: "Monday–Sunday (demo assumption)",
         checkpoints: checkpointQuotaView(state).checkpoints,
       });
@@ -211,7 +221,7 @@ export async function handle(req, path) {
       try {
         claim = validateClaim(input, state, user);
       } catch (e) {
-        fail(422, e.message);
+        fail(e.status || 422, e.message);
       }
       const item = make(claim);
       state.submissions.push(item);
@@ -314,7 +324,7 @@ export async function handle(req, path) {
             sample: true,
             submission: item.id,
             title: item.title,
-            activity: activities.find((a) => a.id === item.activity).name,
+            activity: categoryForSubmission(state, item)?.name || item.activity,
             course: item.course,
             date: item.date,
             grade: item.grade,
@@ -336,9 +346,9 @@ export async function handle(req, path) {
           fail(422, "Review note must be under 1,000 characters.");
         if (
           input.decision === "approved" &&
-          (!Number.isInteger(points) || points < 0 || points > 100)
+          (!Number.isInteger(points) || points < 0 || points > 10000)
         )
-          fail(422, "Award a whole number from 0 to 100.");
+          fail(422, "Award a whole number from 0 to 10,000.");
         if (
           (input.decision === "denied" || points !== item.estimate) &&
           note.length < 5

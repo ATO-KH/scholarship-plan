@@ -346,6 +346,64 @@ test("Chair tier import accepts only roster emails and tiers, then updates membe
   assert.equal(JSON.stringify(audit.events.map(({ at, ...event }) => event)).includes("2.6"), false);
 });
 
+test("Chair categories are isolated, require authorization and retain history while changing future scores", async () => {
+  const isolated = await start("demo"), c = client(isolated);
+  assert.equal((await c.send("/api/point-categories")).status, 401);
+  await c.send("/api/demo/session", {});
+  assert.equal((await c.send("/api/point-categories")).status, 403);
+  assert.equal((await c.send("/api/point-categories", {})).status, 403);
+  const before = (await c.send("/api/submissions/S-1008")).submission;
+  await c.send("/api/demo/session", { persona: "chair" });
+  const initial = await c.send("/api/point-categories");
+  const major = initial.categories.find(item => item.id === "major");
+  const change = { version: initial.version, category: { ...major, name: "Updated major", bands: [{ minGrade: 80, points: 25 }] } };
+  assert.equal((await c.send("/api/point-categories", change, { "X-CSRF-Token": "wrong" })).status, 403);
+  assert.equal((await c.send("/api/point-categories", change, { Origin: "https://other.example" })).status, 403);
+  assert.equal((await c.send("/api/point-categories", { ...change, extra: true })).status, 422);
+  assert.equal((await c.send("/api/point-categories", { ...change, category: { ...major, rate: 51 } })).status, 422);
+  const saved = await c.send("/api/point-categories", change);
+  assert.equal(saved.status, 200);
+  assert.notEqual(saved.version, initial.version);
+  assert.equal((await c.send("/api/point-categories", change)).status, 409);
+  const history = (await c.send("/api/submissions/S-1008")).submission;
+  assert.equal(history.activitySnapshot.name, major.name);
+  assert.equal(history.activitySnapshot.proof, major.proof);
+  assert.equal(history.estimate, before.estimate);
+  const concurrent = await Promise.all([c.send("/api/point-categories", { ...change, version: saved.version }), c.send("/api/point-categories", { ...change, version: saved.version })]);
+  assert.deepEqual(concurrent.map(item => item.status).sort(), [200, 409]);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/submissions", { ...claim, categoryVersion: initial.version })).status, 409);
+  const made = await c.send("/api/submissions", { ...claim, title: "New category score" });
+  assert.equal(made.status, 201);
+  assert.equal(made.submission.base, 25);
+  assert.equal(made.submission.activitySnapshot.name, "Updated major");
+  await c.send("/api/demo/session", { persona: "chair" });
+  const latest = await c.send("/api/point-categories");
+  const disabled = await c.send("/api/point-categories", { version: latest.version, category: { ...latest.categories.find(item => item.id === "major"), enabled: false } });
+  assert.equal(disabled.status, 200);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/submissions", { ...claim, title: "Disabled activity" })).status, 422);
+  assert.equal((await c.send("/api/submissions/S-1008")).status, 200);
+  const independent = client(isolated);
+  await independent.send("/api/demo/session", {});
+  const isolatedRules = (await independent.send("/api/rules")).activities;
+  assert.equal(isolatedRules.find(item => item.id === "major").name, "Major assignment");
+  assert.equal(isolatedRules.find(item => item.id === "major").enabled, true);
+  await c.send("/api/demo/session", { persona: "chair" });
+  const added = await c.send("/api/point-categories", { version: disabled.version, category: { name: "Workshop", unit: "hour", proof: "Attendance", enabled: true,
+    mode: "hourly", rate: 20, minGrade: 0, bands: [], study: false, weeklyLimit: 2 } });
+  assert.equal(added.status, 200);
+  const category = added.categories.at(-1);
+  assert.ok(category.id.startsWith("activity-"));
+  await c.send("/api/demo/session", { persona: "alex" });
+  const big = await c.send("/api/submissions", { ...claim, title: "Workshop", activity: category.id, quantity: 6 });
+  assert.equal(big.submission.base, 120);
+  await c.send("/api/demo/session", { persona: "chair" });
+  assert.equal((await c.send(`/api/submissions/${big.submission.id}/review`, { decision: "approved", points: 120, note: "Confirmed workshop evidence." })).status, 200);
+  const events = (await c.send("/api/audit")).events.filter(event => event.action === "categories.update");
+  assert.equal(events.length, 4);
+});
+
 test("Chair checkpoint quotas update member goals and reject invalid, forbidden, and stale writes", async () => {
   const isolated = await start("demo");
   const c = client(isolated);

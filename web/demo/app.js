@@ -43,7 +43,10 @@ const date = (s) =>
   });
 const status = (s) =>
   `<span class="status ${s}">${s === "pending" ? "Pending review" : s[0].toUpperCase() + s.slice(1)}</span>`;
+let scoreCategory, categoryHint;
+const activeActivities = () => rules.activities.filter(category => category.enabled !== false);
 const activity = (id) => rules.activities.find((a) => a.id === id);
+const submissionActivity = submission => submission.activitySnapshot || activity(submission.activity) || { name: "Previous category", proof: "See the submitted evidence." };
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").classList.add("visible");
@@ -140,7 +143,7 @@ function navigation() {
 function route() {
   let p =
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
-  if (["canvas", "api"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
+  if (["canvas", "api", "setup"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (p === "access") p = "faq";
   if (user?.role === "chair" && ["overview", "submissions", "profile"].includes(p))
     p = "queue";
@@ -160,7 +163,7 @@ async function refresh() {
 function rows(items, chair = false) {
   if (!items.length)
     return `<div class="empty"><h3>${filter === "pending" ? "YOU’RE ALL CAUGHT UP." : "NO SUBMISSIONS HERE YET."}</h3><p>${chair ? "Try another status to see previous decisions." : "Submit an activity to start building your points."}</p>${chair ? "" : newButton()}</div>`;
-  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.owner === "alex" ? "Tier 2 · 1.00×" : "Tier 1 · 1.15×"}</small></td>` : ""}<td><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(activity(s.activity).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.owner === "alex" ? "Tier 2 · 1.00×" : "Tier 1 · 1.15×"}</small></td>` : ""}<td><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
@@ -235,15 +238,36 @@ async function openCheckpointQuotas() {
     if (current()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
   }
 }
+async function openPointCategories() {
+  if (user.role !== "chair") return;
+  const owner = user.id;
+  openModal("MANAGE POINT CATEGORIES", "", '<div id="category-manager"></div>');
+  const container = $("#category-manager");
+  const current = () => container.isConnected && modal.open && user?.id === owner;
+  container.innerHTML = loading("Loading point categories…");
+  try {
+    const { mountCategoryManager } = await import("/category-ui.mjs");
+    if (!current()) return;
+    await mountCategoryManager(container, { api, esc, loading, isCurrent: current,
+      onSaved: async () => {
+        const nextRules = await api("/api/rules");
+        if (!current()) return;
+        rules = nextRules;
+        await refresh();
+      } });
+  } catch (error) {
+    if (current()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
+}
 function earnPage() {
   main.innerHTML =
     heading(
       "2026 SCHOLARSHIP PLAN",
       "POINT RULES",
       "Base points from your chapter plan. Approved credit-load multipliers apply.",
-      user.role === "chair" ? '<button class="button gold" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button>' : "",
+      user.role === "chair" ? '<button class="button ghost" data-action="manage-point-categories">Manage point categories</button><button class="button gold" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button>' : "",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. A maximum of five study hours and three minor assignments can be claimed per week. Never claim one activity twice.</div><div class="rules-grid">${rules.activities.map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${a.points} <small>PTS</small></span></div><p>Per ${a.unit}. ${esc(a.proof)}</p>${a.id === "major" ? '<p style="margin-top:10px">95%+: 5 · 90–94.99%: 4 · 85–89.99%: 3 · 80–84.99%: 2</p>' : ""}</article>`).join("")}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · ${esc(rules.semester?.name || "Current semester")}</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. Never claim one activity twice.</div><div class="rules-grid">${activeActivities().map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${esc(a.points)} <small>PTS</small></span></div><p>Per ${esc(a.mode === "hourly" ? "hour" : a.unit)}. ${esc(a.proof)}</p>${categoryHint(a) ? `<p class="category-rule-hint">${esc(categoryHint(a))}</p>` : ""}</article>`).join("") || '<p class="empty">No point categories are available right now.</p>'}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · ${esc(rules.semester?.name || "Current semester")}</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are treated as cumulative in this demo. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 async function loadCreditPanel(container, chair) {
   const owner = user.id;
@@ -362,7 +386,7 @@ function formError(message) {
   e.scrollIntoView({ block: "nearest" });
 }
 function activityPicker() {
-  const first = rules.activities[0];
+  const first = activeActivities()[0];
   return `<div class="activity-picker"><input id="activity-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="activity-options" value="${esc(first.name)}" autocomplete="off" required><button id="activity-open" type="button" aria-label="Show activity types">▾</button><div id="activity-options" class="activity-options" role="listbox" hidden></div><input id="activity" name="activity" type="hidden" value="${esc(first.id)}"></div><small>Type to find an activity or open the list.</small>`;
 }
 function wireActivityPicker() {
@@ -384,7 +408,7 @@ function wireActivityPicker() {
   }
   function open(all = false) {
     const query = search.value.trim().toLowerCase();
-    matches = rules.activities.filter((a) => all || a.name.toLowerCase().includes(query));
+    matches = activeActivities().filter((a) => all || a.name.toLowerCase().includes(query));
     active = Math.max(0, matches.findIndex((a) => a.id === selected.value));
     menu.innerHTML = matches.length
       ? matches.map((a, index) => `<button id="activity-option-${index}" type="button" role="option" data-id="${esc(a.id)}">${esc(a.name)}</button>`).join("")
@@ -403,7 +427,7 @@ function wireActivityPicker() {
     search.focus();
   }
   search.addEventListener("input", () => {
-    const match = rules.activities.find((a) => a.name.toLowerCase() === search.value.trim().toLowerCase());
+    const match = activeActivities().find((a) => a.name.toLowerCase() === search.value.trim().toLowerCase());
     selected.value = match?.id || "";
     updateForm();
     open();
@@ -436,8 +460,24 @@ function wireActivityPicker() {
     if (!picker.contains(event.relatedTarget)) close();
   });
 }
-function newSubmission() {
+async function newSubmission() {
   if (user.role !== "member") return;
+  const owner = user.id;
+  openModal("NEW SUBMISSION", "", `<div id="submission-loading">${loading("Loading submission form…")}</div>`);
+  const pending = $("#submission-loading");
+  const current = () => pending.isConnected && modal.open && user?.id === owner;
+  try {
+    const nextRules = await api("/api/rules");
+    if (!current()) return;
+    rules = nextRules;
+  } catch (error) {
+    if (current()) pending.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
+    return;
+  }
+  if (!activeActivities().length) {
+    openModal("NEW SUBMISSION", "", '<p>No point categories are available right now. Ask the Scholarship Chair to enable a category.</p><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>');
+    return;
+  }
   openModal(
     "SUBMIT YOUR EFFORT",
     "Add a fictional activity for the Scholarship Chair to review.",
@@ -470,30 +510,19 @@ function estimate() {
   if (!form) return;
   const data = Object.fromEntries(new FormData(form)),
     a = activity(data.activity),
-    g = Number(data.grade),
-    q = Number(data.quantity || 1);
+    g = data.grade,
+    q = data.quantity ?? 1;
   if (!a) {
     $("#estimate").textContent = "—";
     return;
   }
-  let base =
-    a.id === "major"
-      ? g >= 95
-        ? 5
-        : g >= 90
-          ? 4
-          : g >= 85
-            ? 3
-            : g >= 80
-              ? 2
-              : 0
-      : a.grade
-        ? g >= 90
-          ? 2
-          : 0
-        : Number(a.points) * (a.hours ? q : 1);
-  const total = Math.round(base * points.multiplier * 100) / 100;
-  $("#estimate").textContent = money(total);
+  try {
+    const { base } = scoreCategory(a, { grade: g, quantity: q });
+    const total = Math.round(base * points.multiplier * 100) / 100;
+    $("#estimate").textContent = money(total);
+  } catch {
+    $("#estimate").textContent = "—";
+  }
 }
 async function submitClaim(e) {
   e.preventDefault();
@@ -507,6 +536,7 @@ async function submitClaim(e) {
   const button = e.submitter;
   button.disabled = true;
   const data = Object.fromEntries(new FormData(e.target));
+  data.categoryVersion = rules.categoryVersion;
   data.confirm = data.confirm === "on";
   if (data.grade) data.grade = Number(data.grade);
   if (data.quantity) data.quantity = Number(data.quantity);
@@ -529,12 +559,12 @@ async function detail(id) {
     const { submission: s } = await api(
       "/api/submissions/" + encodeURIComponent(id),
     );
-    const a = activity(s.activity),
+    const a = submissionActivity(s),
       canReview = user.role === "chair" && s.status === "pending";
     openModal(
       canReview ? "REVIEW SUBMISSION" : "SUBMISSION DETAILS",
       `${esc(s.id)} · ${esc(s.memberName)}`,
-      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, 2026</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>Fictional activity record</strong><small>Generated demo evidence · no real student file</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="100" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
+      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, 2026</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>Fictional activity record</strong><small>Generated demo evidence · no real student file</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
     );
     if (canReview) $("#review-form").addEventListener("submit", review);
   } catch (e) {
@@ -619,6 +649,7 @@ function identity(provider) {
 }
 async function handleAction(e) {
   const b = e.target.closest("[data-action]");
+  if (b?.dataset.action === "manage-point-categories") { await openPointCategories(); return; }
   if (b?.dataset.action === "edit-checkpoint-quotas") { await openCheckpointQuotas(); return; }
   if (!b) return;
   const action = b.dataset.action;
@@ -736,7 +767,12 @@ async function init() {
       person.disabled = true;
       document.querySelector(".sidebar-bottom p").textContent = "Sign out to try the other demo account.";
     }
-    rules = await api("/api/rules");
+    const [nextRules, categoryData, categoryUI] = await Promise.all([
+      api("/api/rules"), import("/category-data.mjs"), import("/category-ui.mjs"),
+    ]);
+    scoreCategory = categoryData.scoreCategory;
+    categoryHint = categoryUI.categoryHint;
+    rules = nextRules;
     filter = user.role === "chair" ? "pending" : "all";
     await refresh();
     registerTools();

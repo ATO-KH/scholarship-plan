@@ -1,3 +1,4 @@
+import { DEFAULT_CATEGORIES, categoriesFor, categoryForSubmission, categoryView, scoreCategory } from "../category-data.mjs";
 export const TODAY = "2026-09-28";
 export const members = [
   {
@@ -44,103 +45,7 @@ export const members = [
     role: "chair",
   },
 ];
-export const activities = [
-  {
-    id: "major",
-    name: "Major assignment",
-    points: "2–5",
-    unit: "assignment",
-    proof:
-      "A sample screenshot of the assignment grade. Individual weight is generally more than 5% of the course.",
-    grade: true,
-  },
-  {
-    id: "minor",
-    name: "Minor assignment",
-    points: "2",
-    unit: "assignment",
-    proof:
-      "A sample screenshot showing a grade of at least 90%. Maximum three minor assignments per week.",
-    grade: true,
-  },
-  {
-    id: "lab",
-    name: "Lab report",
-    points: "2",
-    unit: "report",
-    proof: "A sample grade screenshot showing at least 90%.",
-    grade: true,
-  },
-  {
-    id: "office",
-    name: "Professor office hours",
-    points: "2",
-    unit: "hour",
-    proof: "Dated confirmation with the professor’s signature.",
-    hours: true,
-  },
-  {
-    id: "tutoring",
-    name: "SSSC tutoring / SI session",
-    points: "3",
-    unit: "session",
-    proof:
-      "Tutor signature and date, or online check-in plus booking confirmation.",
-  },
-  {
-    id: "partner",
-    name: "Study with a brother",
-    points: "2",
-    unit: "hour",
-    proof:
-      "Partner signature, date, and hours. Partner GPA must be at least 3.00; chair follow-up is required.",
-    hours: true,
-    study: true,
-  },
-  {
-    id: "group",
-    name: "ATO group study",
-    points: "2",
-    unit: "hour",
-    proof:
-      "At least three active brothers studying the same subject, with credible attendance proof.",
-    hours: true,
-    study: true,
-  },
-  {
-    id: "independent",
-    name: "Independent study",
-    points: "1",
-    unit: "hour",
-    proof: "A Florida Tech Hub study-hours log.",
-    hours: true,
-    study: true,
-  },
-  {
-    id: "night",
-    name: "Study night",
-    points: "2",
-    unit: "hour",
-    proof: "Sign-in and sign-out records, with each timestamp to the minute.",
-    hours: true,
-    study: true,
-  },
-  {
-    id: "meeting",
-    name: "Semester scholarship meeting",
-    points: "5",
-    unit: "meeting",
-    proof:
-      "Dated signature from the Scholarship Chair or Director of Student Success and Support.",
-  },
-  {
-    id: "calendar",
-    name: "Complete academic calendar",
-    points: "5",
-    unit: "calendar",
-    proof: "A Google Calendar with classes, office hours, and major due dates.",
-  },
-];
+export const activities = DEFAULT_CATEGORIES;
 export const multiplier = (m) =>
   m.credits < 9 ? 1.5 : m.credits < 12 ? 1.3 : m.credits < 15 ? 1.15 : 1;
 export const weekOf = (date) => {
@@ -148,37 +53,10 @@ export const weekOf = (date) => {
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d.toISOString().slice(0, 10);
 };
-export function score(data) {
-  let a = activities.find((x) => x.id === data.activity);
-  if (!a) throw Error("Choose a listed activity.");
-  let grade = Number(data.grade),
-    quantity = Number(data.quantity ?? 1);
-  if (a.hours && (!Number.isFinite(quantity) || quantity <= 0 || quantity > 24))
-    throw Error("Hours must be greater than 0 and no more than 24.");
-  if (a.grade && (!Number.isFinite(grade) || grade < 0 || grade > 100))
-    throw Error("Enter a grade from 0 to 100.");
-  let base =
-    a.id === "major"
-      ? grade >= 95
-        ? 5
-        : grade >= 90
-          ? 4
-          : grade >= 85
-            ? 3
-            : grade >= 80
-              ? 2
-              : 0
-      : a.grade
-        ? grade >= 90
-          ? 2
-          : 0
-        : Number(a.points) * (a.hours ? quantity : 1);
-  if (base <= 0) throw Error("This grade does not earn points under the plan.");
-  return {
-    base,
-    quantity: a.hours ? quantity : 1,
-    grade: a.grade ? grade : null,
-  };
+export function score(data, state = {}) {
+  const category = categoriesFor(state).find(item => item.id === data.activity);
+  if (!category || !category.enabled) throw Error("Choose an available activity category.");
+  return scoreCategory(category, data);
 }
 export function seed() {
   const make = (
@@ -360,7 +238,7 @@ export function totals(state, member) {
     studyHours: mine
       .filter(
         (s) =>
-          activities.find((a) => a.id === s.activity)?.study &&
+          categoryForSubmission(state, s)?.study &&
           s.status !== "denied" &&
           weekOf(s.date) === weekOf(TODAY),
       )
@@ -368,7 +246,10 @@ export function totals(state, member) {
   };
 }
 export function validateClaim(body, state, member) {
-  const activity = activities.find((x) => x.id === body.activity);
+  if (body.categoryVersion !== undefined && body.categoryVersion !== categoryView(state).version)
+    throw Object.assign(Error("Point categories changed. Reload the page and reopen the submission form."), { status: 409 });
+  const activity = categoriesFor(state).find((x) => x.id === body.activity);
+  if (!activity || !activity.enabled) throw Error("Choose an available activity category.");
   const title = String(body.title || "").trim(),
     course = String(body.course || "").trim();
   if (!title || title.length > 120 || !course || course.length > 80)
@@ -390,7 +271,7 @@ export function validateClaim(body, state, member) {
     throw Error("Attach the fictional sample evidence.");
   if (body.confirm !== true)
     throw Error("Confirm this activity has not already been claimed.");
-  const value = score(body);
+  const value = score(body, state);
   const existing = state.submissions.filter(
     (s) => s.owner === member.id && s.status !== "denied",
   );
@@ -407,7 +288,7 @@ export function validateClaim(body, state, member) {
   if (
     activity.study &&
     week
-      .filter((s) => activities.find((a) => a.id === s.activity)?.study)
+      .filter((s) => categoryForSubmission(state, s)?.study)
       .reduce((n, s) => n + s.quantity, 0) +
       value.quantity >
       5
@@ -416,13 +297,14 @@ export function validateClaim(body, state, member) {
       "This would exceed five study hours for the week. Pending claims reserve hours in this demo.",
     );
   if (
-    activity.id === "minor" &&
-    week.filter((s) => s.activity === "minor").length >= 3
+    activity.weeklyLimit !== null &&
+    week.filter((s) => s.activity === activity.id).length >= activity.weeklyLimit
   )
-    throw Error("Three minor assignments are already claimed this week.");
+    throw Error(`The weekly limit for ${activity.name} is ${activity.weeklyLimit} submissions.`);
   return {
     ...value,
     activity: body.activity,
+    activitySnapshot: structuredClone(activity),
     title,
     course,
     date: body.date,
