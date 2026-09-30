@@ -25,31 +25,18 @@
   <body class="portal-loading">
     <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-atomic="true">
       <div class="auth-loading-content">
-        <div class="auth-cross" aria-hidden="true">
-          <!-- Both square layers use the PNG cross's actual center at (75.5, 75.5). -->
-          <div class="auth-cross-rotor">
-            <svg viewBox="-8.5 -8.5 168 168" focusable="false">
-              <defs>
-                <clipPath id="loading-cross-top"><path d="M0 0h152L75.5 75.5Z" /></clipPath>
-                <clipPath id="loading-cross-right"><path d="M152 0v152L75.5 75.5Z" /></clipPath>
-                <clipPath id="loading-cross-bottom"><path d="M152 152H0l75.5-76.5Z" /></clipPath>
-                <clipPath id="loading-cross-left"><path d="M0 152V0l75.5 75.5Z" /></clipPath>
-                <mask id="loading-cross-arms" maskUnits="userSpaceOnUse" x="-8.5" y="-8.5" width="168" height="168">
-                  <rect x="-8.5" y="-8.5" width="168" height="168" fill="white" />
-                  <circle cx="75.5" cy="75.5" r="34.5" fill="black" />
-                </mask>
-              </defs>
-              <g class="auth-cross-arm auth-cross-arm-top" clip-path="url(#loading-cross-top)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
-              <g class="auth-cross-arm auth-cross-arm-right" clip-path="url(#loading-cross-right)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
-              <g class="auth-cross-arm auth-cross-arm-bottom" clip-path="url(#loading-cross-bottom)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
-              <g class="auth-cross-arm auth-cross-arm-left" clip-path="url(#loading-cross-left)" mask="url(#loading-cross-arms)"><image href="/ato-logo.png" x="-430" y="0" width="582" height="152" /></g>
-            </svg>
-          </div>
-          <svg class="auth-cross-center" viewBox="-8.5 -8.5 168 168" focusable="false">
-            <defs><clipPath id="loading-cross-center"><circle cx="75.5" cy="75.5" r="34.5" /></clipPath></defs>
-            <image href="/ato-logo.png" x="-430" y="0" width="582" height="152" clip-path="url(#loading-cross-center)" />
+        <ato-loading-cross class="auth-cross" aria-hidden="true">
+          <svg viewBox="-84 -84 168 168" width="152" height="152" focusable="false">
+            <!-- Four identical arms and a fixed ring share the SVG origin. -->
+            <g class="auth-cross-rotor" fill="currentColor">
+              <g><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+              <g transform="rotate(90)"><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+              <g transform="rotate(180)"><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+              <g transform="rotate(270)"><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+            </g>
+            <circle class="auth-cross-center" cx="0" cy="0" r="26.5" fill="none" stroke="currentColor" stroke-width="10" />
           </svg>
-        </div>
+        </ato-loading-cross>
         <p id="auth-loading-message">Checking sign-in…</p>
       </div>
     </div>
@@ -104,6 +91,7 @@
     </div>
     <div id="toast" role="status" aria-live="polite"></div>
     <dialog id="modal"><div id="modal-content"></div></dialog>
+    <script type="module" src="/loading-cross.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

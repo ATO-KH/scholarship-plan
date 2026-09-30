@@ -2380,6 +2380,7 @@ const server = http.createServer(async (req, res) => {
       "/theme.js": "theme.js",
       "/ato-logo.png": "ato-logo.png",
       "/app.js": "app.js",
+      "/loading-cross.js": "loading-cross.js",
       "/demo/": "demo/index.html",
       "/demo/index.html": "demo/index.html",
       "/demo/style.css": "demo/style.css",

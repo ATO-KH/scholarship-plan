@@ -794,7 +794,7 @@ async function init(sessionFromLogin = null) {
     document.body.classList.remove("portal-loading");
     setAuthLoading(false);
     navigation();
-    const cross = $("#auth-loading .auth-cross").outerHTML.replaceAll("loading-cross-", "workspace-cross-");
+    const cross = $("#auth-loading .auth-cross").outerHTML;
     main.innerHTML = `<div class="workspace-loading" role="status" aria-live="polite">${cross}<p>Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…</p></div>`;
     const [nextRules, nextSubmissions, nextSummary] = await Promise.all([
       api("/api/rules"),
@@ -993,6 +993,30 @@ if (new URLSearchParams(location.search).get("preview") === "spinner") {
   link.className = "text-btn";
   link.textContent = "Open portal";
   $("#auth-loading .auth-loading-content").append(link);
+  customElements.whenDefined("ato-loading-cross").then(() => {
+    const cross = $("#auth-loading .auth-cross");
+    const controls = document.createElement("div");
+    controls.className = "spinner-preview-controls";
+    controls.innerHTML = '<button type="button" class="button ghost">Pause animation</button><input type="range" min="0" max="2600" step="1" value="0" aria-label="Animation position">';
+    const button = controls.querySelector("button");
+    const slider = controls.querySelector("input");
+    button.onclick = () => {
+      if (cross.paused) {
+        cross.restart();
+        slider.value = "0";
+        button.textContent = "Pause animation";
+      } else {
+        cross.pauseAt();
+        slider.value = String(Math.round(cross.elapsed));
+        button.textContent = "Replay animation";
+      }
+    };
+    slider.oninput = () => {
+      cross.pauseAt(Number(slider.value));
+      button.textContent = "Replay animation";
+    };
+    link.before(controls);
+  });
 } else init();
 
 function canvasPage() {

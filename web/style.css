@@ -360,35 +360,17 @@ main {
   text-align: center;
 }
 .auth-cross {
-  position: relative;
   display: block;
   width: clamp(104px, 22vw, 152px);
   aspect-ratio: 1;
+  color: #ff9b26;
 }
-.auth-cross-rotor,
-.auth-cross-center {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-.auth-cross-rotor svg {
+.auth-cross > svg {
   display: block;
   width: 100%;
   height: 100%;
   overflow: visible;
 }
-.auth-cross-rotor {
-  transform-origin: 50% 50%;
-  animation: auth-cross-spin 2.6s infinite;
-}
-.auth-cross-arm {
-  animation: auth-cross-drift 2.6s infinite;
-}
-.auth-cross-arm-top { --drift-x: 0px; --drift-y: -3px; }
-.auth-cross-arm-right { --drift-x: 3px; --drift-y: 0px; }
-.auth-cross-arm-bottom { --drift-x: 0px; --drift-y: 3px; }
-.auth-cross-arm-left { --drift-x: -3px; --drift-y: 0px; }
 .auth-loading p {
   margin: 0;
   font: 500 20px var(--display);
@@ -408,25 +390,14 @@ main {
   margin: 0;
   font: 500 19px var(--display);
 }
-@keyframes auth-cross-spin {
-  /* One 1.6-second turn, then a one-second hold. */
-  0% {
-    transform: rotate(0deg);
-    animation-timing-function: cubic-bezier(.45, 0, .55, 1);
-  }
-  61.538% { transform: rotate(360deg); }
-  100% { transform: rotate(360deg); }
+.spinner-preview-controls {
+  display: grid;
+  gap: 12px;
+  width: min(280px, 70vw);
 }
-@keyframes auth-cross-drift {
-  0% {
-    transform: translate(0, 0);
-    animation-timing-function: cubic-bezier(.42, 0, .58, 1);
-  }
-  30.769% {
-    transform: translate(var(--drift-x), var(--drift-y));
-    animation-timing-function: cubic-bezier(.42, 0, .58, 1);
-  }
-  61.538%, 100% { transform: translate(0, 0); }
+.spinner-preview-controls input {
+  width: 100%;
+  accent-color: #ff9b26;
 }
 .login-panel {
   max-width: 620px;
@@ -1481,10 +1452,6 @@ dialog::backdrop {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .auth-cross-rotor,
-  .auth-cross-arm {
-    animation: none;
-  }
   * {
     scroll-behavior: auto !important;
     transition: none !important;
