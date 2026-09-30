@@ -4,7 +4,7 @@ const ARM_TRAVEL = 7;
 const ARM_PULSE_MS = 300;
 const ARM_STEP_MS = 225;
 const CLOCKWISE_FROM_BOTTOM = [2, 3, 0, 1];
-const SEQUENCE_CYCLE_MS = 3 * ARM_STEP_MS + ARM_PULSE_MS + 250;
+const SEQUENCE_CYCLE_MS = CLOCKWISE_FROM_BOTTOM.length * ARM_STEP_MS;
 
 export function crossMotion(elapsed) {
   const phase = Math.max(0, elapsed) % CYCLE_MS;
@@ -19,9 +19,10 @@ export function crossMotion(elapsed) {
 export function crossSequence(elapsed) {
   const phase = Math.max(0, elapsed) % SEQUENCE_CYCLE_MS;
   const spreads = [0, 0, 0, 0];
-  // The next arm starts rising as the previous arm settles back into place.
+  // Wrap each pulse so the last arm settles while the first begins to rise.
   CLOCKWISE_FROM_BOTTOM.forEach((arm, step) => {
-    const t = (phase - step * ARM_STEP_MS) / ARM_PULSE_MS;
+    const pulseElapsed = (phase - step * ARM_STEP_MS + SEQUENCE_CYCLE_MS) % SEQUENCE_CYCLE_MS;
+    const t = pulseElapsed / ARM_PULSE_MS;
     if (t > 0 && t < 1) {
       spreads[arm] = ARM_TRAVEL * 16 * t ** 2 * (1 - t) ** 2;
     }
