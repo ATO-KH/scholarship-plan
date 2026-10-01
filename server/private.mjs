@@ -985,7 +985,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${directUploads ? storageStatus(env).origin || "" : ""}; frame-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; connect-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
   );
   if (production)
     res.setHeader("Strict-Transport-Security", "max-age=31536000");
@@ -1524,7 +1524,7 @@ const server = http.createServer(async (req, res) => {
         const item = (await stateOf(session.workspace)).creditRequests?.find(item => item.id === creditRoute[1]);
         if (!item || (user.role !== "chair" && item.owner !== user.id)) fail(404, "Request not found.");
         const upload = await getUpload(item.evidenceId, session, user);
-        return json(res, 200, { image: `/api/uploads/${upload.id}` });
+        return json(res, 200, { image: `/api/uploads/${upload.id}/preview` });
       }
       if (creditRoute && req.method === "POST" && creditRoute[2] === "review") {
         chair(user);
@@ -1549,7 +1549,7 @@ const server = http.createServer(async (req, res) => {
         individual(user);
         if (req.method === "GET") {
           const id = (await stateOf(session.workspace)).profilePictures?.[user.id];
-          return json(res, 200, { image: id ? `/api/uploads/${id}` : null });
+          return json(res, 200, { image: id ? `/api/uploads/${id}/preview` : null });
         }
         const image = await atomic(async () => {
           await lockWorkspace(session.workspace);
@@ -1566,7 +1566,7 @@ const server = http.createServer(async (req, res) => {
           if (id) state.profilePictures[user.id] = id;
           else delete state.profilePictures[user.id];
           await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
-          return id ? `/api/uploads/${id}` : null;
+          return id ? `/api/uploads/${id}/preview` : null;
         });
         return json(res, 200, { image });
       }
@@ -2150,13 +2150,15 @@ const server = http.createServer(async (req, res) => {
           }),
         });
       }
-      const uploadRoute = path.match(/^\/api\/uploads\/([a-f0-9-]{36})$/);
+      const uploadRoute = path.match(/^\/api\/uploads\/([a-f0-9-]{36})(\/preview)?$/);
       if (uploadRoute && req.method === "GET") {
         const upload = await getUpload(uploadRoute[1], session, user);
+        const inline = uploadRoute[2] === "/preview";
         if (upload.backend === "supabase") {
           const grant = await createDownloadGrant({
             path: upload.final_path,
             downloadName: upload.name,
+            inline,
             expiresIn: 60,
             env,
           });
@@ -2182,10 +2184,14 @@ const server = http.createServer(async (req, res) => {
           upload.id,
           user.role,
         );
+        if (inline) {
+          res.setHeader("X-Frame-Options", "SAMEORIGIN");
+          res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'self'");
+        }
         res.writeHead(200, {
           "Content-Type": upload.mime,
           "Content-Length": bytes.length,
-          "Content-Disposition": `attachment; filename="evidence${extname(upload.name).replace(/[^.a-z0-9]/gi, "")}"; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
+          "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="evidence${extname(upload.name).replace(/[^.a-z0-9]/gi, "")}"; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
         });
         return res.end(bytes);
       }
@@ -2675,6 +2681,7 @@ const server = http.createServer(async (req, res) => {
                 submission: item.id,
                 ...uploadMeta(upload),
                 downloadUrl: `/api/uploads/${upload.id}`,
+                previewUrl: `/api/uploads/${upload.id}/preview`,
                 verification:
                   "Uploaded documentation requires Scholarship Chair review.",
               },

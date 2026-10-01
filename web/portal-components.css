@@ -17,9 +17,9 @@
 .loading-state { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 16px; min-height: 180px; color: var(--muted); text-align: center; }
 .auth-cross { display: block; aspect-ratio: 1; color: #ff9b26; }
 .auth-cross > svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.loading-state .auth-cross { width: 72px; flex: 0 0 auto; }
+.loading-state .auth-cross { width: 72px; height: 72px; flex: 0 0 auto; }
 .loading-state-compact { display: inline-flex; flex-direction: row; min-height: 0; gap: 12px; }
-.loading-state-compact .auth-cross { width: 34px; }
+.loading-state-compact .auth-cross { width: 28px; height: 28px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 600px) {
   .faq-item summary, .faq-answer { padding: 16px; }
@@ -148,3 +148,57 @@
 
 .password-shell { max-width: 680px; width: 100%; }
 .password-feedback { margin-bottom: 12px; }
+
+/* Touch controls stay usable without triggering iOS input zoom. */
+@media (pointer: coarse), (max-width: 600px) {
+  .activity-picker input, .field input, .field select, .field textarea { font-size: 16px; }
+  .activity-options [role="option"], #activity-open { min-height: 44px; }
+  .activity-options { overscroll-behavior: contain; max-height: min(240px, 40dvh); }
+  .table-link, .text-btn { min-height: 44px; }
+}
+input[type="file"] { max-width: 100%; min-width: 0; }
+.attachment, .sample-file, .sample-file > div { min-width: 0; overflow-wrap: anywhere; }
+dialog { max-height: 90dvh; overscroll-behavior: contain; }
+
+@media (max-width: 600px) {
+  .table-wrap .submission-table { min-width: 0; width: 100%; }
+  .submission-table thead { display: none; }
+  .submission-table tbody { display: block; }
+  .submission-table .submission-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 16px; border-bottom: 1px solid var(--line); }
+  .submission-table .submission-row td { border: 0; padding: 0; min-width: 0; white-space: normal; }
+  .submission-table .submission-main, .submission-table .submission-member { grid-column: 1 / -1; }
+  .submission-title { min-height: 44px; overflow-wrap: anywhere; }
+  .modal-actions, .credit-review-actions, .picture-actions { flex-wrap: wrap; gap: 10px; }
+  .modal-actions .button { min-width: 130px; min-height: 44px; }
+  .close, .nav-scroll, .mini-calendar-controls button { min-width: 44px; min-height: 44px; }
+  .calendar-dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); padding: 12px; }
+  .member-calendar-grid { min-width: 0; }
+  .calendar-weekday { padding: 8px 2px; font-size: 11px; }
+  .calendar-day { min-height: 90px; padding: 5px 3px; overflow-wrap: anywhere; }
+  .calendar-day time, .calendar-checkpoint, .calendar-submission { font-size: 11px; }
+  .calendar-checkpoint, .calendar-submission { padding: 4px 2px; }
+  .calendar-toolbar .button, .calendar-checkpoint-links .button { min-height: 44px; }
+  .calendar-checkpoint-links { gap: 8px; }
+  .calendar-checkpoint-links .button { flex: 1 1 140px; white-space: normal; }
+}
+
+.course-loading { margin-top: 8px; padding: 6px; min-height: 40px; }
+.course-loading .loading-state { text-align: left; font-size: 13px; gap: 10px; }
+
+.overview-grid > .points-panel { align-self: start; }
+.picture-crop { margin: 16px 0; }
+.picture-crop canvas { display: block; width: min(100%, 280px); height: auto; aspect-ratio: 1; border: 1px solid var(--line); touch-action: none; cursor: grab; }
+.picture-crop .field { margin-top: 12px; }
+.picture-crop input[type="range"] { min-height: 44px; padding: 0; width: 100%; }
+.account-button .avatar { overflow: hidden; }
+.account-button .avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.inline-evidence-image { display: block; max-width: 100%; height: auto; margin: 12px auto; }
+.inline-evidence-pdf { display: block; width: 100%; height: min(65dvh, 650px); border: 1px solid var(--line); margin: 12px 0; background: white; }
+
+@media (max-width: 600px) {
+  .calendar-checkpoint-links .button { flex-direction: column; align-items: flex-start; text-align: left; padding: 9px; font-size: 11px; gap: 0; }
+  .calendar-checkpoint-links span { width: 100%; }
+  .calendar-checkpoint-prefix { display: none; }
+  .calendar-submission { max-height: 100px; overflow: hidden; }
+}

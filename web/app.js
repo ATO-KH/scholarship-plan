@@ -198,6 +198,7 @@ function navigation() {
   $("#header-person").innerHTML =
     `${esc(user.name)}<span>${chair ? "Scholarship chair" : "Member"}${isDemo() ? " · demo" : ""}</span>`;
   $(".account-button .avatar").textContent = user.initials;
+  paintHeaderPicture();
   person.value = user.id;
   $(".portal-label").textContent = chair
     ? "CHAIR WORKSPACE"
@@ -229,7 +230,7 @@ async function refresh() {
 function rows(items, chair = false) {
   if (!items.length)
     return `<div class="empty"><h3>${filter === "pending" ? "YOU’RE ALL CAUGHT UP." : "NO SUBMISSIONS HERE YET."}</h3><p>${chair ? "Try another status to see previous decisions." : "Submit an activity to start building your points."}</p>${chair ? "" : newButton()}</div>`;
-  return `<div class="table-wrap"><table><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="submission-table"><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td class="submission-member"><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td class="submission-main"><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
@@ -394,12 +395,26 @@ async function openCalendar() {
   } catch (error) { if (dialog.open) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
 
+let headerPictureCache = null, headerPictureEpoch = 0;
+async function paintHeaderPicture(force = false) {
+  const owner = user?.id, avatar = $(".account-button .avatar");
+  if (!owner || !avatar || user.role !== "member") return;
+  const paint = image => {
+    if (user?.id !== owner) return;
+    avatar.textContent = user.initials;
+    if (image) { const img = document.createElement("img"); img.alt = "Your profile picture"; img.src = image; img.onerror = () => { if (user?.id === owner) avatar.textContent = user.initials; }; avatar.replaceChildren(img); }
+  };
+  if (!force && headerPictureCache?.owner === owner) { paint(headerPictureCache.image); return; }
+  const epoch = ++headerPictureEpoch;
+  headerPictureCache = {owner, image:null};
+  try { const result = await api("/api/profile/picture"); if (user?.id === owner && epoch === headerPictureEpoch) { headerPictureCache = {owner,image:result.image}; paint(result.image); } } catch { /* Keep initials if the picture is unavailable. */ }
+}
 async function loadProfilePicture(container) {
   const owner = user.id;
   const isCurrent = () => user?.id === owner && container.isConnected;
   try {
     const { mountPicture } = await import("/picture-ui.mjs");
-    if (isCurrent()) await mountPicture(container, { api, esc, loading, isCurrent, name: user.name, config: appConfig });
+    if (isCurrent()) await mountPicture(container, { api, esc, loading, isCurrent, name: user.name, onSaved: () => paintHeaderPicture(true), config: appConfig });
   } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
 function mountPasswordForm(container) {
@@ -455,11 +470,12 @@ async function profilePage() {
 async function loadCoursePicker() {
   const input = $("#course"), owner = user.id;
   const indicator = document.createElement("div");
+  indicator.className = "course-loading";
   indicator.innerHTML = loading("Loading classes…", true);
   input.after(indicator);
   try {
     const [profile, { mountCoursePicker }] = await Promise.all([api("/api/profile"), import("/profile-ui.mjs")]);
-    if (input.isConnected && user?.id === owner) mountCoursePicker(input, profile.courses, esc);
+    if (input.isConnected && user?.id === owner) { mountCoursePicker(input, profile.courses, esc); updateSubmissionPrompts(activity($("#activity").value)); }
   } catch {
     if (input.isConnected) indicator.innerHTML = '<small>Saved classes unavailable. You can enter a course manually.</small>';
     return;
@@ -585,7 +601,8 @@ function wireActivityPicker() {
     selected.value = match.id;
     close();
     updateForm();
-    search.focus();
+    if (matchMedia("(pointer: coarse)").matches) search.blur();
+    else search.focus();
   }
   search.addEventListener("input", () => {
     const match = activeActivities().find((a) => a.name.toLowerCase() === search.value.trim().toLowerCase());
@@ -609,7 +626,7 @@ function wireActivityPicker() {
     }
   });
   $("#activity-open").addEventListener("click", () => {
-    search.focus();
+    if (!matchMedia("(pointer: coarse)").matches) search.focus();
     if (menu.hidden) open(true);
     else close();
   });
@@ -618,8 +635,14 @@ function wireActivityPicker() {
     if (option) choose(matches.findIndex((a) => a.id === option.dataset.id));
   });
   picker.addEventListener("focusout", (event) => {
-    if (!picker.contains(event.relatedTarget)) close();
+    // iOS may report no focus target before delivering an option tap.
+    if (event.relatedTarget && !picker.contains(event.relatedTarget)) close();
   });
+  const pickerEvents = new AbortController();
+  modal.addEventListener("pointerdown", event => {
+    if (!picker.contains(event.target)) close();
+  }, { signal: pickerEvents.signal });
+  modal.addEventListener("close", () => pickerEvents.abort(), { once: true });
 }
 async function newSubmission() {
   if (user.role !== "member") return;
@@ -644,7 +667,7 @@ async function newSubmission() {
     isDemo()
       ? "Add a fictional activity for the Scholarship Chair to review."
       : "Add an activity and evidence for the Scholarship Chair to review.",
-    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10)}" max="${rules.today}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept="application/pdf,image/png,image/jpeg">${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10)}" max="${rules.today}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
   wireActivityPicker();
   $("#evidence-file").addEventListener("change", uploadEvidence);
@@ -652,6 +675,34 @@ async function newSubmission() {
   $("#claim-form").addEventListener("input", estimate);
   $("#claim-form").addEventListener("submit", submitClaim);
   updateForm();
+}
+function updateSubmissionPrompts(a) {
+  if (!a) return;
+  const examples = {
+    major: ["Assignment title", "Calculus II · Midterm 1"],
+    minor: ["Assignment title", "Calculus II · Quiz 4"],
+    lab: ["Lab report title", "Physics · Lab 3: Motion"],
+    office: ["Office-hours session", "Calculus office hours 9/14"],
+    tutoring: ["Tutoring / SI session", "Chemistry SI session 9/14"],
+    partner: ["Study session", "Calculus study with Alex 9/14"],
+    group: ["Group study session", "ATO calculus group study 9/14"],
+    independent: ["Study session", "Physics independent study 9/14"],
+    night: ["Study night", "Study night 9/14"],
+    meeting: ["Meeting", "Scholarship meeting 9/14"],
+    calendar: ["Calendar", "Fall semester academic calendar"],
+  };
+  const [label, example] = examples[a.id] || ["Activity title", a.name + " 9/14"];
+  const title = $("#title"), course = $("#course"), field = course.closest(".field"), saved = $("#saved-course");
+  document.querySelector('label[for="title"]').textContent = label;
+  title.placeholder = "e.g. " + example;
+  const noCourse = ["meeting", "calendar"].includes(a.id), optional = noCourse || a.id === "night";
+  field.hidden = noCourse;
+  field.querySelector("label").textContent = optional ? "Subject studied (optional)" : "Course or subject";
+  course.placeholder = a.study ? "e.g. Calculus or MTH 2002" : "e.g. MTH 2002";
+  course.required = !optional;
+  if (saved) { saved.required = !optional; saved.disabled = noCourse; }
+  course.disabled = noCourse || !!(saved && saved.selectedIndex !== saved.options.length - 1);
+  $("#note").placeholder = a.id === "night" ? "Anything the chair should know about this study night" : a.id === "partner" || a.id === "group" ? "Names of the brothers you studied with and any relevant details" : a.id === "office" ? "Professor’s name and topics discussed" : "Any details that help the chair verify this activity";
 }
 function updateForm() {
   const a = activity($("#activity").value);
@@ -661,7 +712,8 @@ function updateForm() {
     $("#estimate").textContent = "—";
     return;
   }
-  $("#proof-hint").textContent = a.proof;
+  updateSubmissionPrompts(a);
+  $("#proof-hint").textContent = a.proof.replace("A sample screenshot", "A screenshot");
   $("#dynamic-field").innerHTML = a.grade
     ? '<label for="grade">Grade (%)</label><input id="grade" name="grade" type="number" min="0" max="100" step="0.01" value="95" required>'
     : a.hours
@@ -697,10 +749,11 @@ async function submitClaim(e) {
   }
   if (busy) return;
   busy = true;
-  const button = e.submitter;
+  const button = e.submitter || e.target.querySelector('button[type="submit"]');
   button.disabled = true;
   const data = Object.fromEntries(new FormData(e.target));
   data.categoryVersion = rules.categoryVersion;
+  if (["night", "meeting", "calendar"].includes(data.activity) && !data.course?.trim()) data.course = activity(data.activity).name;
   if (data.evidence && data.evidence !== "sample")
     data.evidenceId = data.evidence;
   data.confirm = data.confirm === "on";
@@ -731,9 +784,10 @@ async function detail(id) {
     openModal(
       canReview ? "REVIEW SUBMISSION" : "SUBMISSION DETAILS",
       `${esc(s.id)} · ${esc(s.memberName)}`,
-      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Protected download · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
+      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Private preview · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
     );
     if (canReview) $("#review-form").addEventListener("submit", review);
+    evidence(id);
   } catch (e) {
     toast(e.message);
   }
@@ -775,13 +829,15 @@ async function review(e) {
 async function evidence(id) {
   const destination = $("#evidence-preview");
   if (!destination) return;
+  destination.innerHTML = loading("Loading evidence…", true);
   try {
     const { evidence: e } = await api(
       "/api/submissions/" + encodeURIComponent(id) + "/evidence",
     );
     if (!destination.isConnected || !modal.open) return;
     if (e.sample === false && e.downloadUrl) {
-      destination.innerHTML = `<div class="evidence-sheet"><h3>${esc(e.name)}</h3><p>${esc(e.mime)} · private academic evidence</p><a class="button ghost" href="${esc(e.downloadUrl)}" target="_blank" rel="noopener">Download evidence</a></div>`;
+      const preview = e.previewUrl || e.downloadUrl;
+      destination.innerHTML = `<div class="evidence-sheet"><h3>${esc(e.name)}</h3>${e.mime.startsWith("image/") ? `<img class="inline-evidence-image" src="${esc(preview)}" alt="Submitted evidence: ${esc(e.name)}">` : e.mime === "application/pdf" ? `<iframe class="inline-evidence-pdf" src="${esc(preview)}" title="Submitted PDF: ${esc(e.name)}"></iframe><p class="footnote">If your phone does not show every PDF page, use Open full size.</p>` : ""}<a class="button ghost small" href="${esc(preview)}" target="_blank" rel="noopener">Open full size</a></div>`;
     } else {
       destination.innerHTML = `<div class="evidence-sheet"><div class="sample-stamp">${e.sample === false ? "CANVAS RECORD" : "FICTIONAL SAMPLE"}</div><h3>${esc(e.title)}</h3><p>${esc(e.course)} · ${esc(e.date)}</p><p><strong>${e.grade !== null && e.grade !== undefined ? "Grade: " + e.grade + "%" : esc(e.activity || "")}</strong></p><p class="muted">${esc(e.verification || "Imported record")}</p></div>`;
     }
@@ -924,7 +980,7 @@ for (const [button, direction] of [["#nav-prev", -1], ["#nav-next", 1]]) {
   });
 }
 modal.addEventListener("click", (e) => {
-  if (e.target === modal && !modal.dataset.recoveryLocked) modal.close();
+  if (e.target === modal && !modal.dataset.recoveryLocked) { const box = modal.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) modal.close(); }
 });
 modal.addEventListener("cancel", (event) => {
   if (modal.dataset.recoveryLocked) event.preventDefault();
@@ -1319,18 +1375,24 @@ async function uploadEvidence(e) {
   const input = e.target,
     form = input.closest("form"),
     hidden = form.querySelector("#evidence"),
-    attachment = form.querySelector("#attachment"),
+    attachment = form.querySelector("#upload-status"),
     submit = form.querySelector('button[type="submit"]'),
     owner = user.id,
-    file = input.files[0];
+    file = input.files[0] && (input.files[0].type ? input.files[0] : new File([input.files[0]], input.files[0].name, {type: /\.pdf$/i.test(input.files[0].name) ? "application/pdf" : /\.png$/i.test(input.files[0].name) ? "image/png" : /\.jpe?g$/i.test(input.files[0].name) ? "image/jpeg" : ""}));
   const current = () =>
     form.isConnected && user?.id === owner && $("#claim-form") === form;
   if (!file) return;
+  input.value = ""; // Selecting the same file again must fire change after a failed upload.
+  formError("");
   hidden.value = "";
   attachment.innerHTML =
     '<p class="muted">No verified attachment selected.</p>';
   if (file.size > 5 * 1024 * 1024) {
     formError("Choose a file no larger than 5 MB.");
+    return;
+  }
+  if (!["application/pdf", "image/png", "image/jpeg"].includes(file.type)) {
+    formError("Choose a PDF, PNG, or JPEG. For an iPhone HEIC photo, export it as JPEG first.");
     return;
   }
   submit.disabled = true;

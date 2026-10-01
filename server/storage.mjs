@@ -238,7 +238,7 @@ export async function createDownloadGrant(options) {
   const route = `/object/sign/${ctx.config.bucket}/${path}`;
   const result = await providerJSON(ctx, route, { method: 'POST', json: { expiresIn } });
   const url = signedURL(ctx, result?.signedURL, route);
-  url.searchParams.set('download', name);
+  if (!options.inline) url.searchParams.set('download', name);
   return { url: url.toString(), expiresIn };
 }
 

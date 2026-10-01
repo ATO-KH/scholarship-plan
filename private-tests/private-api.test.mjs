@@ -794,8 +794,14 @@ test("uploaded proof is an attachment visible only to its owner and their chair"
     assert.equal(owner.headers.get("x-content-type-options"), "nosniff");
     assert.match(owner.headers.get("cache-control"), /no-store/);
     assert.deepEqual(owner.bytes, fixture.bytes);
+    const preview = await c.send(path + "/preview");
+    assert.equal(preview.status, 200);
+    assert.match(preview.headers.get("content-disposition"), /^inline;/i);
+    assert.equal(preview.headers.get("x-frame-options"), "SAMEORIGIN");
+    assert.deepEqual(preview.bytes, fixture.bytes);
     await c.send("/api/demo/session", { persona: "jordan" });
     assert.equal((await c.send(path)).status, 404);
+    assert.equal((await c.send(path + "/preview")).status, 404);
     await c.send("/api/demo/session", { persona: "chair" });
     const chair = await c.send(path);
     assert.equal(chair.status, 200);

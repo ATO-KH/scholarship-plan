@@ -38,7 +38,7 @@ export function mountCoursePicker(input, courses, esc) {
   const select = document.createElement("select");
   select.id = "saved-course";
   select.name = "course";
-  select.required = true;
+  select.required = input.required;
   select.innerHTML = `<option value="">Choose a class</option>${courses.map((course, index) => `<option value="${esc(course)}" data-index="${index}">${esc(course)}</option>`).join("")}<option value="__other__">Other / not a class</option>`;
   input.before(select);
   input.closest(".field").querySelector("label").htmlFor = select.id;
