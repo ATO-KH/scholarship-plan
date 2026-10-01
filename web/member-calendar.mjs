@@ -1,4 +1,4 @@
-export function mountMemberCalendar(container, { user, rules, points, submissions, esc, openSubmission }) {
+export function mountMemberCalendar(container, { user, rules, points, submissions, esc, openSubmission, fullscreen: allowFullscreen = true }) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   let month = today.slice(0,7);
   const checkpoints = rules.checkpoints || [];
@@ -25,7 +25,8 @@ export function mountMemberCalendar(container, { user, rules, points, submission
     container.querySelectorAll('[data-checkpoint-month]').forEach(button=>button.onclick=()=>{month=button.dataset.checkpointMonth;render();});
     container.querySelectorAll('[data-calendar-submission]').forEach(button=>button.onclick=()=>openSubmission(button.dataset.calendarSubmission));
     const fullscreen=container.querySelector('[data-fullscreen]');
-    fullscreen.hidden=!container.requestFullscreen;
+    fullscreen.hidden=!allowFullscreen || !container.requestFullscreen;
+    if (fullscreen.hidden) fullscreen.style.display="none";
     fullscreen.onclick=async()=>{try{if(document.fullscreenElement===container)await document.exitFullscreen();else await container.requestFullscreen();fullscreen.textContent=document.fullscreenElement===container?'Exit full screen':'Full screen';}catch{fullscreen.textContent='Full screen unavailable';}};
   }
   render();

@@ -121,7 +121,6 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
-        ["calendar", "Calendar"],
         ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
@@ -179,7 +178,19 @@ function overview() {
       "Track submissions, decisions, and approved points.",
       "",
     ) +
-    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><section class="panel checkpoint">${window.atoCheckpointCalendar("2026-10-10", checkpoint)}</section></div><div class="stats-row"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">Demo date: September 28, 2026. *Pending estimates are not awarded points.</p>`;
+    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar("2026-10-10", checkpoint)}</section></div><div class="stats-row"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">Demo date: September 28, 2026. *Pending estimates are not awarded points.</p>`;
+  const calendarTrigger = main.querySelector(".calendar-trigger");
+  let calendarOffset = 0;
+  calendarTrigger.onclick = event => {
+    const control = event.target.closest("[data-calendar-shift]");
+    if (control) {
+      calendarOffset = control.dataset.calendarShift === "today" ? 0 : calendarOffset + Number(control.dataset.calendarShift);
+      const shift = control.dataset.calendarShift;
+      calendarTrigger.innerHTML = window.atoCheckpointCalendar("2026-10-10", checkpoint, undefined, calendarOffset);
+      calendarTrigger.querySelector(`[data-calendar-shift="${shift}"]`).focus();
+    } else if (event.target.closest(".mini-calendar-open")) openCalendar();
+  };
+  calendarTrigger.onkeydown = event => { if (event.target.classList.contains("mini-calendar-open") && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openCalendar(); } };
   window.atoCelebrate.goal(user.id + ":" + (rules.semester?.name || "semester"), points.approved, points.goal);
 }
 function filters() {
@@ -298,17 +309,26 @@ function creditReviewPage() {
   main.innerHTML = heading("", "Credit hours", "") + `<section class="panel credit-review-shell">${loading("Loading credit-hours requests…")}</section>`;
   loadCreditPanel(main.querySelector(".credit-review-shell"), true);
 }
-async function calendarPage() {
-  if (user.role !== "member") return;
+async function openCalendar() {
+  if (user.role !== "member" || document.querySelector(".calendar-dialog")) return;
   const owner = user.id;
-  main.innerHTML = heading("", "Calendar", "") + `<section class="member-calendar-shell">${loading("Loading calendar…")}</section>`;
-  const container = main.querySelector(".member-calendar-shell");
+  const dialog = document.createElement("dialog");
+  dialog.className = "calendar-dialog";
+  dialog.setAttribute("aria-label", "My calendar");
+  dialog.innerHTML = `<div class="calendar-dialog-heading"><h2>My calendar</h2><button type="button" class="button ghost small" aria-label="Close calendar">Close</button></div><section class="member-calendar-shell">${loading("Loading calendar…")}</section>`;
+  document.body.append(dialog);
+  dialog.querySelector("button").onclick = () => dialog.close();
+  dialog.addEventListener("click", event => { if (event.target === dialog) { const box = dialog.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close(); } });
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.showModal();
+  const container = dialog.querySelector(".member-calendar-shell");
   try {
     const { mountMemberCalendar } = await import("/member-calendar.mjs");
-    if (!container.isConnected || user?.id !== owner) return;
-    mountMemberCalendar(container, { user, rules, points, submissions, esc, openSubmission: detail });
-  } catch (error) { if (container.isConnected) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
+    if (!dialog.open || user?.id !== owner) return;
+    mountMemberCalendar(container, { user, rules, points, submissions, esc, openSubmission: detail, fullscreen: false });
+  } catch (error) { if (dialog.open) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
+
 async function loadProfilePicture(container) {
   const owner = user.id;
   const isCurrent = () => user?.id === owner && container.isConnected;
@@ -387,7 +407,6 @@ function render() {
       canvas: canvasPage,
       faq: faqPage,
       profile: profilePage,
-      calendar: calendarPage,
       "credit-review": creditReviewPage,
       api: apiPage,
     })[route()] || overview

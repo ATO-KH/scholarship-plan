@@ -2,8 +2,8 @@
   const dayMs = 86400000;
   const format = (date, options) => date.toLocaleDateString("en-US", { ...options, timeZone: "UTC" });
   const calendarDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  window.atoCheckpointCalendar = (deadline, remaining, today = calendarDay()) => {
-    const center = new Date(`${today}T00:00:00Z`);
+  window.atoCheckpointCalendar = (deadline, remaining, today = calendarDay(), offsetDays = 0) => {
+    const center = new Date(new Date(`${today}T00:00:00Z`).getTime() + offsetDays * dayMs);
     if (!Number.isFinite(center.getTime())) return "<p>Calendar unavailable.</p>";
     const start = new Date(center.getTime() - 14 * dayMs);
     const end = new Date(center.getTime() + 14 * dayMs);
@@ -23,6 +23,6 @@
       }
       if (index % 7 === 6) cells += "</tr>";
     }
-    return `<p class="eyebrow">NEXT CHECKPOINT</p><table class="checkpoint-calendar"><caption>${title}</caption><thead><tr>${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map(day => `<th scope="col"><abbr title="${day}">${day[0]}</abbr></th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><div class="checkpoint-remaining">${Math.max(0, Number(remaining) || 0)} points to go!</div>`;
+    return `<div class="mini-calendar-heading"><p class="eyebrow">NEXT CHECKPOINT</p><div class="mini-calendar-controls"><button type="button" data-calendar-shift="-14" aria-label="Previous two weeks">←</button><button type="button" data-calendar-shift="today">Today</button><button type="button" data-calendar-shift="14" aria-label="Next two weeks">→</button></div></div><div role="button" tabindex="0" class="mini-calendar-open" aria-label="Open full calendar" aria-haspopup="dialog"><table class="checkpoint-calendar"><caption>${title}</caption><thead><tr>${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map(day => `<th scope="col"><abbr title="${day}">${day[0]}</abbr></th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><div class="checkpoint-remaining">${Math.max(0, Number(remaining) || 0)} points to go!</div></div>`;
   };
 })();
