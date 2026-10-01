@@ -293,7 +293,7 @@ function membersPage() {
       "Member points",
       "Approved points and checkpoint targets for each member.",
     ) +
-    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th><th>Points</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
+    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Manage member</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
 }
 async function openPointAdjustments(memberId) {
   const owner = user.id;
@@ -1374,7 +1374,7 @@ async function rosterPage() {
       "",
       "Roster",
       "Manage member identities and access.",
-      '<div class="heading-actions"><button class="button ghost" data-action="import-gpa-tiers">Import GPA tiers</button><button class="button gold" data-action="add-member">Add member</button></div>',
+      '<div class="heading-actions"><button class="button ghost" data-action="create-pilot-accounts">Create pilot accounts</button><button class="button ghost" data-action="import-gpa-tiers">Import GPA tiers</button><button class="button gold" data-action="add-member">Add member</button></div>',
     ) +
     `${appConfig.chapterAuth?.enabled ? '<div class="notice info"><strong>Scholarship Chair office account</strong><p>This account belongs to the office, not to a member. Transfer control of its chapter inbox to the incoming chair and reset its password during each transition. Other members have separate accounts.</p></div>' : ""}<section class="panel" id="roster-sync">${loading("Checking sheet connection…")}</section><section class="panel recent" id="roster-table">${loading("Loading roster…")}</section>`;
   loadRosterSync();
@@ -1383,7 +1383,7 @@ async function rosterPage() {
     const result = await api("/api/roster");
     if (!destination.isConnected) return;
     rosterAccounts = result.members;
-    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.role === "member" ? `Tier ${m.tier} · ${m.credits} credits<small>${m.goal} point goal${m.active === false || m.active === 0 ? "" : ` · <button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}">Edit</button>`}</small>` : "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.role === "member" ? `Tier ${m.tier} · ${m.credits} credits<small>${m.goal} point goal${m.active === false || m.active === 0 ? "" : ` · <button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}">Manage member</button>`}</small>` : "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
   } catch (e) {
     if (destination.isConnected)
       destination.innerHTML = '<div class="error">' + esc(e.message) + "</div>";
@@ -1625,10 +1625,11 @@ function addMember(prefill = {}) {
   };
 }
 function editAcademicSettings(member) {
+  if (user?.role !== "chair") return;
   openModal(
-    "EDIT MEMBER GOAL",
-    `Set the tier and enrolled credits for ${esc(member.name)}. Changes take effect immediately.`,
-    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save goal</button></div></form>`,
+    "MANAGE MEMBER",
+    `Set the tier and enrolled credits for ${esc(member.name)}. Changes update checkpoint and semester targets immediately. Existing awarded points stay unchanged.`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
   );
   $("#academic-settings-form").onsubmit = async (event) => {
     event.preventDefault();
@@ -1639,9 +1640,25 @@ function editAcademicSettings(member) {
         body: { tier: Number(values.tier), credits: Number(values.credits) },
       });
       modal.close();
-      await rosterPage();
-      toast("Member goal updated.");
+      await refresh();
+      if (location.hash === "#roster") await rosterPage();
+      else render();
+      toast("Member settings updated.");
     } catch (error) { formError(error.message); }
+  };
+}
+function createPilotAccounts() {
+  if (user?.role !== "chair") return;
+  openModal("CREATE PILOT ACCOUNTS", "Three real member accounts for testing", `<p>Creates Glazebrook, Marshall, and Ross with separate random passwords and 30-day access. Their submissions persist and appear in your review queue. No emails are sent. Save the passwords shown after creation; they are displayed once.</p><form id="pilot-create-form"><label class="checkbox-line"><input type="checkbox" required><span>Create these three member-only pilot accounts.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Create accounts</button></div></form>`);
+  $("#pilot-create-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = event.target.querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+      const result = await api("/api/admin/pilot-accounts", {method:"POST", body:{confirm:"CREATE THREE PILOT ACCOUNTS"}});
+      openModal("SAVE PILOT PASSWORDS", "These passwords will not be shown again.", `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Password</th><th>Tier</th></tr></thead><tbody>${result.accounts.map(account=>`<tr><td>${esc(account.name)}</td><td><code>${esc(account.username)}</code></td><td><code>${esc(account.password)}</code></td><td>${account.tier}</td></tr>`).join("")}</tbody></table></div><p>Access expires ${esc(new Date(result.accounts[0].expiresAt).toLocaleDateString())}. Use the normal login page. Each account can save its recovery key on first login.</p><div class="modal-actions"><button class="button gold" data-action="close">I saved the passwords</button></div>`);
+      await rosterPage();
+    } catch(error) { formError(error.message); button.disabled = false; }
   };
 }
 async function openTierImport() {
@@ -1879,13 +1896,14 @@ document.addEventListener("click", async (e) => {
         throw error;
       }
     } else if (b.dataset.action === "add-member") addMember();
+    else if (b.dataset.action === "create-pilot-accounts") createPilotAccounts();
     else if (b.dataset.action === "import-gpa-tiers") await openTierImport();
     else if (b.dataset.action === "invite-roster-member") {
       const entry = rosterCandidates[Number(b.dataset.index)];
       if (entry) addMember(entry);
     }
     else if (b.dataset.action === "edit-academic-settings") {
-      const member = rosterAccounts.find((entry) => entry.id === b.dataset.id);
+      const member = rosterAccounts.find((entry) => entry.id === b.dataset.id) || roster.find((entry) => entry.id === b.dataset.id);
       if (member?.role === "member" && member.active !== false && member.active !== 0)
         editAcademicSettings(member);
     }

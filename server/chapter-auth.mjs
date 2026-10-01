@@ -113,3 +113,16 @@ export async function setPasswordByAdmin(env, userId, password) {
     throw Error("The password could not be changed. Try again shortly or request an email reset.");
   return data.user.id;
 }
+
+export async function createPilotAccount(env, email, password) {
+  if (!email.endsWith("@pilot.invalid")) throw Error("Pilot identity required.");
+  const { data, error } = await clients(env).adminClient.auth.admin.createUser({
+    email, password, email_confirm: true, user_metadata: { pilot: true },
+  });
+  if (error || !data?.user?.id) throw Error("Could not create the pilot sign-in. Contact the operator.");
+  return data.user.id;
+}
+export async function deleteNewPilotAccount(env, id) {
+  const { error } = await clients(env).adminClient.auth.admin.deleteUser(id);
+  if (error) throw Error("Pilot cleanup failed.");
+}

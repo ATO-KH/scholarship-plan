@@ -1,3 +1,4 @@
+import { pilotEligible } from "./pilot-access.mjs";
 import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
@@ -18,6 +19,8 @@ import {
   chairAccountConfigured,
   verifyPassword,
   inviteAccount,
+  createPilotAccount,
+  deleteNewPilotAccount,
   sendPasswordReset,
   userForAccountToken,
   setPasswordWithToken,
@@ -254,6 +257,8 @@ function listedOnRoster(state, user) {
 }
 function assertRosterEligibility(state, user) {
   const status = rosterView(state);
+  if (pilotEligible(state, user)) return;
+  if (user.email?.endsWith("@pilot.invalid")) fail(403, "This pilot account has expired or been disabled.");
   if (!status.required || user.role === "chair") return;
   if (!status.fresh)
     fail(
@@ -523,7 +528,7 @@ async function requireSession(req) {
   if (user.role !== "chair" && req.url?.split("?")[0] !== "/api/logout") {
     let state = await stateOf(session.workspace);
     const status = rosterView(state);
-    if (status.required && !status.fresh)
+    if (!pilotEligible(state, user) && status.required && !status.fresh)
       state = await refreshRoster(session, user);
     assertRosterEligibility(state, user);
   }
@@ -626,6 +631,7 @@ async function sessionPayload(session, user) {
       required: rosterStatus(env).required,
       eligible:
         user.role === "chair" ||
+        pilotEligible(state, user) ||
         !rosterStatus(env).required ||
         (rosterView(state).fresh && listedOnRoster(state, user)),
       fresh: rosterView(state).fresh,
@@ -1056,7 +1062,7 @@ const server = http.createServer(async (req, res) => {
       if (issued.user.role === "member") {
         try {
           let state = await stateOf("chapter");
-          if (rosterView(state).required && !rosterView(state).fresh)
+          if (!pilotEligible(state, issued.user) && rosterView(state).required && !rosterView(state).fresh)
             state = await refreshRoster(issued.session, issued.user);
           assertRosterEligibility(state, issued.user);
           issued.recoveryKey = await atomic(async () => {
@@ -1088,7 +1094,7 @@ const server = http.createServer(async (req, res) => {
       const linked = candidate && await db
         .prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
         .get("chapter", "supabase", candidate.id);
-      if (candidate?.active && linked) {
+      if (candidate?.active && linked && !candidate.email.endsWith("@pilot.invalid")) {
         try {
           await sendPasswordReset(env, candidate.email, `${origin}/account/reset`);
         } catch {
@@ -2204,6 +2210,46 @@ const server = http.createServer(async (req, res) => {
             .map((m) => ({ ...m, ...totals(state, m, policyDay()) })),
         });
       }
+      if (path === "/api/admin/pilot-accounts" && req.method === "POST") {
+        chair(user);
+        if (!production || authMode !== "chapter") fail(404, "Real pilot accounts are available only in the live chapter portal.");
+        if (input?.confirm !== "CREATE THREE PILOT ACCOUNTS") fail(422, "Confirm the creation of three real pilot accounts.");
+        const createdAuthIds = [];
+        let accounts;
+        try {
+          accounts = await atomic(async () => {
+            await lockWorkspace(session.workspace);
+            await assertActiveSession(session, user);
+            const state = await stateOf(session.workspace);
+            if (state.pilotAccounts?.length) fail(409, "Pilot accounts already exist. Manage them in the roster; passwords cannot be displayed again.");
+            const expiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
+            const definitions = [
+              ["glazebrook", "Otis Allan Glazebrook (Pilot)", 1],
+              ["marshall", "Alfred Marshall (Pilot)", 3],
+              ["ross", "Erskine Mayo Ross (Pilot)", 4],
+            ];
+            const output = [];
+            for (const [username, name, tier] of definitions) {
+              if (await accountForIdentifier(username)) fail(409, "A pilot username is already in use. Contact the operator.");
+              const id = randomUUID(), email = `${id}@pilot.invalid`, password = randomBytes(18).toString("base64url");
+              const authId = await createPilotAccount(env, email, password);
+              createdAuthIds.push(authId);
+              await insertMember(session.workspace, { id, name, email, role: "member", tier, credits: 15 });
+              for (const [provider, subject] of [["supabase", authId], ["login", username]])
+                await db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(session.workspace, provider, subject, id);
+              output.push({ id, username, name, password, tier, expiresAt });
+            }
+            state.pilotAccounts = output.map(({id, expiresAt}) => ({id, expiresAt}));
+            await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+            await audit(session.workspace, user.name, "pilot.created", "founder-pilots", "Three member-only pilot accounts; 30-day access; no email.");
+            return output;
+          });
+        } catch (error) {
+          for (const id of createdAuthIds) await deleteNewPilotAccount(env, id).catch(() => {});
+          throw error;
+        }
+        return json(res, 201, { accounts });
+      }
       if (path === "/api/roster" && req.method === "GET") {
         chair(user);
         const members = await listMembers(session.workspace);
@@ -2462,6 +2508,7 @@ const server = http.createServer(async (req, res) => {
         const linked = await db.prepare("SELECT subject FROM identities WHERE workspace=? AND provider=? AND member_id=?")
           .get(session.workspace, "supabase", target.id);
         if (!linked) fail(409, "This member has no chapter login yet.");
+        if (target.email.endsWith("@pilot.invalid")) fail(422, "Pilot accounts have no email inbox. Use the recovery key or contact the operator.");
         await sendPasswordReset(env, target.email, `${origin}/account/reset`);
         await audit(session.workspace, user.name, "account.reset_requested", target.id);
         return json(res, 200, { message: "Password reset email requested." });

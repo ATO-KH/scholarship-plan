@@ -38,6 +38,7 @@ const fail = (status, message) => {
 };
 function quotaMember(state, member) {
   if (member.role !== "member") return member;
+  member = { ...member, tier: state.tierOverrides?.[member.id] ?? member.tier };
   const { checkpoints } = checkpointQuotaView(state);
   const checkpoint = checkpoints.find(entry => entry.date >= TODAY) || checkpoints.at(-1);
   return { ...member, credits: state.creditOverrides?.[member.id] ?? member.credits,
@@ -185,6 +186,20 @@ export async function handle(req, path) {
         weekConvention: "Monday–Sunday (demo assumption)",
         checkpoints: checkpointQuotaView(state).checkpoints,
       });
+    const academicRoute = path.match(/^\/api\/roster\/([^/]+)\/academic-settings$/);
+    if (academicRoute && req.method === "POST") {
+      chair();
+      if (Object.keys(input).sort().join(",") !== "credits,tier" || !Number.isInteger(input.tier) || input.tier < 1 || input.tier > 5 || !Number.isFinite(input.credits) || input.credits < 0 || input.credits > 30)
+        fail(422, "Choose a tier from 1–5 and enrolled credits from 0–30.");
+      const target = sessionMembers.find(member => member.id === academicRoute[1] && member.role === "member");
+      if (!target) fail(404, "Member not found.");
+      state.tierOverrides ||= {};
+      state.creditOverrides ||= {};
+      state.tierOverrides[target.id] = input.tier;
+      state.creditOverrides[target.id] = input.credits;
+      await save(session);
+      return json({ member: quotaMember(state, target) });
+    }
     const adjustmentRoute = path.match(/^\/api\/members\/([^/]+)\/point-adjustments$/);
     if (adjustmentRoute && ["GET", "POST"].includes(req.method)) {
       if (req.method === "POST") chair();

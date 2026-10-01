@@ -229,7 +229,29 @@ function membersPage() {
       "KNOW WHO NEEDS SUPPORT.",
       "Chair view · individual points and checkpoint progress.",
     ) +
-    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>Oct 10 target</th><th>Points</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>Fictional member</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. This proof of concept does not determine disciplinary outcomes.</div>`;
+    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>Oct 10 target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>Fictional member</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Manage member</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. This proof of concept does not determine disciplinary outcomes.</div>`;
+}
+function editAcademicSettings(member) {
+  if (user?.role !== "chair") return;
+  openModal(
+    "MANAGE MEMBER",
+    `Set the tier and enrolled credits for ${esc(member.name)}. Changes update checkpoint and semester targets immediately. Existing awarded points stay unchanged.`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
+  );
+  $("#academic-settings-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.target));
+    try {
+      await api("/api/roster/" + encodeURIComponent(member.id) + "/academic-settings", {
+        method: "POST",
+        body: { tier: Number(values.tier), credits: Number(values.credits) },
+      });
+      modal.close();
+      await refresh();
+      render();
+      toast("Member settings updated.");
+    } catch (error) { formError(error.message); }
+  };
 }
 async function openPointAdjustments(memberId) {
   const owner = user.id;
@@ -694,6 +716,7 @@ function identity(provider) {
 }
 async function handleAction(e) {
   const b = e.target.closest("[data-action]");
+  if (b?.dataset.action === "edit-academic-settings") { const member = roster.find(entry => entry.id === b.dataset.id); if (member) editAcademicSettings(member); return; }
   if (b?.dataset.action === "adjust-points") { await openPointAdjustments(b.dataset.id); return; }
   if (b?.dataset.action === "manage-point-categories") { await openPointCategories(); return; }
   if (b?.dataset.action === "edit-checkpoint-quotas") { await openCheckpointQuotas(); return; }

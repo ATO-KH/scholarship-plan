@@ -290,6 +290,7 @@ test("Chair tier import accepts only roster emails and tiers, then updates membe
   })).status, 403);
   assert.equal((await memberClient.send("/api/admin/tier-import/settings", { mapping: {} })).status, 403);
   assert.equal((await memberClient.send("/api/roster/alex/academic-settings", { tier: 1, credits: 15 })).status, 403);
+  assert.equal((await memberClient.send("/api/admin/pilot-accounts", { confirm: "CREATE THREE PILOT ACCOUNTS" })).status, 403);
 
   const chairClient = client(isolated);
   await chairClient.send("/api/demo/session", { persona: "chair" });
