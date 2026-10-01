@@ -2789,6 +2789,8 @@ const server = http.createServer(async (req, res) => {
       "/credit-ui.mjs": "credit-ui.mjs",
       "/picture-ui.mjs": "picture-ui.mjs",
       "/checkpoint-calendar.js": "checkpoint-calendar.js",
+      "/member-calendar.mjs": "member-calendar.mjs",
+      "/celebrations.js": "celebrations.js",
       "/checkpoint-data.mjs": "checkpoint-data.mjs",
       "/category-data.mjs": "category-data.mjs",
       "/category-ui.mjs": "category-ui.mjs",

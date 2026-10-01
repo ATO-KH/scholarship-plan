@@ -170,6 +170,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["calendar", "Calendar"],
         ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
@@ -207,7 +208,7 @@ function route() {
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
   if (["canvas", "api", "setup"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (p === "access") p = "faq";
-  if (user?.role === "chair" && ["overview", "submissions", "profile"].includes(p))
+  if (user?.role === "chair" && ["overview", "submissions", "profile", "calendar"].includes(p))
     p = "queue";
   if (
     user?.role === "member" &&
@@ -244,6 +245,7 @@ function overview() {
       "",
     ) +
     `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><section class="panel checkpoint">${window.atoCheckpointCalendar(checkpointDate(), checkpoint)}</section></div><div class="stats-row"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">${isDemo() ? "Demo date" : "As of"}: ${esc(rules.today)}. *Pending estimates are not awarded points.</p>`;
+  window.atoCelebrate.goal(user.id + ":" + (rules.semester?.name || "semester"), points.approved, points.goal);
 }
 function filters() {
   return `<div class="filters" aria-label="Filter submissions">${["all", "pending", "approved", "denied"].map((f) => `<button class="filter ${f === filter ? "active" : ""}" data-action="filter" data-value="${f}" aria-pressed="${f === filter}">${f === "all" ? "All submissions" : f === "pending" ? "Pending review" : f[0].toUpperCase() + f.slice(1)} <span>(${submissions.filter((s) => f === "all" || s.status === f).length})</span></button>`).join("")}</div>`;
@@ -345,7 +347,7 @@ function earnPage() {
       "Point values, claim limits, and checkpoint targets.",
       user.role === "chair" ? '<button class="button ghost" data-action="manage-point-categories">Manage point categories</button><button class="button gold" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button>' : "",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. Never claim one activity twice.</div><div class="rules-grid">${activeActivities().map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${esc(a.points)} <small>PTS</small></span></div><p>Per ${esc(a.mode === "hourly" ? "hour" : a.unit)}. ${esc(a.proof)}</p>${categoryHint(a) ? `<p class="category-rule-hint">${esc(categoryHint(a))}</p>` : ""}</article>`).join("") || '<p class="empty">No point categories are available right now.</p>'}</div><section class="panel" style="margin-top:24px"><h2>CHECKPOINTS · ${esc(rules.semester?.name || "Current semester")}</h2><div class="table-wrap"><table><thead><tr><th>Tier</th>${rules.checkpoints.map((c) => `<th>${date(c.date)}</th>`).join("")}</tr></thead><tbody>${[1, 2, 3, 4, 5].map((t) => `<tr><td>Tier ${t}${t === 1 ? " / PNM" : ""}</td>${rules.checkpoints.map((c) => `<td>${c.targets[t - 1]}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="footnote">Targets are interpreted as cumulative. They are not multiplied by credit load.</p></section><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. Never claim one activity twice.</div><div class="rules-grid">${activeActivities().map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${esc(a.points)} <small>PTS</small></span></div><p>Per ${esc(a.mode === "hourly" ? "hour" : a.unit)}. ${esc(a.proof)}</p>${categoryHint(a) ? `<p class="category-rule-hint">${esc(categoryHint(a))}</p>` : ""}</article>`).join("") || '<p class="empty">No point categories are available right now.</p>'}</div><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 async function loadCreditPanel(container, chair) {
   const owner = user.id;
@@ -359,6 +361,17 @@ function creditReviewPage() {
   if (user.role !== "chair") return;
   main.innerHTML = heading("", "Credit hours", "") + `<section class="panel credit-review-shell">${loading("Loading credit-hours requests…")}</section>`;
   loadCreditPanel(main.querySelector(".credit-review-shell"), true);
+}
+async function calendarPage() {
+  if (user.role !== "member") return;
+  const owner = user.id;
+  main.innerHTML = heading("", "Calendar", "") + `<section class="member-calendar-shell">${loading("Loading calendar…")}</section>`;
+  const container = main.querySelector(".member-calendar-shell");
+  try {
+    const { mountMemberCalendar } = await import("/member-calendar.mjs");
+    if (!container.isConnected || user?.id !== owner) return;
+    mountMemberCalendar(container, { user, rules, points, submissions, esc, openSubmission: detail });
+  } catch (error) { if (container.isConnected) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
 async function loadProfilePicture(container) {
   const owner = user.id;
@@ -437,6 +450,7 @@ function render() {
       canvas: canvasPage,
       faq: faqPage,
       profile: profilePage,
+      calendar: calendarPage,
       "credit-review": creditReviewPage,
       api: apiPage,
       roster: rosterPage,
@@ -640,6 +654,7 @@ async function submitClaim(e) {
   if (data.quantity) data.quantity = Number(data.quantity);
   try {
     await api("/api/submissions", { method: "POST", body: data });
+    window.atoCelebrate.submission();
     modal.close();
     filter = "pending";
     location.hash = "submissions";

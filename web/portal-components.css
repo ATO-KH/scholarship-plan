@@ -103,3 +103,29 @@
   .profile-layout .credit-shell { grid-column: 1; grid-row: 2; }
   .profile-layout .profile-shell { grid-column: 2; grid-row: 1 / span 2; }
 }
+.member-calendar-shell { width: 100%; min-height: 75vh; background: var(--paper); }
+.member-calendar-shell:fullscreen { padding: 24px; overflow: auto; }
+.calendar-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
+.calendar-toolbar h2 { margin: 0; }
+.calendar-toolbar > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.calendar-checkpoint-links { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.calendar-checkpoint-links span { display: block; margin-top: 4px; font-size: 11px; text-transform: none; }
+.calendar-scroll { overflow-x: auto; }
+.member-calendar-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); min-width: 650px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.calendar-weekday { padding: 12px; text-align: center; color: var(--muted); border-right: 1px solid var(--line); }
+.calendar-day { min-height: 130px; padding: 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--white); min-width: 0; }
+.calendar-blank { background: var(--paper); }
+.calendar-day time { display: block; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
+.calendar-day.is-today { box-shadow: inset 0 3px var(--gold); }
+.calendar-day.is-today time { color: var(--gold); font-weight: 700; }
+.calendar-checkpoint { position: relative; border: 1px solid var(--gold); margin-bottom: 8px; padding: 6px; font-size: 12px; }
+.calendar-checkpoint summary { cursor: pointer; }
+.calendar-checkpoint-tip { padding: 10px 0 2px; font-weight: 600; }
+.calendar-checkpoint-tip small { display: block; margin-top: 6px; font-weight: 400; }
+.calendar-checkpoint:not([open]):hover .calendar-checkpoint-tip { display: block; }
+.calendar-submission { display: block; width: 100%; text-align: left; padding: 8px; margin-top: 6px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-left: 3px solid var(--muted); font: inherit; font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
+.calendar-submission.pending { border-left-color: var(--gold); }
+.calendar-submission.approved { border-left-color: #499b75; }
+.calendar-submission.denied { border-left-color: #c66565; }
+.calendar-submission small { display: block; margin-top: 4px; text-transform: capitalize; color: var(--muted); }
+.celebration-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 2000; pointer-events: none; }
