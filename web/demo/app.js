@@ -363,6 +363,7 @@ async function profilePage() {
   if (user.role !== "member") return;
   const owner = user.id;
   main.innerHTML = heading("", "My profile", "") + `<div class="profile-layout"><section class="picture-shell panel">${loading("Loading profile picture…")}</section><section class="profile-shell panel">${loading("Loading profile…")}</section><section class="credit-shell panel">${loading("Loading credit hours…")}</section></div>`;
+  main.querySelector(".profile-layout").insertAdjacentHTML("beforeend", '<section class="panel password-shell"><h2>Change password</h2><p>Password changes are available for real chapter accounts. The public test1 and test2 passwords stay unchanged.</p></section>');
   const container = main.querySelector(".profile-shell");
   loadCreditPanel(main.querySelector(".credit-shell"), false);
   loadProfilePicture(main.querySelector(".picture-shell"));

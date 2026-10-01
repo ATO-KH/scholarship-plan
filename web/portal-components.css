@@ -145,3 +145,6 @@
 .mini-calendar-controls { display: flex; gap: 6px; }
 .mini-calendar-controls button { border: 1px solid var(--line); background: var(--paper); color: var(--ink); padding: 6px 9px; cursor: pointer; font: inherit; font-size: 12px; }
 .mini-calendar-controls button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.password-shell { max-width: 680px; width: 100%; }
+.password-feedback { margin-bottom: 12px; }

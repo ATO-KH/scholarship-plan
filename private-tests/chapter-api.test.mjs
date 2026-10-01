@@ -273,6 +273,18 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal((await request("/api/auth/login", {
       identifier: "unknown-badge", password: "wrong-password",
     })).status, 429);
+    const changeBody = { currentPassword: "a-long-new-password", newPassword: "member-changed-password", confirmPassword: "member-changed-password" };
+    assert.equal((await request("/api/account/password", changeBody)).status, 401);
+    assert.equal((await request("/api/account/password", changeBody, afterSemester.cookie)).status, 403);
+    assert.equal((await request("/api/account/password", {...changeBody, confirmPassword:"mismatch-password"}, afterSemester.cookie, afterSemester.payload.csrfToken)).status, 422);
+    assert.equal((await request("/api/account/password", {...changeBody, currentPassword:"wrong-password"}, afterSemester.cookie, afterSemester.payload.csrfToken)).status, 401);
+    assert.equal((await request("/api/session", undefined, afterSemester.cookie)).status, 200);
+    assert.equal((await request("/api/account/password", changeBody, afterSemester.cookie, afterSemester.payload.csrfToken)).status, 200);
+    assert.equal((await request("/api/session", undefined, afterSemester.cookie)).status, 401);
+    assert.equal((await request("/api/auth/login", {identifier:"1234",password:"a-long-new-password"})).status, 401);
+    const changedLogin = await request("/api/auth/login", {identifier:"1234",password:"member-changed-password"});
+    assert.equal(changedLogin.status, 200);
+    assert.equal(changedLogin.payload.recoveryKey, undefined);
     const deactivated = await request(`/api/roster/${member.payload.user.id}/deactivate`, {}, chairCookie, chairCsrf);
     assert.equal(deactivated.status, 200);
     assert.equal((await request("/api/session", undefined, member.cookie)).status, 401);

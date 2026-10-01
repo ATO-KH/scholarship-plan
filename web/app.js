@@ -164,6 +164,7 @@ function navigation() {
         ["roster", "Chapter roster"],
         ["semester", "Semester settings"],
         ["audit", "Review history"],
+        ["profile", "My profile"],
         ["earn", "Point rules"],
         ["faq", "FAQ"],
       ]
@@ -207,7 +208,7 @@ function route() {
     location.hash.slice(1) || (user?.role === "chair" ? "queue" : "overview");
   if (["canvas", "api", "setup"].includes(p)) p = user?.role === "chair" ? "queue" : "overview";
   if (p === "access") p = "faq";
-  if (user?.role === "chair" && ["overview", "submissions", "profile", "calendar"].includes(p))
+  if (user?.role === "chair" && ["overview", "submissions", "calendar"].includes(p))
     p = "queue";
   if (
     user?.role === "member" &&
@@ -401,10 +402,44 @@ async function loadProfilePicture(container) {
     if (isCurrent()) await mountPicture(container, { api, esc, loading, isCurrent, name: user.name, config: appConfig });
   } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
+function mountPasswordForm(container) {
+  if (!appConfig.chapterAuth?.enabled || isDemo()) {
+    container.innerHTML = '<h2>Change password</h2><p>Password changes are available for real chapter accounts. Public demo passwords stay unchanged.</p>';
+    return;
+  }
+  container.innerHTML = `<h2>Change password</h2><form id="change-password-form"><div class="field"><label for="current-password">Current password</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required maxlength="1024"></div><div class="field"><label for="profile-new-password">New password</label><input id="profile-new-password" name="newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"><small>At least 12 characters.</small></div><div class="field"><label for="profile-confirm-password">Confirm new password</label><input id="profile-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></div><p class="muted">Changing your password signs you out on all devices. Your saved recovery key stays valid.</p><div class="password-feedback" role="status" aria-live="polite"></div><button class="button gold" type="submit">Change password</button></form>`;
+  const form = container.querySelector("form"), feedback = container.querySelector(".password-feedback");
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const body = Object.fromEntries(new FormData(form));
+    if (body.newPassword !== body.confirmPassword) { feedback.textContent = "The new passwords do not match."; return; }
+    const controls = [...form.querySelectorAll("input,button")];
+    controls.forEach(control => control.disabled = true);
+    feedback.innerHTML = loading("Changing password…", true);
+    try {
+      await api("/api/account/password", {method:"POST",body});
+      form.reset();
+      sessionEpoch++;
+      logs = []; rosterAccounts = []; rosterCandidates = [];
+      main.innerHTML = '<section class="panel"><h2>Password changed</h2><p>Sign in again using your new password.</p><a class="button gold" href="/">Return to sign in</a></section>';
+      user = null; csrfToken = null;
+      $("#nav").innerHTML = "";
+    } catch (error) {
+      feedback.textContent = error.message;
+      controls.forEach(control => control.disabled = false);
+    }
+  };
+}
 async function profilePage() {
-  if (user.role !== "member") return;
+  if (user.role === "chair") {
+    main.innerHTML = heading("", "My profile", "") + '<section class="panel password-shell"></section>';
+    mountPasswordForm(main.querySelector(".password-shell"));
+    return;
+  }
   const owner = user.id;
   main.innerHTML = heading("", "My profile", "") + `<div class="profile-layout"><section class="picture-shell panel">${loading("Loading profile picture…")}</section><section class="profile-shell panel">${loading("Loading profile…")}</section><section class="credit-shell panel">${loading("Loading credit hours…")}</section></div>`;
+  main.querySelector(".profile-layout").insertAdjacentHTML("beforeend", '<section class="panel password-shell"></section>');
+  mountPasswordForm(main.querySelector(".password-shell"));
   const container = main.querySelector(".profile-shell");
   loadCreditPanel(main.querySelector(".credit-shell"), false);
   loadProfilePicture(main.querySelector(".picture-shell"));

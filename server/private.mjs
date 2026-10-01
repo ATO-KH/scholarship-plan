@@ -1349,6 +1349,31 @@ const server = http.createServer(async (req, res) => {
           409,
           "The account changed in another tab. Refresh before continuing.",
         );
+      if (path === "/api/account/password" && req.method === "POST") {
+        if (!production || authMode !== "chapter") fail(422, "Password changes require a real chapter account.");
+        if (typeof input.currentPassword !== "string" || !input.currentPassword || input.currentPassword.length > 1024 ||
+            typeof input.newPassword !== "string" || input.newPassword.length < 12 || input.newPassword.length > 1024 ||
+            input.newPassword !== input.confirmPassword)
+          fail(422, "Enter your current password and matching new passwords of at least 12 characters.");
+        if (input.currentPassword === input.newPassword) fail(422, "Choose a different new password.");
+        await authAttempt("password_change", user.id, 5);
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const linked = await identityMember(session.workspace, "supabase",
+            (await verifyPassword(env, user.email, input.currentPassword))?.id || "");
+          if (linked?.member_id !== user.id) fail(401, "The current password is incorrect.");
+          const identity = await db.prepare("SELECT subject FROM identities WHERE workspace=? AND provider='supabase' AND member_id=?")
+            .get(session.workspace, user.id);
+          await setPasswordByAdmin(env, identity.subject, input.newPassword);
+          await db.prepare("DELETE FROM transactions WHERE session_id IN (SELECT id FROM sessions WHERE workspace=? AND member_id=?)")
+            .run(session.workspace, user.id);
+          await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?").run(session.workspace, user.id);
+          await audit(session.workspace, user.name, "account.password_change", user.id, "Current password verified; all portal sessions revoked.");
+        });
+        await clearAuthAttempts("password_change", user.id);
+        return json(res, 200, { message: "Password changed. Sign in with your new password." }, { "Set-Cookie": cookie(sessionCookie, "", 0) });
+      }
       if (path === "/api/session" && req.method === "GET")
         return json(res, 200, await sessionPayload(session, user));
       if (path === "/api/me" && req.method === "GET")
