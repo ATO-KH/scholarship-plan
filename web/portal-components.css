@@ -95,3 +95,11 @@
   .category-band { grid-template-columns: 1fr 1fr; }
   .category-band > button { grid-column: 1 / -1; justify-self: end; }
 }
+
+/* The classes panel spans both rows so its height cannot push the left stack. */
+@media (min-width: 901px) {
+  .profile-layout { grid-template-rows: min-content 1fr; }
+  .profile-layout .picture-shell { grid-column: 1; grid-row: 1; }
+  .profile-layout .credit-shell { grid-column: 1; grid-row: 2; }
+  .profile-layout .profile-shell { grid-column: 2; grid-row: 1 / span 2; }
+}
