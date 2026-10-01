@@ -60,6 +60,10 @@ export async function handle(req, path) {
           data: seed(),
         };
       else if (input.persona) session.persona = input.persona;
+      if (!session.data.test2Seeded) {
+        session.data.submissions.push(...seed().submissions.filter(item => item.owner === "test2"));
+        session.data.test2Seeded = true;
+      }
       await save(session);
       return json({
         user: quotaMember(session.data, members.find((m) => m.id === session.persona)),

@@ -2,6 +2,7 @@ import { pointBreakdown } from "../point-adjustment-data.mjs";
 import { DEFAULT_CATEGORIES, categoriesFor, categoryForSubmission, categoryView, scoreCategory } from "../category-data.mjs";
 export const TODAY = "2026-09-28";
 export const members = [
+  { id: "test2", name: "Test Member Two", initials: "T2", email: "test2@example.edu", role: "member", tier: 4, credits: 15, gpa: "2.65", goal: 90, checkpoint: 45 },
   {
     id: "test1",
     name: "Test Member",
@@ -111,7 +112,13 @@ export function seed() {
     ],
   });
   return {
+    test2Seeded: true,
     submissions: [
+      ...Array.from({ length: 30 }, (_, index) => {
+        const major = index % 3 === 0;
+        const course = ["MTH 2002", "PHY 1001", "CHM 1101"][index % 3];
+        return make(`T2-${index + 1}`, "test2", major ? "major" : "minor", `${course} · ${major ? "Exam" : "Assignment"} ${Math.floor(index / 3) + 1}`, course, `2026-09-${String(index + 1).padStart(2, "0")}`, "approved", major ? 5 : 2);
+      }),
       make(
         "S-1008",
         "alex",
