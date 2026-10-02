@@ -31,7 +31,8 @@
 .profile-feedback { margin-top: 16px; }
 
 .profile-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-.profile-layout .profile-shell { max-width: none; margin: 0; }
+.profile-column { display: grid; gap: 24px; min-width: 0; align-content: start; }
+.profile-layout .profile-shell, .profile-layout .password-shell { max-width: none; margin: 0; }
 .profile-layout .panel { min-width: 0; }
 .credit-request { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
 .credit-feedback { margin: 12px 0; }
@@ -96,13 +97,6 @@
   .category-band > button { grid-column: 1 / -1; justify-self: end; }
 }
 
-/* The classes panel spans both rows so its height cannot push the left stack. */
-@media (min-width: 901px) {
-  .profile-layout { grid-template-rows: min-content 1fr; }
-  .profile-layout .picture-shell { grid-column: 1; grid-row: 1; }
-  .profile-layout .credit-shell { grid-column: 1; grid-row: 2; }
-  .profile-layout .profile-shell { grid-column: 2; grid-row: 1 / span 2; }
-}
 .member-calendar-shell { width: 100%; min-height: 75vh; background: var(--white); }
 .member-calendar-shell:fullscreen { padding: 24px; overflow: auto; }
 .calendar-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
