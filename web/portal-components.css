@@ -185,7 +185,21 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 .course-loading { margin-top: 8px; padding: 6px; min-height: 40px; }
 .course-loading .loading-state { text-align: left; font-size: 13px; gap: 10px; }
 
-.overview-grid > .points-panel { align-self: start; }
+.overview-points-stack { display: flex; flex-direction: column; min-width: 0; }
+.overview-points-stack > .points-panel { flex: 1; }
+.overview-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.overview-stats .mini-stat { flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; padding: 14px 16px; border: 0; border-right: 1px solid var(--line); }
+.overview-stats .mini-stat:last-child { border-right: 0; }
+.overview-stats .mini-stat strong { font-size: 26px; line-height: 1; min-width: 0; }
+.overview-stats .mini-stat span { font-size: 12px; }
+.overview-stats .mini-stat span b { display: block; margin: 0 0 3px; font-size: 13px; }
+@media (max-width: 800px) {
+  .overview-stats .mini-stat { padding: 12px 10px; }
+}
+@media (max-width: 380px) {
+  .overview-stats .mini-stat { padding: 12px 8px; }
+  .overview-stats .mini-stat span b { font-size: 12px; }
+}
 .picture-crop { margin: 16px 0; }
 .picture-crop canvas { display: block; width: min(100%, 280px); height: auto; aspect-ratio: 1; border: 1px solid var(--line); touch-action: none; cursor: grab; }
 .picture-crop .field { margin-top: 12px; }
