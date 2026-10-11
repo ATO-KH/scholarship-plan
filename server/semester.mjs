@@ -118,6 +118,7 @@ async function countsFor(db, workspace, state, rows, now) {
 function snapshot(state, rows) {
   return createHash('sha256').update(JSON.stringify({ generation: state.semesterGeneration,
     semester: state.semester, submissions: state.submissions, pointAdjustments: state.pointAdjustments,
+    classRecords: state.classRecords, syllabi: state.syllabi,
     uploads: [...rows].sort((a, b) => String(a.id).localeCompare(String(b.id))),
   })).digest('hex');
 }
@@ -179,6 +180,8 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     // accounts remain; the Chair reviews their tiers for the new semester.
     delete state.tierAssignments;
     delete state.memberProfiles;
+    delete state.classRecords;
+    delete state.syllabi;
     delete state.creditRequests;
     delete state.profilePictures;
     delete state.checkpointQuotas;
@@ -190,7 +193,7 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     // The deletion manifest is stored in the same transaction that withdraws access.
     await save(db, workspace, state);
     await db.prepare('DELETE FROM uploads WHERE workspace=?').run(workspace);
-    await db.prepare("DELETE FROM audit WHERE workspace=? AND (action LIKE 'submission.%' OR action LIKE 'evidence.%' OR action='canvas.import' OR action='points.adjustment')").run(workspace);
+    await db.prepare("DELETE FROM audit WHERE workspace=? AND (action LIKE 'submission.%' OR action LIKE 'evidence.%' OR action LIKE 'class.%' OR action LIKE 'syllabus.%' OR action='canvas.import' OR action='points.adjustment')").run(workspace);
     await db.prepare('INSERT INTO audit(workspace,at,actor,action,subject,detail) VALUES (?,?,?,?,?,?)').run(
       workspace, iso(time), String(actor || 'Scholarship Chair').slice(0, 160), 'semester.reset.start', job.id,
       JSON.stringify({ counts, nextSemester: nextSemester.name }),

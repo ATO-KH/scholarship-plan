@@ -29,6 +29,33 @@
 .profile-course-row { display: flex; align-items: end; gap: 12px; margin: 18px 0; }
 .profile-course-row .field { flex: 1; min-width: 0; margin: 0; }
 .profile-feedback { margin-top: 16px; }
+.profile-class-card { border: 1px solid var(--line); padding: 16px; margin: 18px 0; min-width: 0; overflow-wrap: anywhere; }
+.class-card-heading, .class-card-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.class-card-heading h3 { margin: 0; }
+.class-card-actions { justify-content: flex-start; margin-top: 14px; }
+.class-editor { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
+.class-editor[hidden], .class-remove-confirm[hidden] { display: none; }
+.class-editor .field { margin-top: 18px; }
+.class-editor .modal-actions { flex-wrap: wrap; }
+.class-editor .modal-actions .button { white-space: normal; }
+.class-feedback:not(:empty), .syllabus-feedback:not(:empty) { margin-top: 14px; }
+.syllabus-course-hint { display: block; margin-top: 8px; }
+.syllabus-course-hint[hidden] { display: none; }
+.syllabus-reference { margin: 18px 0; border: 1px solid var(--line); padding: 14px; }
+.syllabus-reference summary { cursor: pointer; font-weight: 600; }
+.syllabus-review-card { border: 1px solid var(--line); margin: 16px 0; }
+.syllabus-review-card > summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 18px; cursor: pointer; }
+.syllabus-review-card > summary small { display: block; color: var(--muted); margin-top: 4px; }
+.syllabus-review-content { padding: 18px; border-top: 1px solid var(--line); }
+.syllabus-filter { margin: 0; min-width: 150px; }
+.syllabus-reference summary:focus-visible, .syllabus-review-card > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.syllabus-preview { min-width: 0; }
+@media (max-width: 600px) {
+  .syllabus-shell .section-heading { flex-wrap: wrap; }
+  .syllabus-review-content, .syllabus-review-card > summary { padding: 14px; }
+  .syllabus-reference summary, .class-card-actions button { min-height: 44px; }
+  .syllabus-review-form .modal-actions .button { flex: 1; white-space: normal; }
+}
 
 .profile-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .profile-column { display: grid; gap: 24px; min-width: 0; align-content: start; }
@@ -163,7 +190,7 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
   .submission-table .submission-main, .submission-table .submission-member { grid-column: 1 / -1; }
   .submission-title { min-height: 44px; overflow-wrap: anywhere; }
   .modal-actions, .credit-review-actions, .picture-actions { flex-wrap: wrap; gap: 10px; }
-  .modal-actions .button { min-width: 130px; min-height: 44px; }
+  .modal-actions .button { min-width: 130px; min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
   .close, .nav-scroll, .mini-calendar-controls button { min-width: 44px; min-height: 44px; }
   .calendar-dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); padding: 12px; }
   .member-calendar-grid { min-width: 0; }

@@ -146,6 +146,10 @@ function client(server = demo) {
       return csrfToken;
     },
     async send(path, body, extraHeaders = {}) {
+      if (this.approvedClassId && body && path === "/api/submissions" && body.classId === undefined)
+        body = { ...body, classId: this.approvedClassId };
+      if (this.approvedClassId && body?.items && path === "/api/integrations/canvas/import")
+        body = { ...body, items: body.items.map(item => ({ ...item, classId: item.classId || this.approvedClassId })) };
       const result = await request(server, path, {
         body,
         headers: {
@@ -189,6 +193,19 @@ const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5cQAAAAASUVORK5CYII=",
   "base64",
 );
+
+async function approveTestClass(c) {
+  const upload = await c.send("/api/uploads", { name: "syllabus.pdf", mime: "application/pdf", base64: pdf.toString("base64") });
+  assert.equal(upload.status, 201);
+  const created = await c.send("/api/classes", { name: "MTH 2002", evidenceId: upload.upload.id });
+  assert.equal(created.status, 201, JSON.stringify(created));
+  await c.send("/api/demo/session", { persona: "chair" });
+  const item = (await c.send("/api/syllabi")).syllabi.find(item => item.id === created.class.syllabusId);
+  assert.equal((await c.send(`/api/syllabi/${item.id}/review`, { decision: "approved", note: "Verified syllabus", version: item.version })).status, 200);
+  await c.send("/api/demo/session", { persona: "alex" });
+  c.approvedClassId = created.class.id;
+  return created.class;
+}
 
 before(async () => {
   demo = await start("demo");
@@ -351,6 +368,7 @@ test("Chair categories are isolated, require authorization and retain history wh
   const isolated = await start("demo"), c = client(isolated);
   assert.equal((await c.send("/api/point-categories")).status, 401);
   await c.send("/api/demo/session", {});
+  await approveTestClass(c);
   assert.equal((await c.send("/api/point-categories")).status, 403);
   assert.equal((await c.send("/api/point-categories", {})).status, 403);
   const before = (await c.send("/api/submissions/S-1008")).submission;
@@ -555,6 +573,7 @@ test("mutation requires CSRF token and exact origin; switching persona invalidat
 test("submission stays pending until chair review and contributes points exactly once", async () => {
   const c = client();
   await c.send("/api/demo/session", {});
+  await approveTestClass(c);
   assert.equal((await c.send("/api/points")).approved, 18);
   const created = await c.send("/api/submissions", {
     ...claim,
@@ -658,6 +677,7 @@ test("fractional estimates require whole points and a chair explanation", async 
 test("claim validation rejects expired and duplicate work and enforces weekly study and minor-assignment caps", async () => {
   const c = client();
   await c.send("/api/demo/session", {});
+  await approveTestClass(c);
   assert.equal(
     (await c.send("/api/submissions", { ...claim, date: "2026-09-13" })).status,
     422,
@@ -702,6 +722,7 @@ test("claim validation rejects expired and duplicate work and enforces weekly st
 test("Canvas sample import stays pending, skips duplicates and rejects an invalid batch atomically", async () => {
   const c = client();
   await c.send("/api/demo/session", {});
+  await approveTestClass(c);
   const list = await c.send("/api/integrations/canvas/assignments");
   assert.equal(list.status, 200);
   assert.equal(list.mode, "sample");
@@ -748,6 +769,7 @@ test("independent demo browsers cannot observe one another's mutations or upload
   const b = client();
   await a.send("/api/demo/session", {});
   await b.send("/api/demo/session", {});
+  await approveTestClass(a);
   const created = await a.send("/api/submissions", claim);
   assert.equal(created.status, 201);
   assert.equal((await a.send("/api/submissions")).submissions.length, 9);
@@ -798,6 +820,10 @@ test("uploaded proof is an attachment visible only to its owner and their chair"
     assert.equal(preview.status, 200);
     assert.match(preview.headers.get("content-disposition"), /^inline;/i);
     assert.equal(preview.headers.get("x-frame-options"), "SAMEORIGIN");
+    assert.equal(preview.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(preview.headers.get("content-security-policy"), fixture.mime === "application/pdf"
+      ? "frame-ancestors 'self'"
+      : "default-src 'none'; frame-ancestors 'self'");
     assert.deepEqual(preview.bytes, fixture.bytes);
     await c.send("/api/demo/session", { persona: "jordan" });
     assert.equal((await c.send(path)).status, 404);
@@ -966,23 +992,20 @@ test("production refuses startup without an explicit public origin", async () =>
   assert.match(invalid.errorOutput, /PUBLIC_ORIGIN/);
 });
 
-test("member class profiles are isolated, validated, and reject stale saves", async () => {
+test("class profiles are isolated and legacy writes cannot create new classes without syllabi", async () => {
   const c = client();
   await c.send("/api/demo/session", { persona: "alex" });
   assert.equal((await request(demo, "/api/profile")).status, 401);
-  const initial = await c.send("/api/profile");
-  const saved = await c.send("/api/profile", { courses: [" MTH 2002 · Calculus II ", "PHY 1001"], version: initial.version });
-  assert.equal(saved.status, 200);
-  assert.deepEqual(saved.courses, ["MTH 2002 · Calculus II", "PHY 1001"]);
-  assert.equal((await c.send("/api/profile", { courses: [], version: initial.version })).status, 409);
-  assert.equal((await c.send("/api/profile", { courses: ["MTH", "mth"], version: saved.version })).status, 422);
-  assert.equal((await c.send("/api/profile", { courses: [], version: saved.version, id: "jordan" })).status, 422);
+  assert.equal((await c.send("/api/profile", { courses: ["MTH 2002"], version: "initial" })).status, 422);
+  const course = await approveTestClass(c);
+  const profile = await c.send("/api/profile");
+  assert.deepEqual(profile.courses, ["MTH 2002"]);
+  assert.equal(profile.classes[0].status, "approved");
+  assert.equal(profile.classes[0].id, course.id);
   await c.send("/api/demo/session", { persona: "jordan" });
   assert.deepEqual((await c.send("/api/profile")).courses, []);
   await c.send("/api/demo/session", { persona: "chair" });
   assert.equal((await c.send("/api/profile")).status, 403);
-  await c.send("/api/demo/session", { persona: "alex" });
-  assert.deepEqual((await c.send("/api/profile")).courses, saved.courses);
 });
 
 test("credit hours require private image evidence and Chair approval", async () => {
@@ -1085,4 +1108,102 @@ test("Chair point adjustments preserve submissions, isolate members and reject s
   assert.equal((await c.send(path)).status, 404);
   await other.send("/api/demo/session", { persona: "alex" });
   assert.equal((await other.send(path)).history.length, 0);
+});
+
+test("syllabus approval gates assignments, isolates files, retains referenced versions and resets with semester", async () => {
+  const c = client();
+  await c.send("/api/demo/session", { persona: "alex" });
+  const syllabusUpload = async name => {
+    const result = await c.send("/api/uploads", { name, mime: "application/pdf", base64: pdf.toString("base64") });
+    assert.equal(result.status, 201);
+    return result.upload.id;
+  };
+  const uploadId = await syllabusUpload("calculus-syllabus.pdf");
+  assert.equal((await c.send("/api/classes", { name: "MTH 2002" })).status, 404);
+  const made = await c.send("/api/classes", { name: "MTH 2002", evidenceId: uploadId, status: "approved", owner: "jordan" });
+  assert.equal(made.status, 201);
+  const first = made.class;
+  assert.equal(first.status, "pending");
+  assert.equal((await c.send("/api/classes", { name: "mth 2002", evidenceId: uploadId })).status, 422);
+  assert.equal((await c.send("/api/submissions", claim)).status, 422);
+  const assignment = { ...claim, classId: first.id };
+  assert.equal((await c.send("/api/submissions", assignment)).status, 422);
+  assert.equal((await c.send("/api/integrations/canvas/import", { items: [{ activity: "major", assignmentId: 2201 }], confirm: true })).status, 422);
+  assert.equal((await c.send("/api/syllabi")).status, 403);
+  assert.equal((await c.send(`/api/syllabi/${first.syllabusId}/review`, { decision: "approved", version: first.version })).status, 403);
+  await c.send("/api/demo/session", { persona: "jordan" });
+  assert.deepEqual((await c.send("/api/classes")).classes, []);
+  assert.equal((await c.send(`/api/syllabi/${first.syllabusId}/evidence`)).status, 404);
+  assert.equal((await c.send("/api/classes", { name: "Stolen", evidenceId: uploadId })).status, 404);
+  assert.equal((await c.send("/api/submissions", assignment)).status, 422);
+  assert.equal((await c.send(`/api/classes/${first.id}/archive`, { version: first.version })).status, 404);
+  await c.send("/api/demo/session", { persona: "chair" });
+  let row = (await c.send("/api/syllabi")).syllabi.find(item => item.id === first.syllabusId);
+  assert.equal(row.memberName, "Noah Knickerbocker");
+  assert.equal((await c.send(`/api/syllabi/${row.id}/evidence`)).mime, "application/pdf");
+  assert.equal((await c.send(`/api/syllabi/${row.id}/review`, { decision: "denied", note: "", version: row.version })).status, 422);
+  assert.equal((await c.send(`/api/syllabi/${row.id}/review`, { decision: "denied", note: "Missing grading scale", version: row.version })).status, 200);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/submissions", assignment)).status, 422);
+  let course = (await c.send("/api/classes")).classes[0];
+  assert.equal(course.reviewNote, "Missing grading scale");
+  assert.equal((await c.send("/api/classes", { name: course.name, classId: course.id, version: first.version, evidenceId: uploadId })).status, 409);
+  const secondUpload = await syllabusUpload("calculus-complete.pdf");
+  const replacement = await c.send("/api/classes", { name: course.name, classId: course.id, version: course.version, evidenceId: secondUpload });
+  assert.equal(replacement.status, 201);
+  const second = replacement.class;
+  await c.send("/api/demo/session", { persona: "chair" });
+  const queue = (await c.send("/api/syllabi")).syllabi;
+  assert.equal(queue.length, 1);
+  row = queue[0];
+  assert.equal(row.id, second.syllabusId);
+  assert.equal((await c.send(`/api/syllabi/${first.syllabusId}/review`, { decision: "approved", version: row.version })).status, 409);
+  assert.equal((await c.send(`/api/syllabi/${row.id}/review`, { decision: "approved", note: "Complete", version: "stale" })).status, 409);
+  assert.equal((await c.send(`/api/syllabi/${row.id}/review`, { decision: "approved", note: "Complete", version: row.version })).status, 200);
+  assert.equal((await c.send(`/api/syllabi/${row.id}/review`, { decision: "approved", note: "Complete", version: row.version })).status, 409);
+  await c.send("/api/demo/session", { persona: "alex" });
+  const submitted = await c.send("/api/submissions", { ...assignment, course: "Spoofed class", syllabusId: "spoofed" });
+  assert.equal(submitted.status, 201);
+  assert.equal(submitted.submission.course, "MTH 2002");
+  assert.equal(submitted.submission.syllabusId, second.syllabusId);
+  course = (await c.send("/api/classes")).classes[0];
+  const thirdUpload = await syllabusUpload("revised-syllabus.pdf");
+  const third = await c.send("/api/classes", { name: "Renamed calculus", classId: course.id, version: course.version, evidenceId: thirdUpload });
+  assert.equal(third.status, 201);
+  assert.equal((await c.send("/api/submissions", { ...assignment, title: "Next task" })).status, 422);
+  const detail = (await c.send(`/api/submissions/${submitted.submission.id}`)).submission;
+  assert.equal(detail.syllabus.id, second.syllabusId);
+  assert.equal(detail.syllabus.className, "MTH 2002");
+  assert.equal(detail.syllabus.status, "approved");
+  assert.equal(detail.syllabus.current, false);
+  assert.equal((await c.send(`/api/syllabi/${second.syllabusId}/evidence`)).status, 200);
+  assert.equal((await c.send(`/api/classes/${course.id}/archive`, { version: third.class.version })).status, 200);
+  assert.deepEqual((await c.send("/api/classes")).classes, []);
+  assert.equal((await c.send("/api/submissions", { ...assignment, title: "Archived class" })).status, 422);
+  assert.equal((await c.send(`/api/submissions/${submitted.submission.id}`)).submission.syllabus.id, second.syllabusId);
+  await c.send("/api/demo/session", { persona: "chair" });
+  assert.deepEqual((await c.send("/api/syllabi")).syllabi, []);
+  assert.equal((await c.send(`/api/submissions/${submitted.submission.id}/review`, { decision: "approved", points: 5, note: "Verified historical syllabus" })).status, 200);
+  const preview = await c.send("/api/semester/preview");
+  assert.equal((await c.send("/api/semester/reset", { confirm: "DELETE SEMESTER", previewToken: preview.previewToken,
+    semester: { name: "Next test term", startDate: "2027-01-01", checkpointDates: ["2027-02-01", "2027-03-01", "2027-04-01"], targetDate: "2027-05-01", endDate: "2027-05-15" } })).status, 200);
+  assert.equal((await c.send(`/api/syllabi/${second.syllabusId}/evidence`)).status, 404);
+  assert.deepEqual((await c.send("/api/syllabi")).syllabi, []);
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.deepEqual((await c.send("/api/classes")).classes, []);
+});
+
+test("custom grade categories require a syllabus while non-grade activities remain available", async () => {
+  const c = client();
+  await c.send("/api/demo/session", { persona: "chair" });
+  const initial = await c.send("/api/point-categories");
+  const custom = await c.send("/api/point-categories", { version: initial.version, category: { name: "Custom graded work", unit: "assignment", proof: "Graded work", enabled: true,
+    mode: "grade", rate: 2, minGrade: 90, bands: [], study: false, weeklyLimit: null } });
+  assert.equal(custom.status, 200);
+  const activity = custom.categories.at(-1).id;
+  await c.send("/api/demo/session", { persona: "alex" });
+  assert.equal((await c.send("/api/submissions", { ...claim, activity })).status, 422);
+  assert.equal((await c.send("/api/submissions", { ...claim, title: "Office hours 9/28", activity: "office", quantity: 1 })).status, 201);
+  await approveTestClass(c);
+  assert.equal((await c.send("/api/submissions", { ...claim, activity })).status, 201);
 });

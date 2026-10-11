@@ -12,6 +12,7 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 - Scholarship Chair review queue, approval/denial, member progress, roster controls, and audit history.
 - Chair-only GPA CSV import with configurable header/data rows and field columns, reviewed member matching, tier-only persistence, and staged tiers for later invitations.
 - Private PDF/JPEG/PNG evidence uploads and authenticated downloads.
+- Per-class syllabus uploads, Chair approval before graded assignments, and the original syllabus reference retained with each assignment.
 - Server-side ownership and chair-role checks, session cookies, and CSRF validation.
 - Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets. Members receive a 16-word recovery key on their first sign-in each semester and can use it to reset a password without email. A dedicated office account holds the Chair role; Microsoft code remains inactive legacy support.
 - Chapter membership bound to a stable verified provider identity, not a user-entered role.
@@ -48,9 +49,9 @@ The local version uses Node's built-in SQLite module. The hosted version uses Po
 
 ## Main workflows
 
-**Member:** submit an activity with evidence → await review → see the decision and approved total. A pending estimate never contributes to the approved total.
+**Member:** add a class and syllabus in My profile → receive Chair syllabus approval → select that class for a graded assignment → submit evidence → see the decision and approved total. Non-graded activities do not require an approved syllabus. A pending estimate never contributes to the approved total.
 
-**Chair:** inspect evidence → enter a whole-point award or a denial reason → review history and totals update from the same submission record. Point totals are computed, not kept in a second manually edited sheet.
+**Chair:** approve or deny class syllabi in **Syllabi**. When reviewing a graded assignment, expand its **Class syllabus** reference alongside the evidence, then enter a whole-point award or a denial reason. Review history and totals update from the same submission record; totals are computed, not kept in a second manually edited sheet.
 
 **Canvas (deferred):** the code for a read-only import exists, but the feature is hidden until the chapter decides to implement and test it.
 
@@ -175,13 +176,15 @@ The design follows [ato.org](https://ato.org/). This is an unofficial chapter wo
 
 The public test credentials `test1` / `1234` on the chapter sign-in screen open a browser-only sandbox member. They do not authenticate with Supabase or grant access to chapter records. Test submissions stay in that browser and can be reviewed in its Chair demo.
 
-Members manage up to 20 current-semester classes in My profile. Class lists are private to the member and selectable in submissions; previous submission labels remain unchanged when classes are removed. Semester reset clears class lists.
+Members manage current-semester classes under **My profile → My classes**. Each new class requires a PDF, PNG, or JPEG syllabus (5 MB live; 1 MB in the sandbox). Major, minor, lab, and other grade-scored categories require a current approved syllabus. Existing saved class names start as **Syllabus needed**; no class is approved automatically. Existing submissions without a syllabus reference remain unchanged.
+
+Syllabus files and references are available only to their member and the Scholarship Chair. Replacing a syllabus starts a new review and blocks new graded assignments for that class until approval. Previously submitted assignments keep their original syllabus reference after replacement or class removal. Semester reset removes class records, syllabi, and their uploaded files through the existing cleanup process; separately retained backups and downloaded copies follow their own retention policies. This feature uses existing chapter state and private upload storage and requires no database schema migration.
 
 The public browser sandbox uses tab sessionStorage, never the chapter database or IndexedDB. Refreshing and switching demo roles in the same tab preserve its temporary records; ending the tab session clears them. Browser session restoration may restore sessionStorage; Reset demo explicitly erases the current sandbox records.
 
 Members can submit enrolled credit hours with a PNG/JPEG enrollment image from My profile. The Chair reviews these in Credit hours; approval alone updates enrolled credits for future point estimates, while existing awarded points remain unchanged. One pending request per member is allowed. Evidence is private to its owner and Chair, and semester cleanup removes credit requests and their uploads. The public sandbox keeps its image in tab sessionStorage (1 MB per image); real uploads use the private evidence store (5 MB).
 
-My profile uses a left-to-right, two-column card layout: profile picture, classes, then credit hours. Members can upload or remove their own PNG/JPEG picture; the private evidence access rules and semester cleanup apply. The overview checkpoint calendar highlights the configured deadline and shows remaining approved points below it.
+My profile groups profile picture and password settings on the left, with classes and credit hours on the right; narrow screens stack these columns. Members can upload or remove their own PNG/JPEG picture; the private evidence access rules and semester cleanup apply. The overview checkpoint calendar highlights the configured deadline and shows remaining approved points below it.
 The Scholarship Chair can edit cumulative quotas for all five tiers under Point rules → Edit checkpoint quotas (also linked from Semester settings). Whole-point quotas apply to all members of that tier, including the final semester goal, without changing earned points or checkpoint dates. Stale edits are rejected; quotas reset to the standard plan at semester reset. Browser demo changes remain isolated to its tab session.
 
 The Scholarship Chair manages point categories from Point rules → Manage point categories. Categories support fixed, hourly, grade-threshold, and grade-band scoring, evidence instructions, optional weekly claim limits, and the shared five-hour study cap. Disabled categories stop accepting new submissions. Each claim stores a snapshot of its category so later edits do not change historical names, evidence requirements, estimates, or awards. Category templates persist across semester resets; sandbox changes remain tab-local. The retired Connections page is no longer offered in navigation.

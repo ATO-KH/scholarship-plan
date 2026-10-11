@@ -2,7 +2,8 @@ import { pilotEligible } from "./pilot-access.mjs";
 import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
-import { profileView, validateCourses } from "../web/profile-data.mjs";
+import { profileView } from "../web/profile-data.mjs";
+import { classView, classInput, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
@@ -686,16 +687,18 @@ function claim(input, state, user, evidence) {
   if (production && semester.endDate && policyDay() > semester.endDate)
     fail(422, "This semester submission period has closed.");
   try {
+    const course = assignmentClass(state, user.id, categoriesFor(state).find(row => row.id === input.activity), input);
     // The shared demo scorer validates dates, caps and duplicates. Actual evidence
     // authorization has already happened here; its sample sentinel is internal only.
     return {
       ...validateClaim(
-        { ...input, evidence: "sample" },
+        { ...input, ...course, evidence: "sample" },
         state,
         user,
         policyDay(),
       ),
       evidence,
+      ...course,
     };
   } catch (error) {
     if (error.status) throw error;
@@ -985,7 +988,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${directUploads ? storageStatus(env).origin || "" : ""}; frame-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; connect-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${directUploads ? storageStatus(env).origin || "" : ""}; frame-src 'self' blob: ${directUploads ? storageStatus(env).origin || "" : ""}; connect-src 'self' ${directUploads ? storageStatus(env).origin || "" : ""}; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
   );
   if (production)
     res.setHeader("Strict-Transport-Security", "max-age=31536000");
@@ -1608,21 +1611,118 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 200, updated);
       }
-      if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
-        if (user.role !== "member") fail(403, "Profiles are available to members only.");
-        if (req.method === "GET") return json(res, 200, profileView(await stateOf(session.workspace), user.id));
-        const courses = validateCourses(input);
-        const updated = await atomic(async () => {
-          await lockWorkspace(session.workspace);
-          await assertActiveSession(session, user);
-          const state = await stateOf(session.workspace);
-          if (input.version !== profileView(state, user.id).version) fail(409, "Your classes changed in another tab. Reload this page before saving.");
+      if (path === "/api/classes" && req.method === "GET") {
+        individual(user);
+        return json(res, 200, classView(await stateOf(session.workspace), user.id));
+      }
+      if (path === "/api/classes" && req.method === "POST") {
+        individual(user);
+        const name = classInput(input);
+        const generation = await academicSnapshot(session, requestGeneration);
+        const updated = await mutate(session, user, async state => {
+          academicGuard(state, generation);
+          const upload = await getUpload(input.evidenceId, session, user, true);
+          if (!["application/pdf", "image/png", "image/jpeg"].includes(upload.mime)) fail(422, "Upload a PDF, PNG or JPEG syllabus.");
+          state.classRecords ||= [];
+          state.syllabi ||= [];
+          let course = input.classId && state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived);
+          if (input.classId && !course) fail(404, "Class not found.");
+          if (course && course.version !== input.version) fail(409, "This class changed. Reload it before replacing the syllabus.");
+          if (state.classRecords.some(row => row.owner === user.id && !row.archived && row.id !== course?.id && row.name.toLowerCase() === name.toLowerCase()))
+            fail(422, "This class already exists. Replace its syllabus instead.");
+          const visibleClasses = classView(state, user.id).classes;
+          const upgradingLegacy = visibleClasses.some(row => row.id === null && row.name.toLowerCase() === name.toLowerCase());
+          if (!course && !upgradingLegacy && visibleClasses.length >= 20) fail(422, "You can have up to 20 active classes.");
+          if (!course) {
+            course = { id: randomUUID(), owner: user.id, name, archived: false, createdAt: now() };
+            state.classRecords.push(course);
+          }
+          const syllabus = { id: randomUUID(), classId: course.id, className: name, owner: user.id, evidenceId: upload.id,
+            fileName: upload.name, mime: upload.mime, status: "pending", version: randomUUID(), reviewNote: "", createdAt: now(), reviewedAt: null, reviewer: null };
+          state.syllabi.push(syllabus);
+          Object.assign(course, { name, syllabusId: syllabus.id, version: randomUUID(), updatedAt: now() });
           state.memberProfiles ||= {};
-          state.memberProfiles[user.id] = { courses, version: randomUUID() };
-          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
-          return profileView(state, user.id);
+          const profile = state.memberProfiles[user.id] ||= { courses: [] };
+          profile.version = randomUUID();
+          // Remove an upgraded legacy string; the stable class record is authoritative.
+          profile.courses = (profile.courses || []).filter(value => value.toLowerCase() !== name.toLowerCase());
+          await audit(session.workspace, user.name, "syllabus.upload", syllabus.id, course.id);
+          const view = classView(state, user.id);
+          return { class: view.classes.find(row => row.id === course.id), ...view };
         });
-        return json(res, 200, updated);
+        return json(res, 201, updated);
+      }
+      const archiveClass = path.match(/^\/api\/classes\/([^/]+)\/archive$/);
+      if (archiveClass && req.method === "POST") {
+        individual(user);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          if (archiveClass[1] === "legacy") {
+            const name = classInput(input);
+            const legacy = classView(state, user.id).classes.find(row => row.id === null && row.name === name);
+            if (!legacy) fail(404, "Legacy class not found. Reload your classes.");
+            if (input.version !== legacy.version) fail(409, "Your classes changed. Reload them before removing this class.");
+            const profile = state.memberProfiles[user.id];
+            profile.courses = profile.courses.filter(value => value !== name);
+            profile.version = randomUUID();
+            await audit(session.workspace, user.name, "class.archive", "legacy");
+            return classView(state, user.id);
+          }
+          const course = (state.classRecords || []).find(row => row.id === archiveClass[1] && row.owner === user.id && !row.archived);
+          if (!course) fail(404, "Class not found.");
+          if (input.version !== course.version) fail(409, "This class changed. Reload it before archiving.");
+          Object.assign(course, { archived: true, version: randomUUID(), updatedAt: now() });
+          state.memberProfiles ||= {};
+          (state.memberProfiles[user.id] ||= { courses: [] }).version = randomUUID();
+          await audit(session.workspace, user.name, "class.archive", course.id);
+          return classView(state, user.id);
+        });
+        return json(res, 200, result);
+      }
+      if (path === "/api/syllabi" && req.method === "GET") {
+        chair(user);
+        const state = await stateOf(session.workspace);
+        const names = new Map((await listMembers(session.workspace, state)).map(row => [row.id, row.name]));
+        return json(res, 200, { syllabi: (state.syllabi || [])
+          .filter(row => syllabusView(state, row).current)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map(row => ({ ...syllabusView(state, row), memberName: names.get(row.owner) || "Former member" })) });
+      }
+      const syllabusRoute = path.match(/^\/api\/syllabi\/([^/]+)\/(evidence|review)$/);
+      if (syllabusRoute) {
+        const state = await stateOf(session.workspace);
+        const item = (state.syllabi || []).find(row => row.id === syllabusRoute[1] && (user.role === "chair" || row.owner === user.id));
+        if (!item) fail(404, "Syllabus not found.");
+        if (syllabusRoute[2] === "evidence" && req.method === "GET") {
+          const upload = await getUpload(item.evidenceId, session, user);
+          await audit(session.workspace, user.name, "syllabus.view", item.id, user.role);
+          return json(res, 200, { name: upload.name, mime: upload.mime, previewUrl: `/api/uploads/${upload.id}/preview`, downloadUrl: `/api/uploads/${upload.id}` });
+        }
+        if (syllabusRoute[2] === "review" && req.method === "POST") {
+          chair(user);
+          const note = typeof input.note === "string" ? input.note.trim() : "";
+          if (!["approved", "denied"].includes(input.decision) || note.length > 1000 || (input.decision === "denied" && note.length < 5))
+            fail(422, "Approve the syllabus or deny it with a reason of at least 5 characters.");
+          const result = await mutate(session, user, async current => {
+            academicGuard(current, requestGeneration);
+            const syllabus = (current.syllabi || []).find(row => row.id === item.id);
+            const course = (current.classRecords || []).find(row => row.id === syllabus?.classId && row.owner === syllabus.owner && !row.archived && row.syllabusId === syllabus.id);
+            if (!syllabus || !course || syllabus.status !== "pending" || syllabus.version !== input.version)
+              fail(409, "This syllabus changed or was already reviewed. Reload the list.");
+            Object.assign(syllabus, { status: input.decision, reviewNote: note, reviewedAt: now(), reviewer: user.name, version: randomUUID() });
+            course.version = randomUUID();
+            current.memberProfiles ||= {};
+            (current.memberProfiles[course.owner] ||= { courses: [] }).version = randomUUID();
+            await audit(session.workspace, user.name, "syllabus.review", syllabus.id, input.decision);
+            return { syllabus: syllabusView(current, syllabus) };
+          });
+          return json(res, 200, result);
+        }
+      }
+      if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
+        individual(user);
+        if (req.method === "POST") fail(422, "Add classes with a syllabus in My profile.");
+        return json(res, 200, profileView(await stateOf(session.workspace), user.id));
       }
       if (path === "/api/faq" && req.method === "GET")
         return json(res, 200, faqView(await stateOf(session.workspace)));
@@ -1870,6 +1970,7 @@ const server = http.createServer(async (req, res) => {
             const value = claim(
               {
                 title: a.name.slice(0, 120),
+                classId: selected.classId,
                 course: a.course.slice(0, 80),
                 activity: selected.activity,
                 date: gradeDate,
@@ -2186,7 +2287,11 @@ const server = http.createServer(async (req, res) => {
         );
         if (inline) {
           res.setHeader("X-Frame-Options", "SAMEORIGIN");
-          res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'self'");
+          // Native PDF viewers need their own resources. Uploaded PDFs are
+          // signature-checked and served with application/pdf + nosniff.
+          res.setHeader("Content-Security-Policy", upload.mime === "application/pdf"
+            ? "frame-ancestors 'self'"
+            : "default-src 'none'; frame-ancestors 'self'");
         }
         res.writeHead(200, {
           "Content-Type": upload.mime,
@@ -2604,6 +2709,7 @@ const server = http.createServer(async (req, res) => {
               .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
               .map(async (s) => ({
                 ...s,
+                syllabus: submissionSyllabus(state, s),
                 memberName:
                   (await member(session.workspace, s.owner))?.name ||
                   "Former member",
@@ -2660,6 +2766,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, {
             submission: {
               ...item,
+              syllabus: submissionSyllabus(state, item),
               memberName:
                 (await member(session.workspace, item.owner))?.name ||
                 "Former member",
@@ -2863,6 +2970,8 @@ const server = http.createServer(async (req, res) => {
       "/faq-data.mjs": "faq-data.mjs",
       "/faq-ui.mjs": "faq-ui.mjs",
       "/profile-data.mjs": "profile-data.mjs",
+      "/syllabus-data.mjs": "syllabus-data.mjs",
+      "/syllabus-ui.mjs": "syllabus-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",
       "/credit-ui.mjs": "credit-ui.mjs",

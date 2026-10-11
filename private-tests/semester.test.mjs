@@ -34,6 +34,8 @@ async function fixture(t, files = [local]) {
     pointAdjustments: [{ id: 'adjustment', owner: 'member', delta: 20, reason: 'private academic comment' }],
     profilePictures: { alex: 'test-upload' },
     creditRequests: [{ id: 'test-request', owner: 'alex', credits: 12, status: 'pending' }],
+    classRecords: [{ id: 'class', owner: 'member', name: 'Math', syllabusId: 'syllabus' }],
+    syllabi: [{ id: 'syllabus', classId: 'class', owner: 'member', reviewNote: 'private academic comment' }],
     memberProfiles: { alex: { courses: ['MTH 2002'], version: 'test' } },
     pointCategories: categoriesFor().map(item => item.id === 'major' ? { ...item, name: 'Retained rules' } : item), pointCategoryRevision: 7,
     checkpointQuotas: [[1, 2, 3, 4, 5], [2, 4, 6, 8, 10], [3, 6, 9, 12, 15], [4, 8, 12, 16, 20]], checkpointQuotaRevision: 2,
@@ -136,6 +138,8 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.ok(audit.some(item => item.action === 'semester.reset.start'));
   assert.ok(!JSON.stringify(audit).includes('private academic comment'));
   assert.equal((await f.state()).pointAdjustments, undefined);
+  assert.equal(state.classRecords, undefined);
+  assert.equal(state.syllabi, undefined);
   assert.throws(() => assertAcademicWritesAllowed(state), error => error.status === 423);
   assert.ok(!JSON.stringify(status).includes(local.filename));
   await assert.rejects(f.start(), error => error.status === 423);
@@ -306,4 +310,14 @@ test('a point adjustment invalidates a pending semester deletion preview', async
   await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify(state), 'chapter');
   await assert.rejects(f.start({ previewToken: preview.previewToken }), error => error.status === 409);
   assert.equal((await f.state()).pointAdjustments.length, 2);
+});
+
+
+test('syllabus review invalidates a pending semester deletion preview', async t => {
+  const f = await fixture(t);
+  const preview = await previewSemesterReset({ db: f.db, workspace: 'chapter', now: f.now });
+  const state = await f.state();
+  state.syllabi[0].status = 'approved';
+  await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify(state), 'chapter');
+  await assert.rejects(f.start({ previewToken: preview.previewToken }), error => error.status === 409);
 });

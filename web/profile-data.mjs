@@ -1,6 +1,8 @@
+import { classView } from "./syllabus-data.mjs";
 export function profileView(state, id) {
   const profile = state.memberProfiles?.[id];
-  return { courses: profile?.courses || [], version: profile?.version || "initial" };
+  const { classes } = classView(state, id);
+  return { courses: classes.map(row => row.name), classes, version: profile?.version || "initial" };
 }
 export function validateCourses(input) {
   const fail = (message) => { throw Object.assign(Error(message), { status: 422 }); };

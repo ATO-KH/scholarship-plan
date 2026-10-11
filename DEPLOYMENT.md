@@ -135,6 +135,16 @@ The page-5 ranges are authoritative: 3.50+ → Tier 1; 3.00–3.49 → Tier 2; 2
 
 The CSV is read in the Chair's browser. Only roster emails and resulting tiers are sent in the apply request; raw GPAs, 900 numbers, and the file are not saved by the portal. Import API activity is redacted. Closing the dialog removes the preview and source cells from the page. Semester reset clears staged tiers, retains column layout settings, and preserves existing member accounts and their current tiers for the Chair to review. The **Edit** control beside an active member's tier can adjust tier and enrolled credits without entering a GPA.
 
+### Manage class syllabi
+
+Members open **My profile → My classes → Add class**, enter a class name, and upload a PDF, PNG, or JPEG syllabus (up to 5 MB). Existing saved class names appear as **Syllabus needed** and need an upload and review; they are not automatically approved. The Chair opens **Syllabi**, expands a class to view its file, and approves it or denies it with a reason. Only approved classes can be selected for major, minor, lab, or other grade-scored submissions. The server enforces this restriction; non-graded activities remain available.
+
+Each new graded submission records the syllabus version used at submission time. Expand **Class syllabus** in the assignment details to view it alongside the assignment evidence. Replacing a syllabus requires fresh approval before further graded submissions; removing a class prevents further graded submissions for it. Both actions preserve syllabus references on existing assignments. Older submissions without a reference remain unchanged.
+
+Access is limited to the member who uploaded the syllabus and the Chair. Semester reset clears class records, syllabus versions, and their files using the existing evidence deletion process. It does not erase separately retained backups or downloaded copies. The browser sandbox uses fictional files in tab-session storage, limited to 1 MB each. No additional provider credentials or database schema migration are required for this feature.
+
+Before rollout, use fictional documents to check pending and denied classes cannot submit graded assignments, approval unlocks them, another member cannot retrieve the syllabus, and replacement/removal preserves an existing assignment's original reference. Check both PDF and image previews on the browsers members will use. These checks do not send invitations.
+
 ### Maintain the shared FAQ
 
 Sign in as Scholarship Chair and open **FAQ → Add question**. Enter plain-text question and answer, then choose **Save for all members**. Each question expands separately. The Chair can expand an item to edit or remove it; removal asks for confirmation. Members can read the entries but cannot change them. Changes persist between semesters. Simultaneous edits require the stale editor to reload before saving. The public `/demo/` uses the same controls with fictional, browser-local records; its FAQ changes do not change the chapter FAQ.
@@ -154,7 +164,7 @@ Generate `APP_ENCRYPTION_KEY` as 32 random bytes encoded in base64 and store it 
 
 Use the chair's **Semester** screen. Enter the next semester's name, start date, three checkpoint dates, final target date, and submission closing date. Dates must be ordered; no checkpoint dates are guessed. Tier point targets stay unchanged. Claims for dates before the new start are rejected once that semester activates.
 
-Review the old semester and deletion counts, then type `DELETE SEMESTER`. The preview token expires after ten minutes and binds the exact records shown; a changed or expired preview must be refreshed. Starting the reset immediately removes old submission/evidence access and freezes new academic writes. Member accounts, stable identity bindings, and account/security audit events remain. Old submission, evidence, and Canvas-import audit details are removed.
+Review the old semester and deletion counts, then type `DELETE SEMESTER`. The preview token expires after ten minutes and binds the exact records shown; a changed or expired preview must be refreshed. Starting the reset immediately removes old submission/evidence access and freezes new academic writes. Member accounts, stable identity bindings, and account/security audit events remain. Old submission, evidence, class, syllabus, and Canvas-import audit details are removed.
 
 The deletion job persists the planned quarantine and final object keys before withdrawing access. **Resume cleanup** processes one object per request and keeps issuing bounded requests while work is available. It stops when finished, waiting, interrupted, or unable to verify deletion. Each object requires verified absence before it is counted as deleted. Provider failures keep the job incomplete and retryable; a terminated worker's lease expires after two minutes. Refreshing/redeploying does not discard the inventory. There is no automatic background scheduler in this version: return to the chair screen and resume when its next-attempt time arrives.
 

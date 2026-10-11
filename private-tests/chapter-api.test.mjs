@@ -145,7 +145,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal(progress.status, 200);
     assert.deepEqual(progress.payload.members.map((entry) => entry.id), [added.payload.member.id]);
     assert.equal(progress.payload.members[0].goal, 90);
-    assert.equal(progress.payload.members[0].checkpointDate, "2026-10-10");
+    assert.equal(progress.payload.members[0].checkpointDate, [...chair.payload.semester.checkpointDates, chair.payload.semester.targetDate].find(date => date >= chair.payload.today) || chair.payload.semester.targetDate);
 
     const member = await request("/api/auth/login", {
       identifier: "1234", password: "correct-test-password",
@@ -243,7 +243,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal(nextSemester.status, 200, JSON.stringify(nextSemester.payload));
     const nextProgress = await request("/api/members", undefined, chairCookie);
     assert.equal(nextProgress.status, 200);
-    assert.equal(nextProgress.payload.members[0].checkpointDate, "2026-10-01");
+    assert.equal(nextProgress.payload.members[0].checkpointDate, ["2026-09-10", "2026-10-01", "2026-11-01", "2026-12-01"].find(date => date >= chair.payload.today) || "2026-12-01");
     const afterSemester = await request("/api/auth/login", {
       identifier: added.payload.loginId, password: "a-long-new-password",
     });

@@ -161,6 +161,7 @@ function navigation() {
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
         ["credit-review", "Credit hours"],
+        ["syllabi", "Syllabi"],
         ["roster", "Chapter roster"],
         ["semester", "Semester settings"],
         ["audit", "Review history"],
@@ -213,7 +214,7 @@ function route() {
     p = "queue";
   if (
     user?.role === "member" &&
-    ["queue", "members", "roster", "audit", "semester", "credit-review"].includes(p)
+    ["queue", "members", "roster", "audit", "semester", "credit-review", "syllabi"].includes(p)
   )
     p = "overview";
   return p;
@@ -375,6 +376,25 @@ function creditReviewPage() {
   main.innerHTML = heading("", "Credit hours", "") + `<section class="panel credit-review-shell">${loading("Loading credit-hours requests…")}</section>`;
   loadCreditPanel(main.querySelector(".credit-review-shell"), true);
 }
+async function syllabusReviewPage() {
+  if (user.role !== "chair") return;
+  const owner = user.id;
+  main.innerHTML = heading("", "Syllabi", "") + `<section class="panel syllabus-shell">${loading("Loading syllabi…")}</section>`;
+  const container = main.querySelector(".syllabus-shell");
+  const isCurrent = () => user?.id === owner && route() === "syllabi" && container.isConnected;
+  try {
+    const { mountSyllabusQueue } = await import("/syllabus-ui.mjs");
+    if (isCurrent()) await mountSyllabusQueue(container, { api, esc, loading, isCurrent });
+  } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
+}
+async function loadSubmissionSyllabus(container, submission) {
+  const owner = user.id;
+  const isCurrent = () => user?.id === owner && modal.open && container.isConnected;
+  try {
+    const { mountSubmissionSyllabus } = await import("/syllabus-ui.mjs");
+    if (isCurrent()) mountSubmissionSyllabus(container, submission.syllabus, { api, esc, loading, isCurrent });
+  } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
+}
 async function openCalendar() {
   if (user.role !== "member" || document.querySelector(".calendar-dialog")) return;
   const owner = user.id;
@@ -464,7 +484,7 @@ async function profilePage() {
   try {
     const { mountProfile } = await import("/profile-ui.mjs");
     if (user?.id !== owner || route() !== "profile" || !container.isConnected) return;
-    await mountProfile(container, { api, esc, loading, name: user.name,
+    await mountProfile(container, { api, esc, loading, config: appConfig,
       isCurrent: () => user?.id === owner && route() === "profile" && container.isConnected });
   } catch (error) {
     if (container.isConnected) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
@@ -477,10 +497,10 @@ async function loadCoursePicker() {
   indicator.innerHTML = loading("Loading classes…", true);
   input.after(indicator);
   try {
-    const [profile, { mountCoursePicker }] = await Promise.all([api("/api/profile"), import("/profile-ui.mjs")]);
-    if (input.isConnected && user?.id === owner) { mountCoursePicker(input, profile.courses, esc); updateSubmissionPrompts(activity($("#activity").value)); }
+    const [profile, { mountCoursePicker }] = await Promise.all([api("/api/classes"), import("/profile-ui.mjs")]);
+    if (input.isConnected && user?.id === owner) { mountCoursePicker(input, profile.classes, esc); updateSubmissionPrompts(activity($("#activity").value)); }
   } catch {
-    if (input.isConnected) indicator.innerHTML = '<small>Saved classes unavailable. You can enter a course manually.</small>';
+    if (input.isConnected) indicator.innerHTML = '<small>Classes unavailable. Reopen this form to retry; assignments require an approved syllabus.</small>';
     return;
   } finally {
     if (indicator.querySelector(".loading-state")) indicator.remove();
@@ -525,6 +545,7 @@ function render() {
       faq: faqPage,
       profile: profilePage,
       "credit-review": creditReviewPage,
+      syllabi: syllabusReviewPage,
       api: apiPage,
       roster: rosterPage,
       semester: semesterPage,
@@ -700,11 +721,13 @@ function updateSubmissionPrompts(a) {
   title.placeholder = "e.g. " + example;
   const noCourse = ["meeting", "calendar"].includes(a.id), optional = noCourse || a.id === "night";
   field.hidden = noCourse;
-  field.querySelector("label").textContent = optional ? "Subject studied (optional)" : "Course or subject";
+  field.querySelector("label").textContent = a.grade ? "Approved class" : optional ? "Subject studied (optional)" : "Course or subject";
   course.placeholder = a.study ? "e.g. Calculus or MTH 2002" : "e.g. MTH 2002";
   course.required = !optional;
   if (saved) { saved.required = !optional; saved.disabled = noCourse; }
   course.disabled = noCourse || !!(saved && saved.selectedIndex !== saved.options.length - 1);
+  if (course.coursePicker) course.coursePicker.update(a);
+  else $("#claim-form button[type=submit]").disabled = Boolean(a.grade);
   $("#note").placeholder = a.id === "night" ? "Anything the chair should know about this study night" : a.id === "partner" || a.id === "group" ? "Names of the brothers you studied with and any relevant details" : a.id === "office" ? "Professor’s name and topics discussed" : "Any details that help the chair verify this activity";
 }
 function updateForm() {
@@ -750,6 +773,10 @@ async function submitClaim(e) {
     $("#activity-search").focus();
     return;
   }
+  if (activity($("#activity").value)?.grade && !$("#saved-course")?.value) {
+    formError("Choose a class with an approved syllabus. Upload syllabi in My profile first.");
+    return;
+  }
   if (busy) return;
   busy = true;
   const button = e.submitter || e.target.querySelector('button[type="submit"]');
@@ -787,10 +814,11 @@ async function detail(id) {
     openModal(
       canReview ? "REVIEW SUBMISSION" : "SUBMISSION DETAILS",
       `${esc(s.id)} · ${esc(s.memberName)}`,
-      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Private preview · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
+      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}${a.grade || s.syllabus ? `<section id="submission-syllabus">${loading("Loading syllabus reference…", true)}</section>` : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Private preview · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
     );
     if (canReview) $("#review-form").addEventListener("submit", review);
     evidence(id);
+    if (a.grade || s.syllabus) loadSubmissionSyllabus($("#submission-syllabus"), s);
   } catch (e) {
     toast(e.message);
   }

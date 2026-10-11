@@ -104,9 +104,14 @@ test(
         .prepare("SELECT workspace FROM sessions WHERE id=?")
         .get(sessionId);
       workspace = record.workspace;
+      const state = JSON.parse((await db.prepare("SELECT data FROM chapters WHERE workspace=?").get(workspace)).data);
+      state.classRecords = [{ id: "fixture-class", owner: "alex", name: "MTH 2002", syllabusId: "fixture-syllabus", version: "1", archived: false }];
+      state.syllabi = [{ id: "fixture-syllabus", classId: "fixture-class", className: "MTH 2002", owner: "alex", status: "approved", version: "1" }];
+      await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), workspace);
       const claim = {
         title: "Postgres concurrent quiz",
         course: "MTH 2002",
+        classId: "fixture-class",
         activity: "major",
         grade: 95,
         date: "2026-09-28",

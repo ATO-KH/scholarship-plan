@@ -2,7 +2,8 @@ import { pointAdjustmentView, applyPointAdjustment } from "../point-adjustment-d
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../category-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../credit-data.mjs";
-import { profileView, validateCourses } from "../profile-data.mjs";
+import { profileView } from "../profile-data.mjs";
+import { classView, classInput, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
 import {
@@ -36,6 +37,25 @@ const json = (data, status = 200) =>
 const fail = (status, message) => {
   throw Object.assign(Error(message), { status });
 };
+function sandboxSyllabusFile(file) {
+  const message = "Choose a PDF, PNG, or JPEG syllabus under 1 MB for the sandbox.";
+  if (!file || typeof file.name !== "string" || !file.name.trim() || file.name.length > 200 ||
+      typeof file.dataUrl !== "string" || file.dataUrl.length > 1400000 ||
+      !["application/pdf", "image/png", "image/jpeg"].includes(file.mime) ||
+      !Number.isInteger(file.size) || file.size <= 0 || file.size > 1048576) fail(422, message);
+  const match = file.dataUrl.match(/^data:(application\/pdf|image\/png|image\/jpeg);base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match || match[1] !== file.mime) fail(422, message);
+  let bytes;
+  try { bytes = atob(match[2]); } catch { fail(422, message); }
+  if (bytes.length !== file.size || btoa(bytes) !== match[2]) fail(422, message);
+  const signatures = {
+    "application/pdf": [37, 80, 68, 70, 45],
+    "image/png": [137, 80, 78, 71, 13, 10, 26, 10],
+    "image/jpeg": [255, 216, 255],
+  };
+  if (!signatures[file.mime].every((byte, index) => bytes.charCodeAt(index) === byte)) fail(422, message);
+  return { name: file.name.trim(), mime: file.mime, size: file.size, dataUrl: file.dataUrl };
+}
 function quotaMember(state, member) {
   if (member.role !== "member") return member;
   member = { ...member, tier: state.tierOverrides?.[member.id] ?? member.tier };
@@ -45,7 +65,15 @@ function quotaMember(state, member) {
     goal: checkpoints.at(-1).targets[member.tier - 1],
     checkpoint: checkpoint.targets[member.tier - 1], checkpointDate: checkpoint.date };
 }
-export async function handle(req, path) {
+// Keep the tab's read/validate/write operations ordered so two stale reviews
+// cannot overwrite each other between sessionStorage reads.
+let requests = Promise.resolve();
+export function handle(req, path) {
+  const response = requests.then(() => handleRequest(req, path));
+  requests = response.catch(() => {});
+  return response;
+}
+async function handleRequest(req, path) {
   try {
     if (!["GET", "POST"].includes(req.method)) fail(405, "Method not allowed.");
     const input = req.method === "POST" ? await req.json() : null;
@@ -155,14 +183,98 @@ export async function handle(req, path) {
     }
     if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
       if (user.role !== "member") fail(403, "Profiles are available to members only.");
-      if (req.method === "POST") {
-        const courses = validateCourses(input);
-        if (input.version !== profileView(state, user.id).version) fail(409, "Your classes changed in another tab. Reload this page before saving.");
-        state.memberProfiles ||= {};
-        state.memberProfiles[user.id] = { courses, version: crypto.randomUUID() };
-        await save(session);
-      }
+      if (req.method === "POST") fail(422, "Add classes with a syllabus in My profile.");
       return json(profileView(state, user.id));
+    }
+    const memberClasses = () => {
+      if (user.role !== "member") fail(403, "Classes are available to members only.");
+    };
+    const bumpProfile = (owner) => {
+      state.memberProfiles ||= {};
+      state.memberProfiles[owner] = { ...(state.memberProfiles[owner] || {}), version: crypto.randomUUID() };
+    };
+    if (path === "/api/classes" && req.method === "GET") {
+      memberClasses();
+      return json(classView(state, user.id));
+    }
+    if (path === "/api/classes" && req.method === "POST") {
+      memberClasses();
+      const name = classInput(input), file = sandboxSyllabusFile(input.file);
+      state.classRecords ||= [];
+      state.syllabi ||= [];
+      let course = input.classId ? state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived) : null;
+      if (input.classId && !course) fail(404, "Class not found.");
+      if (course && input.version !== course.version) fail(409, "This class changed. Reload your classes before uploading.");
+      if (state.classRecords.some(row => row.owner === user.id && !row.archived && row.id !== course?.id && row.name.toLowerCase() === name.toLowerCase()))
+        fail(422, "This class is already in your profile. Replace its syllabus instead.");
+      const existingClasses = classView(state, user.id).classes;
+      const legacy = existingClasses.find(row => !row.id && row.name.toLowerCase() === name.toLowerCase());
+      if (!course && !legacy && existingClasses.length >= 20) fail(422, "Provide up to 20 classes.");
+      if (legacy && input.version !== undefined && input.version !== legacy.version) fail(409, "Your classes changed. Reload before uploading.");
+      const now = new Date().toISOString();
+      if (!course) {
+        course = { id: crypto.randomUUID(), owner: user.id, name, archived: false, createdAt: now };
+        state.classRecords.push(course);
+      }
+      const item = { id: crypto.randomUUID(), classId: course.id, className: name, owner: user.id,
+        status: "pending", version: crypto.randomUUID(), fileName: file.name, mime: file.mime, file,
+        reviewNote: "", createdAt: now, reviewedAt: null, reviewer: null };
+      Object.assign(course, { name, syllabusId: item.id, version: crypto.randomUUID(), updatedAt: now });
+      state.syllabi.push(item);
+      bumpProfile(user.id);
+      state.memberProfiles[user.id].courses = (state.memberProfiles[user.id].courses || []).filter(value => value.toLowerCase() !== name.toLowerCase());
+      await save(session);
+      const view = classView(state, user.id);
+      return json({ ...view, class: view.classes.find(row => row.id === course.id) }, 201);
+    }
+    if (path === "/api/classes/legacy/archive" && req.method === "POST") {
+      memberClasses();
+      const name = classInput(input);
+      const legacy = classView(state, user.id).classes.find(row => !row.id && row.name === name);
+      if (!legacy) fail(404, "Class not found.");
+      if (legacy.version !== input.version) fail(409, "Your classes changed. Reload before removing a class.");
+      state.memberProfiles[user.id].courses = state.memberProfiles[user.id].courses.filter(course => course !== name);
+      bumpProfile(user.id);
+      await save(session);
+      return json(classView(state, user.id));
+    }
+    const classArchive = path.match(/^\/api\/classes\/([a-f0-9-]{36})\/archive$/);
+    if (classArchive && req.method === "POST") {
+      memberClasses();
+      const course = state.classRecords?.find(row => row.id === classArchive[1] && row.owner === user.id && !row.archived);
+      if (!course) fail(404, "Class not found.");
+      if (course.version !== input.version) fail(409, "This class changed. Reload before removing it.");
+      Object.assign(course, { archived: true, version: crypto.randomUUID(), updatedAt: new Date().toISOString() });
+      bumpProfile(user.id);
+      await save(session);
+      return json(classView(state, user.id));
+    }
+    if (path === "/api/syllabi" && req.method === "GET") {
+      chair();
+      return json({ syllabi: (state.syllabi || []).map(item => ({ ...syllabusView(state, item), memberName: members.find(member => member.id === item.owner)?.name || "Member" })).filter(item => item.current).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+    }
+    const syllabusRoute = path.match(/^\/api\/syllabi\/([a-f0-9-]{36})\/(evidence|review)$/);
+    if (syllabusRoute) {
+      const item = state.syllabi?.find(row => row.id === syllabusRoute[1]);
+      if (!item || (user.role !== "chair" && item.owner !== user.id)) fail(404, "Syllabus not found.");
+      if (syllabusRoute[2] === "evidence" && req.method === "GET")
+        return json({ name: item.fileName, mime: item.mime, previewUrl: item.file.dataUrl, downloadUrl: item.file.dataUrl });
+      if (syllabusRoute[2] === "review" && req.method === "POST") {
+        chair();
+        if (item.version !== input.version || item.status !== "pending" || !syllabusView(state, item).current)
+          fail(409, "This syllabus changed or has already been reviewed. Reload the list.");
+        if (!["approved", "denied"].includes(input.decision)) fail(422, "Choose approve or deny.");
+        const note = typeof input.note === "string" ? input.note.trim() : "";
+        if (note.length > 1000 || (input.decision === "denied" && note.length < 5))
+          fail(422, "Add a reason for a denial (5–1,000 characters).");
+        const now = new Date().toISOString();
+        Object.assign(item, { status: input.decision, reviewNote: note, reviewer: user.name, reviewedAt: now, version: crypto.randomUUID() });
+        const course = state.classRecords.find(row => row.id === item.classId && row.owner === item.owner);
+        Object.assign(course, { version: crypto.randomUUID(), updatedAt: now });
+        bumpProfile(item.owner);
+        await save(session);
+        return json({ syllabus: syllabusView(state, item) });
+      }
     }
     if (path === "/api/faq" && req.method === "GET") return json(faqView(state));
     if (path === "/api/faq" && req.method === "POST") {
@@ -249,7 +361,8 @@ export async function handle(req, path) {
       if (user.role !== "member") fail(403, "Use a member account to submit.");
       let claim;
       try {
-        claim = validateClaim(input, state, user);
+        const reference = assignmentClass(state, user.id, categoriesFor(state).find(item => item.id === input.activity), input);
+        claim = { ...validateClaim({ ...input, ...reference }, state, user), ...reference };
       } catch (e) {
         fail(e.status || 422, e.message);
       }
@@ -300,10 +413,11 @@ export async function handle(req, path) {
         }
         let claim;
         try {
-          claim = validateClaim(
+          const reference = assignmentClass(state, user.id, categoriesFor(state).find(item => item.id === selected.activity), selected);
+          claim = { ...validateClaim(
             {
               title: a.name,
-              course: a.course,
+              course: reference.course || a.course,
               date: a.submission.graded_at.slice(0, 10),
               activity: selected.activity,
               grade: (a.submission.score / a.points_possible) * 100,
@@ -313,7 +427,7 @@ export async function handle(req, path) {
             },
             state,
             user,
-          );
+          ), ...reference };
         } catch (e) {
           fail(422, a.name + ": " + e.message);
         }
@@ -345,6 +459,7 @@ export async function handle(req, path) {
         return json({
           submission: {
             ...item,
+            syllabus: submissionSyllabus(state, item),
             memberName: members.find((m) => m.id === item.owner).name,
           },
         });
@@ -352,6 +467,7 @@ export async function handle(req, path) {
         return json({
           evidence: {
             sample: true,
+            syllabus: submissionSyllabus(state, item),
             submission: item.id,
             title: item.title,
             activity: categoryForSubmission(state, item)?.name || item.activity,
@@ -450,6 +566,7 @@ export async function handle(req, path) {
     }
     fail(404, "Demo API endpoint not found.");
   } catch (e) {
+    if (e.name === "QuotaExceededError") return json({ error: "Sandbox storage is full. Reset this sandbox or choose a smaller file." }, 507);
     return json(
       {
         error: e.status
