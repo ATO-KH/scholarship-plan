@@ -1,9 +1,9 @@
 import { pointAdjustmentView, applyPointAdjustment } from "../point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../category-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
-import { validateCreditRequest, validateCreditReview, creditSummary } from "../credit-data.mjs";
+import { creditSummary } from "../credit-data.mjs";
 import { profileView } from "../profile-data.mjs";
-import { classView, classInput, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, approveClassCredits, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
 import {
@@ -61,7 +61,7 @@ function quotaMember(state, member) {
   member = { ...member, tier: state.tierOverrides?.[member.id] ?? member.tier };
   const { checkpoints } = checkpointQuotaView(state);
   const checkpoint = checkpoints.find(entry => entry.date >= TODAY) || checkpoints.at(-1);
-  return { ...member, credits: state.creditOverrides?.[member.id] ?? member.credits,
+  return { ...member, creditsManaged: creditsManaged(state, member.id), credits: state.creditOverrides?.[member.id] ?? member.credits,
     goal: checkpoints.at(-1).targets[member.tier - 1],
     checkpoint: checkpoint.targets[member.tier - 1], checkpointDate: checkpoint.date };
 }
@@ -127,28 +127,17 @@ async function handleRequest(req, path) {
       return json({ credits: user.credits, requests: (state.creditRequests || []).filter(item => user.role === "chair" || item.owner === user.id).map(creditSummary) });
     if (path === "/api/credit-requests" && req.method === "POST") {
       if (user.role !== "member") fail(403, "Use a member account to submit.");
-      state.creditRequests ||= [];
-      validateCreditRequest(input, state.creditRequests, user.id);
-      if (typeof input.image !== "string" || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(input.image) || input.image.length > 1400000) fail(422, "Choose a PNG or JPEG image under 1 MB for the sandbox.");
-      const item = { id: crypto.randomUUID(), owner: user.id, memberName: user.name, credits: input.credits, previousCredits: user.credits, image: input.image, status: "pending", createdAt: new Date().toISOString() };
-      state.creditRequests.unshift(item);
-      await save(session);
-      return json({ request: creditSummary(item) }, 201);
+      fail(410, "Add credit hours to each class in My profile. The Scholarship Chair approves the class and its hours together.");
     }
     const creditRoute = path.match(/^\/api\/credit-requests\/([a-f0-9-]{36})\/(evidence|review)$/);
     if (creditRoute) {
+      if (req.method === "POST" && creditRoute[2] === "review") {
+        chair();
+        fail(410, "Credit hours are now reviewed with each class. Use Classes to approve enrolled hours.");
+      }
       const item = state.creditRequests?.find(item => item.id === creditRoute[1]);
       if (!item || (user.role !== "chair" && item.owner !== user.id)) fail(404, "Request not found.");
       if (req.method === "GET" && creditRoute[2] === "evidence") return json({ image: item.image });
-      if (req.method === "POST" && creditRoute[2] === "review") {
-        chair();
-        const target = sessionMembers.find(member => member.id === item.owner);
-        validateCreditReview(input, item, target.credits);
-        if (input.decision === "approved") { state.creditOverrides ||= {}; state.creditOverrides[item.owner] = item.credits; }
-        Object.assign(item, { status: input.decision, reviewNote: input.note.trim(), reviewer: user.name, reviewedAt: new Date().toISOString() });
-        await save(session);
-        return json({ request: creditSummary(item) });
-      }
     }
     if (path === "/api/profile/picture" && ["GET", "POST"].includes(req.method)) {
       if (user.role !== "member") fail(403, "Use a member account.");
@@ -195,19 +184,20 @@ async function handleRequest(req, path) {
     };
     if (path === "/api/classes" && req.method === "GET") {
       memberClasses();
-      return json(classView(state, user.id));
+      return json(classView(state, user.id, user.credits));
     }
     if (path === "/api/classes" && req.method === "POST") {
       memberClasses();
-      const name = classInput(input), file = sandboxSyllabusFile(input.file);
+      const name = classInput(input), credits = classCredits(input), file = sandboxSyllabusFile(input.file);
       state.classRecords ||= [];
       state.syllabi ||= [];
       let course = input.classId ? state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived) : null;
       if (input.classId && !course) fail(404, "Class not found.");
+      if (course?.pendingRemoval) fail(409, "This class has a removal request awaiting Chair review.");
       if (course && input.version !== course.version) fail(409, "This class changed. Reload your classes before uploading.");
       if (state.classRecords.some(row => row.owner === user.id && !row.archived && row.id !== course?.id && row.name.toLowerCase() === name.toLowerCase()))
         fail(422, "This class is already in your profile. Replace its syllabus instead.");
-      const existingClasses = classView(state, user.id).classes;
+      const existingClasses = classView(state, user.id, user.credits).classes;
       const legacy = existingClasses.find(row => !row.id && row.name.toLowerCase() === name.toLowerCase());
       if (!course && !legacy && existingClasses.length >= 20) fail(422, "Provide up to 20 classes.");
       if (legacy && input.version !== undefined && input.version !== legacy.version) fail(409, "Your classes changed. Reload before uploading.");
@@ -217,26 +207,26 @@ async function handleRequest(req, path) {
         state.classRecords.push(course);
       }
       const item = { id: crypto.randomUUID(), classId: course.id, className: name, owner: user.id,
-        status: "pending", version: crypto.randomUUID(), fileName: file.name, mime: file.mime, file,
+        credits, status: "pending", version: crypto.randomUUID(), fileName: file.name, mime: file.mime, file,
         reviewNote: "", createdAt: now, reviewedAt: null, reviewer: null };
       Object.assign(course, { name, syllabusId: item.id, version: crypto.randomUUID(), updatedAt: now });
       state.syllabi.push(item);
       bumpProfile(user.id);
       state.memberProfiles[user.id].courses = (state.memberProfiles[user.id].courses || []).filter(value => value.toLowerCase() !== name.toLowerCase());
       await save(session);
-      const view = classView(state, user.id);
+      const view = classView(state, user.id, user.credits);
       return json({ ...view, class: view.classes.find(row => row.id === course.id) }, 201);
     }
     if (path === "/api/classes/legacy/archive" && req.method === "POST") {
       memberClasses();
       const name = classInput(input);
-      const legacy = classView(state, user.id).classes.find(row => !row.id && row.name === name);
+      const legacy = classView(state, user.id, user.credits).classes.find(row => !row.id && row.name === name);
       if (!legacy) fail(404, "Class not found.");
       if (legacy.version !== input.version) fail(409, "Your classes changed. Reload before removing a class.");
       state.memberProfiles[user.id].courses = state.memberProfiles[user.id].courses.filter(course => course !== name);
       bumpProfile(user.id);
       await save(session);
-      return json(classView(state, user.id));
+      return json(classView(state, user.id, user.credits));
     }
     const classArchive = path.match(/^\/api\/classes\/([a-f0-9-]{36})\/archive$/);
     if (classArchive && req.method === "POST") {
@@ -244,14 +234,43 @@ async function handleRequest(req, path) {
       const course = state.classRecords?.find(row => row.id === classArchive[1] && row.owner === user.id && !row.archived);
       if (!course) fail(404, "Class not found.");
       if (course.version !== input.version) fail(409, "This class changed. Reload before removing it.");
-      Object.assign(course, { archived: true, version: crypto.randomUUID(), updatedAt: new Date().toISOString() });
+      if (course.pendingRemoval) fail(409, "This class already has a removal request awaiting Chair review.");
+      if (course.approvedCredits !== undefined && course.approvedCredits !== null)
+        course.pendingRemoval = { version: crypto.randomUUID(), createdAt: new Date().toISOString() };
+      else course.archived = true;
+      Object.assign(course, { version: crypto.randomUUID(), updatedAt: new Date().toISOString() });
       bumpProfile(user.id);
       await save(session);
-      return json(classView(state, user.id));
+      return json(classView(state, user.id, user.credits));
+    }
+    const removalReview = path.match(/^\/api\/classes\/([^/]+)\/removal-review$/);
+    if (removalReview && req.method === "POST") {
+      chair();
+      const note = typeof input.note === "string" ? input.note.trim() : "";
+      if (!["approved", "denied"].includes(input.decision) || note.length > 1000 || (input.decision === "denied" && note.length < 5))
+        fail(422, "Approve the removal or deny it with a reason of at least 5 characters.");
+      const course = state.classRecords?.find(row => row.id === removalReview[1] && !row.archived);
+      if (!course?.pendingRemoval || course.pendingRemoval.version !== input.version)
+        fail(409, "This removal changed or was already reviewed. Reload the list.");
+      const target = sessionMembers.find(row => row.id === course.owner && row.role === "member");
+      if (!target) fail(404, "Active member not found.");
+      if (input.decision === "approved") {
+        course.archived = true;
+        state.creditOverrides ||= {};
+        state.creditOverrides[course.owner] = approvedClassCredits(state, course.owner);
+        refreshPendingCreditEstimates(state, course.owner, multiplier({ credits: state.creditOverrides[course.owner] }));
+      }
+      delete course.pendingRemoval;
+      Object.assign(course, { version: crypto.randomUUID(), updatedAt: new Date().toISOString(), removalReview: { decision: input.decision, note, reviewer: user.name, reviewedAt: new Date().toISOString() } });
+      bumpProfile(course.owner);
+      await save(session);
+      return json({ classId: course.id, decision: input.decision, ...classView(state, course.owner, quotaMember(state, target).credits) });
     }
     if (path === "/api/syllabi" && req.method === "GET") {
       chair();
-      return json({ syllabi: (state.syllabi || []).map(item => ({ ...syllabusView(state, item), memberName: members.find(member => member.id === item.owner)?.name || "Member" })).filter(item => item.current).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+      const owners = new Map(sessionMembers.map(row => [row.id, row]));
+      return json({ syllabi: (state.syllabi || []).map(item => ({ ...syllabusView(state, item, owners.get(item.owner)?.credits ?? null), memberName: owners.get(item.owner)?.name || "Member" })).filter(item => item.current).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        removals: (state.classRecords || []).filter(row => !row.archived && row.pendingRemoval).map(row => ({ ...removalView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Member" })) });
     }
     const syllabusRoute = path.match(/^\/api\/syllabi\/([a-f0-9-]{36})\/(evidence|review)$/);
     if (syllabusRoute) {
@@ -261,19 +280,25 @@ async function handleRequest(req, path) {
         return json({ name: item.fileName, mime: item.mime, previewUrl: item.file.dataUrl, downloadUrl: item.file.dataUrl });
       if (syllabusRoute[2] === "review" && req.method === "POST") {
         chair();
-        if (item.version !== input.version || item.status !== "pending" || !syllabusView(state, item).current)
+        if (item.version !== input.version || item.status !== "pending" || !syllabusView(state, item).current || syllabusView(state, item).removalPending)
           fail(409, "This syllabus changed or has already been reviewed. Reload the list.");
         if (!["approved", "denied"].includes(input.decision)) fail(422, "Choose approve or deny.");
         const note = typeof input.note === "string" ? input.note.trim() : "";
         if (note.length > 1000 || (input.decision === "denied" && note.length < 5))
           fail(422, "Add a reason for a denial (5–1,000 characters).");
+        const course = state.classRecords.find(row => row.id === item.classId && row.owner === item.owner);
+        if (input.decision === "approved") {
+          const total = approveClassCredits(state, course, item.credits);
+          state.creditOverrides ||= {};
+          state.creditOverrides[item.owner] = total;
+          refreshPendingCreditEstimates(state, item.owner, multiplier({ credits: total }));
+        }
         const now = new Date().toISOString();
         Object.assign(item, { status: input.decision, reviewNote: note, reviewer: user.name, reviewedAt: now, version: crypto.randomUUID() });
-        const course = state.classRecords.find(row => row.id === item.classId && row.owner === item.owner);
         Object.assign(course, { version: crypto.randomUUID(), updatedAt: now });
         bumpProfile(item.owner);
         await save(session);
-        return json({ syllabus: syllabusView(state, item) });
+        return json({ syllabus: syllabusView(state, item, quotaMember(state, sessionMembers.find(row => row.id === item.owner)).credits) });
       }
     }
     if (path === "/api/faq" && req.method === "GET") return json(faqView(state));
@@ -305,10 +330,13 @@ async function handleRequest(req, path) {
         fail(422, "Choose a tier from 1–5 and enrolled credits from 0–30.");
       const target = sessionMembers.find(member => member.id === academicRoute[1] && member.role === "member");
       if (!target) fail(404, "Member not found.");
+      if (creditsManaged(state, target.id) && target.credits !== input.credits)
+        fail(409, "This member’s credit hours come from approved classes. Review their classes to change the total.");
       state.tierOverrides ||= {};
       state.creditOverrides ||= {};
       state.tierOverrides[target.id] = input.tier;
       state.creditOverrides[target.id] = input.credits;
+      refreshPendingCreditEstimates(state, target.id, multiplier({ credits: input.credits }));
       await save(session);
       return json({ member: quotaMember(state, target) });
     }

@@ -3,9 +3,9 @@ import { pilotEligible } from "./pilot-access.mjs";
 import { invitationView, invitationList, runInvitation } from "./invitations.mjs";
 import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
-import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
+import { creditSummary } from "../web/credit-data.mjs";
 import { profileView } from "../web/profile-data.mjs";
-import { classView, classInput, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, approveClassCredits, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
@@ -63,6 +63,7 @@ import {
 import {
   TODAY,
   members as demoMembers,
+  multiplier,
   seed,
   totals,
   validateClaim,
@@ -226,7 +227,8 @@ async function assertActiveSession(session, user, checkEligibility = true) {
   if (production && authMode === "chapter" && currentMember.role === "chair")
     await assertChairMfaSession(db, session, currentMember.id);
   if (checkEligibility && user.role !== "chair")
-    assertRosterEligibility(await stateOf(session.workspace), user);
+    assertRosterEligibility(await stateOf(session.workspace), currentMember);
+  return currentMember;
 }
 
 function rosterView(state) {
@@ -404,20 +406,22 @@ async function member(workspace, id) {
     .prepare("SELECT * FROM members WHERE workspace=? AND id=?")
     .get(workspace, id);
   if (!row) return null;
-  const schedule = semesterCheckpoints(await stateOf(workspace));
+  const state = await stateOf(workspace);
+  const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return memberView(row, checkpoint, schedule.at(-1));
+  return { ...memberView(row, checkpoint, schedule.at(-1)), creditsManaged: creditsManaged(state, row.id) };
 }
 async function listMembers(workspace, state) {
   const rows = await db
     .prepare("SELECT * FROM members WHERE workspace=? ORDER BY name")
     .all(workspace);
   if (!rows.length) return [];
-  const schedule = semesterCheckpoints(state ?? (await stateOf(workspace)));
+  state ??= await stateOf(workspace);
+  const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return rows.map((row) => memberView(row, checkpoint, schedule.at(-1)));
+  return rows.map((row) => ({ ...memberView(row, checkpoint, schedule.at(-1)), creditsManaged: creditsManaged(state, row.id) }));
 }
 async function tierImportView(workspace, state) {
   const existing = (await listMembers(workspace, state)).filter((entry) => entry.role === "member");
@@ -592,9 +596,9 @@ async function cleanup() {
 async function mutate(session, user, fn) {
   return await atomic(async () => {
     await lockWorkspace(session.workspace);
-    await assertActiveSession(session, user);
+    const currentMember = await assertActiveSession(session, user);
     const state = await stateOf(session.workspace);
-    const result = await fn(state);
+    const result = await fn(state, currentMember);
     await db
       .prepare("UPDATE chapters SET data=? WHERE workspace=?")
       .run(JSON.stringify(state), session.workspace);
@@ -1664,23 +1668,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === "/api/credit-requests" && req.method === "POST") {
         individual(user);
-        const result = await atomic(async () => {
-          await lockWorkspace(session.workspace);
-          await assertActiveSession(session, user);
-          const state = await stateOf(session.workspace);
-          academicGuard(state, requestGeneration);
-          state.creditRequests ||= [];
-          validateCreditRequest(input, state.creditRequests, user.id);
-          const upload = await getUpload(input.evidenceId, session, user, true);
-          if (!["image/png", "image/jpeg"].includes(upload.mime)) fail(422, "Upload a PNG or JPEG image of your enrolled credit hours.");
-          const current = await member(session.workspace, user.id);
-          const item = { id: randomUUID(), owner: user.id, memberName: current.name, credits: input.credits, previousCredits: current.credits, evidenceId: upload.id, status: "pending", createdAt: new Date().toISOString() };
-          state.creditRequests.unshift(item);
-          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
-          await audit(session.workspace, user.name, "credits.submit", item.id, "Credit-hours request submitted");
-          return creditSummary(item);
-        });
-        return json(res, 201, { request: result });
+        fail(410, "Add credit hours to each class in My profile. The Scholarship Chair approves the class and its hours together.");
       }
       const creditRoute = path.match(/^\/api\/credit-requests\/([a-f0-9-]{36})\/(evidence|review)$/);
       if (creditRoute && req.method === "GET" && creditRoute[2] === "evidence") {
@@ -1691,22 +1679,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (creditRoute && req.method === "POST" && creditRoute[2] === "review") {
         chair(user);
-        const result = await atomic(async () => {
-          await lockWorkspace(session.workspace);
-          await assertActiveSession(session, user);
-          const state = await stateOf(session.workspace);
-          academicGuard(state, requestGeneration);
-          const item = state.creditRequests?.find(item => item.id === creditRoute[1]);
-          const target = item && await member(session.workspace, item.owner);
-          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
-          validateCreditReview(input, item, target.credits);
-          if (input.decision === "approved") await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(item.credits, session.workspace, target.id);
-          Object.assign(item, { status: input.decision, reviewNote: input.note.trim(), reviewer: user.name, reviewedAt: new Date().toISOString() });
-          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
-          await audit(session.workspace, user.name, `credits.${item.status}`, item.owner, `${item.previousCredits} to ${item.credits} credits; ${item.reviewNote}`);
-          return creditSummary(item);
-        });
-        return json(res, 200, { request: result });
+        fail(410, "Credit hours are now reviewed with each class. Use Classes to approve enrolled hours.");
       }
       if (path === "/api/profile/picture" && ["GET", "POST"].includes(req.method)) {
         individual(user);
@@ -1773,11 +1746,11 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === "/api/classes" && req.method === "GET") {
         individual(user);
-        return json(res, 200, classView(await stateOf(session.workspace), user.id));
+        return json(res, 200, classView(await stateOf(session.workspace), user.id, user.credits));
       }
       if (path === "/api/classes" && req.method === "POST") {
         individual(user);
-        const name = classInput(input);
+        const name = classInput(input), credits = classCredits(input);
         const generation = await academicSnapshot(session, requestGeneration);
         const updated = await mutate(session, user, async state => {
           academicGuard(state, generation);
@@ -1787,18 +1760,21 @@ const server = http.createServer(async (req, res) => {
           state.syllabi ||= [];
           let course = input.classId && state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived);
           if (input.classId && !course) fail(404, "Class not found.");
+          if (course?.pendingRemoval) fail(409, "This class has a removal request awaiting Chair review.");
           if (course && course.version !== input.version) fail(409, "This class changed. Reload it before replacing the syllabus.");
           if (state.classRecords.some(row => row.owner === user.id && !row.archived && row.id !== course?.id && row.name.toLowerCase() === name.toLowerCase()))
             fail(422, "This class already exists. Replace its syllabus instead.");
           const visibleClasses = classView(state, user.id).classes;
-          const upgradingLegacy = visibleClasses.some(row => row.id === null && row.name.toLowerCase() === name.toLowerCase());
+          const legacy = visibleClasses.find(row => row.id === null && row.name.toLowerCase() === name.toLowerCase());
+          const upgradingLegacy = !!legacy;
+          if (legacy && input.version !== undefined && input.version !== legacy.version) fail(409, "Your classes changed. Reload before uploading.");
           if (!course && !upgradingLegacy && visibleClasses.length >= 20) fail(422, "You can have up to 20 active classes.");
           if (!course) {
             course = { id: randomUUID(), owner: user.id, name, archived: false, createdAt: now() };
             state.classRecords.push(course);
           }
           const syllabus = { id: randomUUID(), classId: course.id, className: name, owner: user.id, evidenceId: upload.id,
-            fileName: upload.name, mime: upload.mime, status: "pending", version: randomUUID(), reviewNote: "", createdAt: now(), reviewedAt: null, reviewer: null };
+            credits, fileName: upload.name, mime: upload.mime, status: "pending", version: randomUUID(), reviewNote: "", createdAt: now(), reviewedAt: null, reviewer: null };
           state.syllabi.push(syllabus);
           Object.assign(course, { name, syllabusId: syllabus.id, version: randomUUID(), updatedAt: now() });
           state.memberProfiles ||= {};
@@ -1807,7 +1783,7 @@ const server = http.createServer(async (req, res) => {
           // Remove an upgraded legacy string; the stable class record is authoritative.
           profile.courses = (profile.courses || []).filter(value => value.toLowerCase() !== name.toLowerCase());
           await audit(session.workspace, user.name, "syllabus.upload", syllabus.id, course.id);
-          const view = classView(state, user.id);
+          const view = classView(state, user.id, (await member(session.workspace, user.id)).credits);
           return { class: view.classes.find(row => row.id === course.id), ...view };
         });
         return json(res, 201, updated);
@@ -1826,27 +1802,61 @@ const server = http.createServer(async (req, res) => {
             profile.courses = profile.courses.filter(value => value !== name);
             profile.version = randomUUID();
             await audit(session.workspace, user.name, "class.archive", "legacy");
-            return classView(state, user.id);
+            return classView(state, user.id, (await member(session.workspace, user.id)).credits);
           }
           const course = (state.classRecords || []).find(row => row.id === archiveClass[1] && row.owner === user.id && !row.archived);
           if (!course) fail(404, "Class not found.");
           if (input.version !== course.version) fail(409, "This class changed. Reload it before archiving.");
-          Object.assign(course, { archived: true, version: randomUUID(), updatedAt: now() });
+          if (course.pendingRemoval) fail(409, "This class already has a removal request awaiting Chair review.");
+          if (course.approvedCredits !== undefined && course.approvedCredits !== null)
+            course.pendingRemoval = { version: randomUUID(), createdAt: now() };
+          else course.archived = true;
+          Object.assign(course, { version: randomUUID(), updatedAt: now() });
           state.memberProfiles ||= {};
           (state.memberProfiles[user.id] ||= { courses: [] }).version = randomUUID();
-          await audit(session.workspace, user.name, "class.archive", course.id);
-          return classView(state, user.id);
+          await audit(session.workspace, user.name, course.pendingRemoval ? "class.removal_request" : "class.archive", course.id);
+          return classView(state, user.id, (await member(session.workspace, user.id)).credits);
+        });
+        return json(res, 200, result);
+      }
+      const removalReview = path.match(/^\/api\/classes\/([^/]+)\/removal-review$/);
+      if (removalReview && req.method === "POST") {
+        chair(user);
+        const note = typeof input.note === "string" ? input.note.trim() : "";
+        if (!["approved", "denied"].includes(input.decision) || note.length > 1000 || (input.decision === "denied" && note.length < 5))
+          fail(422, "Approve the removal or deny it with a reason of at least 5 characters.");
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          const course = (state.classRecords || []).find(row => row.id === removalReview[1] && !row.archived);
+          if (!course?.pendingRemoval || course.pendingRemoval.version !== input.version)
+            fail(409, "This removal changed or was already reviewed. Reload the list.");
+          const target = await member(session.workspace, course.owner);
+          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+          if (input.decision === "approved") {
+            course.archived = true;
+            const total = approvedClassCredits(state, course.owner);
+            await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(total, session.workspace, course.owner);
+            refreshPendingCreditEstimates(state, course.owner, multiplier({ credits: total }));
+          }
+          delete course.pendingRemoval;
+          Object.assign(course, { version: randomUUID(), updatedAt: now(), removalReview: { decision: input.decision, note, reviewer: user.name, reviewedAt: now() } });
+          state.memberProfiles ||= {};
+          (state.memberProfiles[course.owner] ||= { courses: [] }).version = randomUUID();
+          await audit(session.workspace, user.name, "class.removal_review", course.id, `${input.decision}; ${note}`);
+          return { classId: course.id, decision: input.decision, ...classView(state, course.owner, (await member(session.workspace, course.owner)).credits) };
         });
         return json(res, 200, result);
       }
       if (path === "/api/syllabi" && req.method === "GET") {
         chair(user);
         const state = await stateOf(session.workspace);
-        const names = new Map((await listMembers(session.workspace, state)).map(row => [row.id, row.name]));
+        const owners = new Map((await listMembers(session.workspace, state)).map(row => [row.id, row]));
         return json(res, 200, { syllabi: (state.syllabi || [])
           .filter(row => syllabusView(state, row).current)
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-          .map(row => ({ ...syllabusView(state, row), memberName: names.get(row.owner) || "Former member" })) });
+          .map(row => ({ ...syllabusView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Former member" })),
+          removals: (state.classRecords || []).filter(row => !row.archived && row.pendingRemoval)
+            .map(row => ({ ...removalView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Former member" })) });
       }
       const syllabusRoute = path.match(/^\/api\/syllabi\/([^/]+)\/(evidence|review)$/);
       if (syllabusRoute) {
@@ -1867,14 +1877,21 @@ const server = http.createServer(async (req, res) => {
             academicGuard(current, requestGeneration);
             const syllabus = (current.syllabi || []).find(row => row.id === item.id);
             const course = (current.classRecords || []).find(row => row.id === syllabus?.classId && row.owner === syllabus.owner && !row.archived && row.syllabusId === syllabus.id);
-            if (!syllabus || !course || syllabus.status !== "pending" || syllabus.version !== input.version)
+            if (!syllabus || !course || course.pendingRemoval || syllabus.status !== "pending" || syllabus.version !== input.version)
               fail(409, "This syllabus changed or was already reviewed. Reload the list.");
+            const target = await member(session.workspace, course.owner);
+            if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+            if (input.decision === "approved") {
+              const total = approveClassCredits(current, course, syllabus.credits);
+              await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(total, session.workspace, course.owner);
+              refreshPendingCreditEstimates(current, course.owner, multiplier({ credits: total }));
+            }
             Object.assign(syllabus, { status: input.decision, reviewNote: note, reviewedAt: now(), reviewer: user.name, version: randomUUID() });
             course.version = randomUUID();
             current.memberProfiles ||= {};
             (current.memberProfiles[course.owner] ||= { courses: [] }).version = randomUUID();
             await audit(session.workspace, user.name, "syllabus.review", syllabus.id, input.decision);
-            return { syllabus: syllabusView(current, syllabus) };
+            return { syllabus: syllabusView(current, syllabus, input.decision === "approved" ? approvedClassCredits(current, course.owner) : target.credits) };
           });
           return json(res, 200, result);
         }
@@ -2073,7 +2090,7 @@ const server = http.createServer(async (req, res) => {
           ? await liveAssignments(session, user)
           : { assignments: canvasAssignments };
         const assignments = fetched.assignments;
-        const result = await mutate(session, user, async (state) => {
+        const result = await mutate(session, user, async (state, user) => {
           academicGuard(state, generation);
           if (
             production &&
@@ -2762,11 +2779,15 @@ const server = http.createServer(async (req, res) => {
             fail(404, "Active member not found.");
           if (state.roster?.directory?.find((entry) => entry.email === target.email)?.membership === "new_member" && input.tier !== 1)
             fail(422, "New members must be assigned Tier 1.");
+          if (creditsManaged(state, target.id) && target.credits !== input.credits)
+            fail(409, "This member’s credit hours come from approved classes. Review their classes to change the total.");
           if (target.tier === input.tier && target.credits === input.credits)
             return target;
           await db.prepare(
             "UPDATE members SET tier=?, credits=? WHERE workspace=? AND id=? AND role='member' AND active=1",
           ).run(input.tier, input.credits, session.workspace, target.id);
+          refreshPendingCreditEstimates(state, target.id, multiplier({ credits: input.credits }));
+          await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
           await audit(session.workspace, user.name, "roster.academic_settings", target.id,
             `tier ${target.tier} to ${input.tier}; credits ${target.credits} to ${input.credits}`);
           return await member(session.workspace, target.id);
@@ -2871,7 +2892,7 @@ const server = http.createServer(async (req, res) => {
             "Upload your evidence file or import a verified Canvas assignment first.",
           );
         else evidence = (await getUpload(evidenceId, session, user, true)).id;
-        const result = await mutate(session, user, async (state) => {
+        const result = await mutate(session, user, async (state, user) => {
           academicGuard(state, generation);
           if (evidence !== "sample")
             await getUpload(evidence, session, user, true);
@@ -3110,6 +3131,7 @@ const server = http.createServer(async (req, res) => {
       "/profile-data.mjs": "profile-data.mjs",
       "/syllabus-data.mjs": "syllabus-data.mjs",
       "/syllabus-ui.mjs": "syllabus-ui.mjs",
+      "/file-preview-ui.mjs": "file-preview-ui.mjs",
       "/chair-mfa-ui.mjs": "chair-mfa-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",

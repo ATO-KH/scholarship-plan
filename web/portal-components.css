@@ -14,11 +14,12 @@
 .faq-item-actions .table-link { padding: 0; border: 0; background: none; color: var(--ink); text-decoration: underline; cursor: pointer; }
 .faq-editor .field { margin-bottom: 18px; }
 .faq-editor textarea { resize: vertical; min-height: 120px; }
-.loading-state { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 16px; min-height: 180px; color: var(--muted); text-align: center; }
+.loading-state { display: flex; width: 100%; min-width: 0; box-sizing: border-box; flex-direction: column; justify-content: center; align-items: center; gap: 16px; min-height: 180px; color: var(--muted); text-align: center; }
+.loading-state > span { min-width: 0; overflow-wrap: anywhere; }
 .auth-cross { display: block; aspect-ratio: 1; color: #ff9b26; }
 .auth-cross > svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .loading-state .auth-cross { width: 72px; height: 72px; flex: 0 0 auto; }
-.loading-state-compact { display: inline-flex; flex-direction: row; min-height: 0; gap: 12px; }
+.loading-state-compact { flex-direction: row; min-height: 36px; gap: 12px; }
 .loading-state-compact .auth-cross { width: 28px; height: 28px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 600px) {
@@ -204,7 +205,7 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 }
 
 .course-loading { margin-top: 8px; padding: 6px; min-height: 40px; }
-.course-loading .loading-state { text-align: left; font-size: 13px; gap: 10px; }
+.course-loading .loading-state { font-size: 13px; gap: 10px; }
 
 .overview-points-stack { display: flex; flex-direction: column; min-width: 0; }
 .overview-points-stack > .points-panel { flex: 1; }
@@ -230,6 +231,17 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 
 .inline-evidence-image { display: block; max-width: 100%; height: auto; margin: 12px auto; }
 .inline-evidence-pdf { display: block; width: 100%; height: min(65dvh, 650px); border: 1px solid var(--line); margin: 12px 0; background: white; }
+.file-preview { min-width: 0; margin-top: 12px; }
+.file-preview-frame { position: relative; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+.file-preview-frame[data-state="ready"] { min-height: 0; }
+.file-preview-frame[data-state="loading"] > .inline-evidence-image { visibility: hidden; }
+.file-preview-loader { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; background: var(--white); }
+.file-preview-loader .loading-state { min-height: 0; }
+.file-preview-frame > .error { text-align: center; margin: 0; }
+.file-preview-actions { display: flex; justify-content: center; margin-top: 12px; }
+.file-preview .inline-evidence-image { max-height: 75dvh; width: auto; object-fit: contain; }
+.file-preview .inline-evidence-image, .file-preview .inline-evidence-pdf { margin: 0; }
+.file-preview [data-state="error"] .button { min-height: 44px; }
 
 @media (max-width: 600px) {
   .calendar-checkpoint-links .button { flex-direction: column; align-items: flex-start; text-align: left; padding: 9px; font-size: 11px; gap: 0; }

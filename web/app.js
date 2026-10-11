@@ -173,8 +173,7 @@ function navigation() {
     ? [
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
-        ["credit-review", "Credit hours"],
-        ["syllabi", "Syllabi"],
+        ["syllabi", "Classes"],
         ["roster", "Chapter roster"],
         ["semester", "Semester settings"],
         ["audit", "Review history"],
@@ -233,9 +232,14 @@ function route() {
   return p;
 }
 async function refresh() {
-  const requests = [api("/api/submissions")];
-  requests.push(api(user.role === "chair" ? "/api/members" : "/api/points"));
-  const [s, p] = await Promise.all(requests);
+  const account = user, epoch = sessionEpoch;
+  const [s, p, me] = await Promise.all([
+    api("/api/submissions"),
+    api(account.role === "chair" ? "/api/members" : "/api/points"),
+    api("/api/me"),
+  ]);
+  if (user !== account || sessionEpoch !== epoch || me.user?.id !== account.id || me.user.role !== account.role) return;
+  user = me.user;
   submissions = s.submissions;
   if (user.role === "chair") roster = p.members;
   else points = p;
@@ -376,23 +380,10 @@ function earnPage() {
     ) +
     `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. Never claim one activity twice.</div><div class="rules-grid">${activeActivities().map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${esc(a.points)} <small>PTS</small></span></div><p>Per ${esc(a.mode === "hourly" ? "hour" : a.unit)}. ${esc(a.proof)}</p>${categoryHint(a) ? `<p class="category-rule-hint">${esc(categoryHint(a))}</p>` : ""}</article>`).join("") || '<p class="empty">No point categories are available right now.</p>'}</div><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. The portal uses chair-assigned tiers and requires a note for any adjusted award.</p><p>The configured convention is Monday–Sunday weeks. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
-async function loadCreditPanel(container, chair) {
-  const owner = user.id;
-  const isCurrent = () => user?.id === owner && container.isConnected;
-  try {
-    const { mountCreditRequests } = await import("/credit-ui.mjs");
-    if (isCurrent()) await mountCreditRequests(container, { api, esc, loading, isCurrent, chair, config: appConfig });
-  } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
-}
-function creditReviewPage() {
-  if (user.role !== "chair") return;
-  main.innerHTML = heading("", "Credit hours", "") + `<section class="panel credit-review-shell">${loading("Loading credit-hours requests…")}</section>`;
-  loadCreditPanel(main.querySelector(".credit-review-shell"), true);
-}
 async function syllabusReviewPage() {
   if (user.role !== "chair") return;
   const owner = user.id;
-  main.innerHTML = heading("", "Syllabi", "") + `<section class="panel syllabus-shell">${loading("Loading syllabi…")}</section>`;
+  main.innerHTML = heading("", "Classes", "") + `<section class="panel syllabus-shell">${loading("Loading classes…")}</section>`;
   const container = main.querySelector(".syllabus-shell");
   const isCurrent = () => user?.id === owner && route() === "syllabi" && container.isConnected;
   try {
@@ -503,14 +494,13 @@ async function profilePage() {
   const owner = user.id;
   main.innerHTML = heading("", "My profile", "") + `<div class="profile-layout">
     <div class="profile-column profile-account" role="group" aria-label="Account information"><section class="picture-shell panel">${loading("Loading profile picture…")}</section></div>
-    <div class="profile-column profile-academic" role="group" aria-label="Academic information"><section class="profile-shell panel">${loading("Loading profile…")}</section><section class="credit-shell panel">${loading("Loading credit hours…")}</section></div>
+    <div class="profile-column profile-academic" role="group" aria-label="Academic information"><section class="profile-shell panel">${loading("Loading profile…")}</section></div>
   </div>`;
   main.querySelector(".profile-account").insertAdjacentHTML("beforeend", '<section class="panel password-shell"></section>');
   mountPasswordForm(main.querySelector(".password-shell"));
   main.querySelector(".profile-account").insertAdjacentHTML("beforeend", '<section class="panel recovery-shell"></section>');
   mountRecoverySettings(main.querySelector('.recovery-shell'));
   const container = main.querySelector(".profile-shell");
-  loadCreditPanel(main.querySelector(".credit-shell"), false);
   loadProfilePicture(main.querySelector(".picture-shell"));
   try {
     const { mountProfile } = await import("/profile-ui.mjs");
@@ -575,7 +565,7 @@ function render() {
       canvas: canvasPage,
       faq: faqPage,
       profile: profilePage,
-      "credit-review": creditReviewPage,
+      "credit-review": () => { location.hash = "syllabi"; },
       syllabi: syllabusReviewPage,
       api: apiPage,
       roster: rosterPage,
@@ -740,14 +730,18 @@ function wireActivityPicker() {
 }
 async function newSubmission() {
   if (user.role !== "member") return;
-  const owner = user.id;
+  const account = user, epoch = sessionEpoch;
   openModal("NEW SUBMISSION", "", `<div id="submission-loading">${loading("Loading submission form…")}</div>`);
   const pending = $("#submission-loading");
-  const current = () => pending.isConnected && modal.open && user?.id === owner;
+  const current = () => pending.isConnected && modal.open && user === account && sessionEpoch === epoch;
   try {
-    const nextRules = await api("/api/rules");
-    if (!current()) return;
+    const [nextRules, me, nextPoints] = await Promise.all([
+      api("/api/rules"), api("/api/me"), api("/api/points"),
+    ]);
+    if (!current() || me.user?.id !== account.id || me.user.role !== "member") return;
+    user = me.user;
     rules = nextRules;
+    points = nextPoints;
   } catch (error) {
     if (current()) pending.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
     return;
@@ -930,20 +924,26 @@ async function review(e) {
 async function evidence(id) {
   const destination = $("#evidence-preview");
   if (!destination) return;
-  destination.innerHTML = loading("Loading evidence…", true);
+  const revision = Symbol("evidence");
+  destination.previewRevision = revision;
+  const current = () => destination.isConnected && modal.open && destination.previewRevision === revision;
+  destination.innerHTML = loading("Loading evidence…");
   try {
     const { evidence: e } = await api(
       "/api/submissions/" + encodeURIComponent(id) + "/evidence",
     );
-    if (!destination.isConnected || !modal.open) return;
-    if (e.sample === false && e.downloadUrl) {
-      const preview = e.previewUrl || e.downloadUrl;
-      destination.innerHTML = `<div class="evidence-sheet"><h3>${esc(e.name)}</h3>${e.mime.startsWith("image/") ? `<img class="inline-evidence-image" src="${esc(preview)}" alt="Submitted evidence: ${esc(e.name)}">` : e.mime === "application/pdf" ? `<iframe class="inline-evidence-pdf" src="${esc(preview)}" title="Submitted PDF: ${esc(e.name)}"></iframe><p class="footnote">If your phone does not show every PDF page, use Open full size.</p>` : ""}<a class="button ghost small" href="${esc(preview)}" target="_blank" rel="noopener">Open full size</a></div>`;
+    if (!current()) return;
+    if (e.previewUrl || e.downloadUrl) {
+      const { mountFilePreview } = await import("/file-preview-ui.mjs");
+      if (!current()) return;
+      mountFilePreview(destination, e, { loading, isCurrent: current, label: "Supporting evidence" });
     } else {
-      destination.innerHTML = `<div class="evidence-sheet"><div class="sample-stamp">${e.sample === false ? "CANVAS RECORD" : "FICTIONAL SAMPLE"}</div><h3>${esc(e.title)}</h3><p>${esc(e.course)} · ${esc(e.date)}</p><p><strong>${e.grade !== null && e.grade !== undefined ? "Grade: " + e.grade + "%" : esc(e.activity || "")}</strong></p><p class="muted">${esc(e.verification || "Imported record")}</p></div>`;
+      destination.innerHTML = `<div class="evidence-sheet"><div class="sample-stamp">${e.sample === false ? "CANVAS RECORD" : "FICTIONAL SAMPLE"}</div><h3>${esc(e.title)}</h3><p>${esc(e.course)} · ${esc(e.date)}</p><p><strong>${e.grade !== null && e.grade !== undefined ? "Grade: " + esc(e.grade) + "%" : esc(e.activity || "")}</strong></p><p class="muted">${esc(e.verification || "Imported record")}</p></div>`;
     }
-  } catch (e) {
-    toast(e.message);
+  } catch (error) {
+    if (!current()) return;
+    destination.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p><button class="button ghost" type="button">Retry evidence preview</button>`;
+    destination.querySelector("button").onclick = () => evidence(id);
   }
 }
 
@@ -1908,8 +1908,8 @@ function editAcademicSettings(member) {
   if (user?.role !== "chair") return;
   openModal(
     "MANAGE MEMBER",
-    `Set the tier and enrolled credits for ${esc(member.name)}. Changes update checkpoint and semester targets immediately. Existing awarded points stay unchanged.`,
-    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"></div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
+    `Manage ${esc(member.name)}. Tier changes update point targets; previously awarded points stay unchanged.`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"${member.creditsManaged ? " readonly" : ""}>${member.creditsManaged ? '<small>Total from approved classes. Review class changes in the Classes tab.</small>' : '<small>Existing total is replaced by the sum of approved class hours when the first class is approved.</small>'}</div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
   );
   $("#academic-settings-form").onsubmit = async (event) => {
     event.preventDefault();

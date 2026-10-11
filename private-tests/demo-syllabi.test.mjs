@@ -1,3 +1,4 @@
+import { classCreditsScenario } from "./class-credits-scenario.mjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handle } from '../web/demo/demo-service.mjs';
@@ -21,11 +22,11 @@ async function withSandbox(run) {
 
 test('sandbox classes require verified syllabus files and are private to their member', () => withSandbox(async call => {
   await call('/api/demo/session', { persona: 'test1' });
-  assert.equal((await call('/api/classes', { name: 'MTH 2002' })).status, 422);
-  assert.equal((await call('/api/classes', { name: 'MTH 2002', file: { ...file, mime: 'text/html' } })).status, 422);
-  assert.equal((await call('/api/classes', { name: 'MTH 2002', file: { ...file, size: file.size + 1 } })).status, 422);
-  assert.equal((await call('/api/classes', { name: 'MTH 2002', file: { ...file, dataUrl: `data:application/pdf;base64,${Buffer.from('not PDF').toString('base64')}`, size: 7 } })).status, 422);
-  const created = await call('/api/classes', { name: ' MTH 2002 ', file });
+  assert.equal((await call('/api/classes', { credits: 15, name: 'MTH 2002' })).status, 422);
+  assert.equal((await call('/api/classes', { credits: 15, name: 'MTH 2002', file: { ...file, mime: 'text/html' } })).status, 422);
+  assert.equal((await call('/api/classes', { credits: 15, name: 'MTH 2002', file: { ...file, size: file.size + 1 } })).status, 422);
+  assert.equal((await call('/api/classes', { credits: 15, name: 'MTH 2002', file: { ...file, dataUrl: `data:application/pdf;base64,${Buffer.from('not PDF').toString('base64')}`, size: 7 } })).status, 422);
+  const created = await call('/api/classes', { credits: 15, name: ' MTH 2002 ', file });
   assert.equal(created.status, 201);
   assert.equal(created.class.name, 'MTH 2002');
   assert.equal(created.class.status, 'pending');
@@ -41,7 +42,7 @@ test('sandbox classes require verified syllabus files and are private to their m
   assert.equal((await call(`/api/syllabi/${created.class.syllabusId}/evidence`)).status, 404);
   assert.equal((await call(`/api/classes/${created.class.id}/archive`, { version: created.class.version })).status, 404);
   await call('/api/demo/session', { persona: 'chair' });
-  assert.equal((await call('/api/classes', { name: 'Chair class', file })).status, 403);
+  assert.equal((await call('/api/classes', { credits: 15, name: 'Chair class', file })).status, 403);
   const queue = await call('/api/syllabi');
   assert.equal(queue.status, 200);
   assert.equal(queue.syllabi.length, 1);
@@ -52,7 +53,7 @@ test('sandbox classes require verified syllabus files and are private to their m
 test('sandbox approval gates grade assignments and preserves the submitted syllabus version', () => withSandbox(async call => {
   await call('/api/demo/session', { persona: 'test1' });
   assert.equal((await call('/api/submissions', assignment)).status, 422);
-  const created = await call('/api/classes', { name: assignment.course, file });
+  const created = await call('/api/classes', { credits: 15, name: assignment.course, file });
   assert.equal(created.status, 201);
   const id = created.class.id;
   const syllabusId = created.class.syllabusId;
@@ -72,7 +73,7 @@ test('sandbox approval gates grade assignments and preserves the submitted sylla
   assert.equal(submitted.submission.syllabusId, syllabusId);
   const approvedClass = (await call('/api/classes')).classes.find(item => item.id === id);
   const replacementFile = { ...file, name: 'updated-syllabus.pdf' };
-  const replacement = await call('/api/classes', { name: assignment.course, classId: id, version: approvedClass.version, file: replacementFile });
+  const replacement = await call('/api/classes', { credits: 15, name: assignment.course, classId: id, version: approvedClass.version, file: replacementFile });
   assert.equal(replacement.status, 201);
   assert.notEqual(replacement.class.syllabusId, syllabusId);
   assert.equal(replacement.class.status, 'pending');
@@ -94,7 +95,7 @@ test('sandbox approval gates grade assignments and preserves the submitted sylla
 
 test('sandbox Canvas imports and custom graded categories cannot bypass syllabus approval', () => withSandbox(async call => {
   await call('/api/demo/session', { persona: 'test1' });
-  const pending = await call('/api/classes', { name: 'MTH 2002', file });
+  const pending = await call('/api/classes', { credits: 15, name: 'MTH 2002', file });
   assert.equal(pending.status, 201);
   const canvas = { confirm: true, items: [{ assignmentId: 2201, activity: 'minor', classId: pending.class.id }] };
   assert.equal((await call('/api/integrations/canvas/import', canvas)).status, 422);
@@ -136,8 +137,8 @@ test('sandbox protects concurrent reviews and stale legacy edits', () => withSan
   assert.equal((await call('/api/classes/legacy/archive', { name: legacy.name, version: legacy.version })).status, 200);
   assert.ok(!(await call('/api/classes')).classes.some(item => item.name === legacy.name));
   const existing = (await call('/api/classes')).classes.find(item => item.name === 'Course to upgrade');
-  assert.equal((await call('/api/classes', { name: existing.name, file, version: 'legacy-v1' })).status, 409);
-  const upgraded = await call('/api/classes', { name: existing.name, file, version: existing.version });
+  assert.equal((await call('/api/classes', { credits: 15, name: existing.name, file, version: 'legacy-v1' })).status, 409);
+  const upgraded = await call('/api/classes', { credits: 15, name: existing.name, file, version: existing.version });
   assert.equal(upgraded.status, 201);
   assert.equal((await call('/api/classes/legacy/archive', { name: existing.name, version: existing.version })).status, 404);
   assert.equal((await call('/api/profile')).classes.length, 1);
@@ -150,13 +151,17 @@ test('sandbox protects concurrent reviews and stale legacy edits', () => withSan
 
 test('sandbox invalid or oversized syllabus cannot create a partial class', () => withSandbox(async call => {
   await call('/api/demo/session', { persona: 'test1' });
-  assert.equal((await call('/api/classes', { name: 'Oversized', file: { ...file, size: 1048577 } })).status, 422);
+  assert.equal((await call('/api/classes', { credits: 15, name: 'Oversized', file: { ...file, size: 1048577 } })).status, 422);
   assert.deepEqual((await call('/api/classes')).classes, []);
   const oldSetItem = globalThis.sessionStorage.setItem;
   globalThis.sessionStorage.setItem = () => { throw Object.assign(Error('Full'), { name: 'QuotaExceededError' }); };
-  const denied = await call('/api/classes', { name: 'Storage limit', file });
+  const denied = await call('/api/classes', { credits: 15, name: 'Storage limit', file });
   assert.equal(denied.status, 507);
   assert.match(denied.error, /storage is full/i);
   globalThis.sessionStorage.setItem = oldSetItem;
   assert.deepEqual((await call('/api/classes')).classes, []);
+}));
+
+test('sandbox class credit approvals match server totals, replacement and removal rules', () => withSandbox(async call => {
+  await classCreditsScenario(call, { file }, 'test1');
 }));

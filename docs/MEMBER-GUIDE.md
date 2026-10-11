@@ -4,7 +4,7 @@ Draft for the Scholarship Chair to review before invitations. This file does not
 
 1. Open the personal setup link in your invitation and choose a password. Then sign in and save your recovery key privately and confirm that you saved it. Do not share the link, password or recovery key.
 2. Visit [the Scholarship Portal](https://scholarship-ato-kh.vercel.app/). Sign in using your email and password. A badge number or portal ID assigned by the Chair also works.
-3. Open **My profile**. Add your classes with a PDF or image of each syllabus. Wait for the Chair's approval before submitting graded assignments for that class. Add your profile picture or submit credit hours if needed.
+3. Open **My profile**. Add each class with its credit hours and a PDF or image of its syllabus. The Chair reviews both together; approved class hours add up to your account total. Wait for approval before submitting graded assignments for that class. You can also add your profile picture.
 4. Select **New submission**, choose the activity, enter its requested details and attach clear evidence. For a graded assignment, select the approved class. Check the information, then submit.
 5. Track the result in **My submissions**. Pending points are estimates; approved points count toward the calendar goals. Open a submission to read any review note.
 6. If you forget your password, use the password-reset option or your saved recovery key. If neither works, contact the Scholarship Chair. If the key screen was interrupted, sign in again and save the replacement key offered by the portal.
@@ -23,11 +23,15 @@ Use the email on your chapter account, your assigned portal ID, or a badge numbe
 
 **Why can't I select my class for an assignment?**
 
-Add the class and upload its syllabus in My profile. The Scholarship Chair must approve the syllabus before you can submit a major, minor, lab or other graded assignment for that class. Replacing a syllabus starts a new review.
+Add the class, its credit hours and its syllabus in My profile. The Scholarship Chair must approve the syllabus before you can submit a major, minor, lab or other graded assignment for that class. Replacing a syllabus starts a new review.
 
 **What should my evidence show?**
 
-Follow the instructions shown for your selected activity. Make the relevant assignment, date, result or attendance easy to read. Upload only the information needed for the Chair to review that claim. Live uploads accept PDF, PNG and JPEG files up to 5 MB; profile pictures and credit-hour requests use images.
+Follow the instructions shown for your selected activity. Make the relevant assignment, date, result or attendance easy to read. Upload only the information needed for the Chair to review that claim. Live uploads accept PDF, PNG and JPEG files up to 5 MB; profile pictures use images.
+
+**How do my credit hours change?**
+
+Enter hours when adding each class. Only Chair-approved class hours count toward your account total. Pending or denied changes keep the previously approved hours. Removing an approved class also needs Chair approval. If your account already has an older manually entered total, the first class-hours approval replaces it with the sum of approved classes.
 
 **Why aren't pending points in my approved total?**
 

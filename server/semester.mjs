@@ -179,6 +179,10 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     // Pre-invitation tier decisions belong to the old semester. Member
     // accounts remain; the Chair reviews their tiers for the new semester.
     delete state.tierAssignments;
+    for (const [owner, managed] of Object.entries(state.classCreditsManaged || {})) if (managed === true) {
+      await db.prepare("UPDATE members SET credits=0 WHERE workspace=? AND id=? AND role='member'").run(workspace, owner);
+    }
+    // Retain the source marker: a new semester has no approved classes yet.
     delete state.memberProfiles;
     delete state.classRecords;
     delete state.syllabi;

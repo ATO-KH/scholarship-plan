@@ -2,17 +2,30 @@ import { readImage, uploadImage } from './credit-ui.mjs';
 import { mountSyllabusPreview } from './syllabus-ui.mjs';
 
 export async function mountProfile(container, { api, esc, loading, isCurrent, sandbox = false, config = {} }) {
-  const { classes } = await api('/api/classes');
+  const { classes, accountCredits, approvedCredits, creditsManaged } = await api('/api/classes');
   if (!isCurrent()) return;
-  container.innerHTML = `<h2>My classes</h2><p class="muted">Upload a syllabus for each class. The Chair must approve it before you can submit assignments for that class.</p><div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
+  const formatHours = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const hasHours = value => value !== null && value !== undefined && Number.isFinite(Number(value));
+  const total = hasHours(accountCredits) ? accountCredits : approvedCredits;
+  container.innerHTML = `<h2>My classes</h2><p class="muted">Add each class’s credit hours and syllabus. The Chair approves both before the class’s hours count and assignments unlock.</p>${hasHours(total) ? `<p class="class-credit-total"><strong>${esc(formatHours(total))} approved credit hours</strong>${creditsManaged ? '<br><small>From your approved classes.</small>' : '<br><small>Your current account total stays in place until the Chair approves class credit hours.</small>'}</p>` : ''}<div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
   const list = container.querySelector('.profile-class-list'), editor = container.querySelector('.class-editor'), feedback = container.querySelector('.profile-feedback');
   const reload = () => mountProfile(container, { api, esc, loading, isCurrent, sandbox, config });
+  const disableControls = () => {
+    const controls = [...container.querySelectorAll('button,input')].map(control => [control, control.disabled]);
+    controls.forEach(([control]) => { control.disabled = true; });
+    return () => controls.forEach(([control, disabled]) => { control.disabled = disabled; });
+  };
   for (const course of classes) {
     const card = document.createElement('article');
+    const approved = hasHours(course.approvedCredits), requested = hasHours(course.credits);
+    const needsHours = !requested;
+    const status = course.removalPending ? 'Removal awaiting review' : needsHours ? 'Credit hours needed' : course.status === 'approved' ? 'Class approved' : course.status === 'denied' ? 'Class denied' : course.status === 'pending' ? 'Awaiting class review' : 'Syllabus needed';
+    const statusClass = course.removalPending || needsHours ? 'pending' : course.status === 'approved' ? 'approved' : course.status === 'denied' ? 'denied' : 'pending';
+    const hours = `${approved ? `${esc(formatHours(course.approvedCredits))} approved credit hours` : 'No credit hours approved yet'}${requested && course.status !== 'approved' ? ` · ${esc(formatHours(course.credits))} ${course.status === 'denied' ? 'submitted' : 'requested'}` : ''}`;
     card.className = 'profile-class-card';
-    card.innerHTML = `<div class="class-card-heading"><h3>${esc(course.name)}</h3><span class="status ${course.status === 'approved' ? 'approved' : course.status === 'denied' ? 'denied' : 'pending'}">${course.status === 'approved' ? 'Syllabus approved' : course.status === 'denied' ? 'Syllabus denied' : course.status === 'pending' ? 'Awaiting syllabus review' : 'Syllabus needed'}</span></div>${course.reviewNote ? `<p class="review-note">${esc(course.reviewNote)}</p>` : ''}${course.syllabusId ? '<details class="syllabus-reference"><summary>View syllabus</summary><div class="syllabus-preview"></div></details>' : ''}<div class="class-card-actions"><button class="text-btn" type="button" data-replace>${course.syllabusId ? 'Replace syllabus' : 'Upload syllabus'}</button><button class="text-btn" type="button" data-remove>Remove class</button></div><div class="class-remove-confirm" hidden><p>Remove this class from your current list? Existing submissions keep their syllabus reference.</p><button class="button ghost" type="button" data-cancel-remove>Cancel</button> <button class="button danger" type="button" data-confirm-remove>Remove class</button></div><div class="class-feedback" role="status"></div>`;
+    card.innerHTML = `<div class="class-card-heading"><h3>${esc(course.name)}</h3><span class="status ${statusClass}">${status}</span></div><p class="class-credit-hours">${hours}</p>${course.removalPending ? '<p class="muted">These hours remain in your total until the Chair approves removal.</p>' : course.removalReview?.decision === 'denied' ? `<p class="review-note"><strong>Removal denied.</strong> ${esc(course.removalReview.note || '')}</p>` : ''}${course.reviewNote ? `<p class="review-note">${esc(course.reviewNote)}</p>` : ''}${course.syllabusId ? '<details class="syllabus-reference"><summary>View syllabus</summary><div class="syllabus-preview"></div></details>' : ''}<div class="class-card-actions"><button class="text-btn" type="button" data-replace${course.removalPending ? ' disabled' : ''}>${course.syllabusId ? 'Update class' : 'Add hours and syllabus'}</button><button class="text-btn" type="button" data-remove${course.removalPending ? ' disabled' : ''}>Remove class</button></div><div class="class-remove-confirm" hidden><p>${approved ? 'Ask the Chair to remove this class? Its approved hours stay in your total until the request is approved.' : 'Remove this class from your current list?'} Existing submissions keep their syllabus reference.</p><button class="button ghost" type="button" data-cancel-remove>Cancel</button> <button class="button danger" type="button" data-confirm-remove>${approved ? 'Request removal' : 'Remove class'}</button></div><div class="class-feedback" role="status"></div>`;
     list.append(card);
-    card.querySelector('[data-replace]').onclick = () => edit(course);
+    card.querySelector('[data-replace]').onclick = () => edit(course, card.querySelector('[data-replace]'));
     const details = card.querySelector('details');
     if (details) details.ontoggle = () => {
       if (details.open && !details.dataset.loaded) {
@@ -22,46 +35,59 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
     };
     {
       const confirm = card.querySelector('.class-remove-confirm');
-      card.querySelector('[data-remove]').onclick = () => { confirm.hidden = false; };
-      card.querySelector('[data-cancel-remove]').onclick = () => { confirm.hidden = true; };
+      card.querySelector('[data-remove]').onclick = () => { confirm.hidden = false; card.querySelector('[data-cancel-remove]').focus(); };
+      card.querySelector('[data-cancel-remove]').onclick = () => { confirm.hidden = true; card.querySelector('[data-remove]').focus(); };
       card.querySelector('[data-confirm-remove]').onclick = async () => {
-        const controls = [...container.querySelectorAll('button,input')];
-        controls.forEach(button => button.disabled = true);
+        const restoreControls = disableControls();
         const status = card.querySelector('.class-feedback');
-        status.innerHTML = loading('Removing class…', true);
-        try { await api(`/api/classes/${encodeURIComponent(course.id || 'legacy')}/archive`, { method: 'POST', body: { version: course.version, ...(course.id ? {} : { name: course.name }) } }); if (isCurrent()) await reload(); }
-        catch (error) { if (isCurrent()) status.textContent = error.message; }
-        finally { controls.forEach(button => button.disabled = false); }
+        status.innerHTML = loading(approved ? 'Requesting removal…' : 'Removing class…', true);
+        try {
+          await api(`/api/classes/${encodeURIComponent(course.id || 'legacy')}/archive`, { method: 'POST', body: { version: course.version, ...(course.id ? {} : { name: course.name }) } });
+          if (isCurrent()) {
+            await reload();
+            if (isCurrent()) {
+              container.querySelector('.profile-feedback').textContent = approved ? 'Removal requested. Your approved hours stay in place until Chair approval.' : 'Class removed.';
+              container.querySelector('#add-class').focus();
+            }
+          }
+        } catch (error) { if (isCurrent()) status.textContent = error.message; }
+        finally { restoreControls(); }
       };
     }
   }
   if (!classes.length) list.innerHTML = '<p class="muted">No classes added yet.</p>';
-  function edit(course = null) {
+  function edit(course = null, opener = container.querySelector('#add-class')) {
+    if (course?.removalPending) return;
     feedback.textContent = '';
     editor.hidden = false;
-    editor.innerHTML = `<h3>${course ? 'Upload syllabus' : 'Add class'}</h3>${course?.syllabusId ? '<p class="muted">A replacement needs a new review. Previous assignments retain the syllabus used when they were submitted.</p>' : ''}<form id="profile-form"><div class="field"><label for="class-name">Class name or code</label><input id="class-name" name="name" required maxlength="80" placeholder="e.g. MTH 2002 · Calculus II" value="${esc(course?.name || '')}"${course ? ' readonly' : ''}></div><div class="field"><label for="class-syllabus">Syllabus</label><input id="class-syllabus" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" required><small>PDF, PNG, or JPEG, up to ${sandbox ? 1 : 5} MB.${sandbox ? ' Use a fictional syllabus in the sandbox.' : ''}</small></div><div class="profile-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" type="button" data-cancel>Cancel</button><button class="button gold" type="submit">Submit syllabus for review</button></div></form>`;
+    const initialHours = hasHours(course?.credits) ? course.credits : hasHours(course?.approvedCredits) ? course.approvedCredits : '';
+    editor.innerHTML = `<h3>${course ? 'Update class' : 'Add class'}</h3>${course?.syllabusId ? '<p class="muted">Upload the syllabus for a new review. Previously approved hours stay in your total until the Chair approves the change.</p>' : ''}<form id="profile-form"><div class="field"><label for="class-name">Class name or code</label><input id="class-name" name="name" required maxlength="80" placeholder="e.g. MTH 2002 · Calculus II" value="${esc(course?.name || '')}"${course ? ' readonly' : ''}></div><div class="field"><label for="class-credits">Credit hours</label><input id="class-credits" name="credits" type="number" inputmode="decimal" min="0" max="30" step="0.01" required placeholder="e.g. 3" value="${esc(String(initialHours))}" aria-describedby="class-credits-help"><small id="class-credits-help">Use the credit hours listed for this class. The Chair will verify them with your syllabus.</small></div><div class="field"><label for="class-syllabus">Syllabus</label><input id="class-syllabus" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" required aria-describedby="class-syllabus-help"><small id="class-syllabus-help">PDF, PNG, or JPEG, up to ${sandbox ? 1 : 5} MB.${sandbox ? ' Use a fictional syllabus in the sandbox.' : ''}</small></div><div class="profile-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" type="button" data-cancel>Cancel</button><button class="button gold" type="submit">Submit class for review</button></div></form>`;
     const form = editor.querySelector('form'), status = form.querySelector('.profile-feedback');
-    form.querySelector('[data-cancel]').onclick = () => { editor.hidden = true; editor.replaceChildren(); container.querySelector('#add-class').focus(); };
+    form.querySelector('[data-cancel]').onclick = () => { editor.hidden = true; editor.replaceChildren(); opener.focus(); };
     form.onsubmit = async event => {
       event.preventDefault();
+      const creditsInput = form.querySelector('#class-credits'), credits = creditsInput.valueAsNumber;
+      if (!Number.isFinite(credits) || credits < 0 || credits > 30 || Math.abs(credits * 100 - Math.round(credits * 100)) > 0.000001) { status.textContent = 'Enter credit hours from 0 to 30, with up to two decimal places.'; creditsInput.focus(); return; }
       let file = form.querySelector('#class-syllabus').files[0];
       const mime = file?.type || (/\.pdf$/i.test(file?.name || '') ? 'application/pdf' : /\.png$/i.test(file?.name || '') ? 'image/png' : /\.jpe?g$/i.test(file?.name || '') ? 'image/jpeg' : '');
       if (!file || !['application/pdf', 'image/png', 'image/jpeg'].includes(mime) || file.size > (sandbox ? 1 : 5) * 1024 * 1024) { status.textContent = `Choose a PDF, PNG, or JPEG up to ${sandbox ? 1 : 5} MB.`; return; }
       if (!file.type) file = new File([file], file.name, { type: mime });
       const name = form.querySelector('#class-name').value.trim();
-      const controls = [...container.querySelectorAll('input,button')];
-      controls.forEach(control => control.disabled = true);
+      const restoreControls = disableControls();
       status.innerHTML = loading('Uploading syllabus…', true);
       try {
         const evidence = sandbox ? { file: { name: file.name, mime, size: file.size, dataUrl: await readImage(file) } } : { evidenceId: await uploadImage(file, api, config) };
         if (!isCurrent()) return;
-        status.innerHTML = loading('Submitting syllabus…', true);
-        await api('/api/classes', { method: 'POST', body: { name, ...evidence, ...(course?.id ? { classId: course.id, version: course.version } : {}) } });
-        if (isCurrent()) { await reload(); container.querySelector('.profile-feedback').textContent = 'Syllabus submitted. Assignments unlock after Chair approval.'; }
+        status.innerHTML = loading('Submitting class…', true);
+        await api('/api/classes', { method: 'POST', body: { name, credits, ...evidence, ...(course?.id ? { classId: course.id, version: course.version } : {}) } });
+        if (isCurrent()) {
+          await reload();
+          if (isCurrent()) { container.querySelector('.profile-feedback').textContent = 'Class submitted. Credit hours apply and assignments unlock after Chair approval.'; container.querySelector('#add-class').focus(); }
+        }
       } catch (error) { if (isCurrent()) status.textContent = error.message; }
-      finally { controls.forEach(control => control.disabled = false); }
+      finally { restoreControls(); }
     };
-    form.querySelector('#class-name').focus();
+    form.querySelector(course ? '#class-credits' : '#class-name').focus();
   }
   container.querySelector('#add-class').onclick = () => edit();
 }
