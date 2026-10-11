@@ -7,6 +7,7 @@ This is a working acceptance checklist, not a claim that version 1.0 is approved
 - 192 automated tests passed, with no failures or skips, using SQLite and an isolated PostgreSQL instance. Source/deployment-file checks and the production dependency audit passed.
 - Fictional browser checks covered Chair verification, incorrect-code rejection, resuming verification after reload, direct sign-out, member recovery-key acknowledgment after an interrupted first login, and account repair without sending mail. The Chair verification and member profile layouts were checked at 390 pixels wide.
 - The operational rehearsal passed all six backup, restore, interrupted-wipe and retention checks using disposable records and actual fictional file bytes.
+- Invitation and password-reset email templates were installed in Supabase, previewed, and verified after reloading the settings. Saving templates sent no emails; recipient inbox delivery remains untested.
 - These checks used local provider mocks. They do not establish hosted email delivery, real authenticator enrollment, physical iPhone behavior, or production backup/restore readiness. Those remain explicit acceptance items below. No real invitation or reset email was sent during this work.
 
 ## Work that does not require the Chair

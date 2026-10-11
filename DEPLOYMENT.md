@@ -8,7 +8,7 @@ The hosted architecture is Vercel's Node server entrypoint, Supabase PostgreSQL 
 
 ## 1. Prepare the accounts and production boundary
 
-Use the chapter's controlled Vercel and Supabase accounts. Import this **private** repository into a Vercel project. Set Node.js **24.x**; the repository pins pnpm and the dependency lockfile. Set `ENABLE_EXPERIMENTAL_COREPACK=1` in the Production environment so Vercel honors the pinned pnpm version, including when the install command is overridden. The install command is `pnpm install --frozen-lockfile`, and the build check is `pnpm check`. `server.mjs` is the Node entrypoint; `vercel.json` sets a 120-second invocation limit. See [Vercel's Corepack configuration](https://vercel.com/docs/builds/configure-a-build#corepack).
+Use the chapter's controlled Vercel and Supabase accounts. Import this repository into a Vercel project. Set Node.js **24.x**; the repository pins pnpm and the dependency lockfile. Set `ENABLE_EXPERIMENTAL_COREPACK=1` in the Production environment so Vercel honors the pinned pnpm version, including when the install command is overridden. The install command is `pnpm install --frozen-lockfile`, and the build check is `pnpm check`. `server.mjs` is the Node entrypoint; `vercel.json` sets a 120-second invocation limit. See [Vercel's Corepack configuration](https://vercel.com/docs/builds/configure-a-build#corepack).
 
 The deployment configuration excludes local environment files, Vercel caches, Git metadata, test fixtures, and working data from dependency tracing as well as uploads. Keep both exclusion lists when changing the build: tracing a local Vercel cache can break packaging or include files that do not belong in the server bundle.
 
@@ -84,13 +84,13 @@ Microsoft support remains in the code only as an explicit legacy mode. It is not
 
 ### Invitation email wording
 
-The editable draft is `supabase/email-templates/invite.html`. Its subject is **Set up your ATO Scholarship account**. It identifies the recipient’s email as their username and provides a one-time setup link; no temporary password is sent. Supabase fills `{{ .Email }}` and `{{ .ConfirmationURL }}` for each recipient. Do not substitute a real member’s link in Git or a public preview.
+The editable template is `supabase/email-templates/invite.html`. Its subject is **Set up your ATO Scholarship Portal account**. It identifies the recipient’s email as their username and provides a one-time setup link; no temporary password is sent. Supabase fills `{{ .Email }}` and `{{ .ConfirmationURL }}` for each recipient. Do not substitute a real member’s link in Git or a public preview.
 
-To install the draft, open Supabase Authentication → Emails → Templates → Invite user, paste the subject and HTML, preview, then save. This repository file does not automatically update the hosted Supabase template. No email is sent by editing the template; sending an invitation is a separate Chair action. Verify the saved hosted wording and delivery with one explicitly authorized recipient before rollout.
+To install or update the template, open Supabase Authentication → Emails → Templates → Invite user, paste the subject and HTML, preview, then save. This repository file does not automatically update the hosted Supabase template. No email is sent by editing the template; sending an invitation is a separate Chair action. Verify the saved hosted wording and delivery with one explicitly authorized recipient before rollout.
 
 After a successful password setup or email password reset, members sign in and receive their new 16-word key. They confirm saving it before entering the portal. A confirmed current key is retained on the next login; an unconfirmed, lost-response or consumed key can be replaced after authentication. The Chair office account does not receive a member key.
 
-The password-reset draft is `supabase/email-templates/recovery.html`, with subject **Reset your ATO Scholarship password**. Install it separately in Supabase's **Reset password** template. Both templates contain only provider placeholders and the public portal address; neither contains a usable member setup/reset link. See the [member quick start and FAQ drafts](docs/MEMBER-GUIDE.md) for wording the Chair can share after review. No hosted template change or email send is performed by committing these files.
+The password-reset template is `supabase/email-templates/recovery.html`, with subject **Reset your ATO Scholarship Portal password**. Install it separately in Supabase's **Reset password** template. Both templates contain only provider placeholders and the public portal address; neither contains a usable member setup/reset link. See the [member quick start and FAQ drafts](docs/MEMBER-GUIDE.md) for wording the Chair can share after review. No hosted template change or email send is performed by committing these files.
 
 ### Chapter-managed login pilot
 
