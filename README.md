@@ -27,6 +27,8 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 
 **Live chapter login, roster-sheet, and complete evidence workflows still need acceptance testing.** Canvas import is deferred and hidden from navigation. Provider tests use local fixtures and mocks; they are not proof of a successful live connection.
 
+Before inviting the chapter, use the [launch checklist and Chair meeting agenda](docs/LAUNCH-CHECKLIST.md). The [member quick start and FAQ drafts](docs/MEMBER-GUIDE.md) are ready for Chair review. Neither document sends messages or changes the live FAQ.
+
 ## Local setup
 
 Use Node.js 24.x. Install the pinned dependency graph with pnpm:
@@ -42,6 +44,14 @@ Open <http://127.0.0.1:4175>. Demo mode starts with fictional members; choose **
 ```sh
 pnpm test
 ```
+
+Run the separate fictional backup/restore and semester-cleanup rehearsal:
+
+```sh
+node scripts/rehearse-operations.mjs
+```
+
+It creates and removes its own temporary database and evidence files, verifies actual file bytes, exercises interruption/restart and old-backup deletion handling, and never reads application credentials or contacts a real service. This is a local operations rehearsal, not a production backup utility. See the [backup runbook](docs/BACKUP-RESTORE.md) for the live procedure and its remaining operator decisions.
 
 The PostgreSQL concurrency test is opt-in locally via `TEST_DATABASE_URL` pointing to a disposable loopback database. CI supplies a PostgreSQL 17 service and runs it automatically. Never point this test at production.
 

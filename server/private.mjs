@@ -1,4 +1,6 @@
+import { CHAIR_MFA_LIFETIME, verifyChairPassword, startChairMfa, pendingChairMfa, chairMfaPayload, verifyChairMfaCode, verifyPasswordResetMfa, markChairMfaSession, assertChairMfaSession, authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./chair-mfa.mjs";
 import { pilotEligible } from "./pilot-access.mjs";
+import { invitationView, invitationList, runInvitation } from "./invitations.mjs";
 import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { validateCreditRequest, validateCreditReview, creditSummary } from "../web/credit-data.mjs";
@@ -19,7 +21,9 @@ import {
   chapterAuthConfigured,
   chairAccountConfigured,
   verifyPassword,
-  inviteAccount,
+  invitationAccountByEmail,
+  prepareInvitationAccount,
+  sendInvitationAccount,
   createPilotAccount,
   deleteNewPilotAccount,
   sendPasswordReset,
@@ -33,6 +37,8 @@ import {
   cancelRecovery,
   finishRecovery,
   clearRecoveryKey,
+  recoveryKeyStatus,
+  confirmRecoveryKey,
 } from "./recovery.mjs";
 import { rosterStatus, fetchRosterSnapshot, fetchRosterImportIdentifiers } from "./roster.mjs";
 import { validateGpaImportMapping } from "./gpa-import-settings.mjs";
@@ -176,6 +182,7 @@ async function academicSnapshot(session, expectedGeneration) {
 }
 const sessionCookie = production ? "__Host-ato_session" : "ato_session";
 const identityCookie = production ? "__Host-ato_identity" : "ato_identity";
+const mfaCookie = production ? "__Host-ato_chair_mfa" : "ato_chair_mfa";
 const SESSION_LIFETIME = 8 * 60 * 60 * 1000;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const token = () => randomBytes(32).toString("hex");
@@ -216,6 +223,8 @@ async function assertActiveSession(session, user, checkEligibility = true) {
   const currentMember = await member(session.workspace, user.id);
   if (!fresh || !currentMember?.active || currentMember.role !== user.role)
     fail(401, "Your account session is no longer active.");
+  if (production && authMode === "chapter" && currentMember.role === "chair")
+    await assertChairMfaSession(db, session, currentMember.id);
   if (checkEligibility && user.role !== "chair")
     assertRosterEligibility(await stateOf(session.workspace), user);
 }
@@ -526,6 +535,8 @@ async function requireSession(req) {
   const user = session && (await member(session.workspace, session.member_id));
   if (!session || !user?.active)
     fail(401, "Sign in to an active chapter account.");
+  if (production && authMode === "chapter" && user.role === "chair" && req.url?.split("?")[0] !== "/api/logout")
+    await assertChairMfaSession(db, session, user.id);
   if (user.role !== "chair" && req.url?.split("?")[0] !== "/api/logout") {
     let state = await stateOf(session.workspace);
     const status = rosterView(state);
@@ -557,7 +568,7 @@ function csrf(req, session) {
       "The security token is missing or expired. Refresh and try again.",
     );
 }
-async function issueSession(workspace, userId, previousId = null) {
+async function issueSession(workspace, userId, previousId = null, chairMfaVerified = false) {
   if (previousId)
     await db.prepare("DELETE FROM sessions WHERE id=?").run(previousId);
   const raw = token();
@@ -571,6 +582,7 @@ async function issueSession(workspace, userId, previousId = null) {
   await db
     .prepare("INSERT INTO sessions VALUES (?,?,?,?,?)")
     .run(session.id, workspace, userId, session.csrf, session.expires);
+  if (chairMfaVerified) await markChairMfaSession(db, session, userId);
   return { session, cookie: cookie(sessionCookie, raw) };
 }
 async function cleanup() {
@@ -628,6 +640,8 @@ async function sessionPayload(session, user) {
     canvasConnected: !!(await connection(session)),
     semester: semesterSettings(state),
     semesterReset: semesterResetStatus(state),
+    recoveryKeyPending: production && authMode === "chapter" && user.role === "member"
+      ? (await recoveryKeyStatus(db, session.workspace, user.id, state.semesterGeneration || "initial")).needsKey : false,
     rosterEligibility: {
       required: rosterStatus(env).required,
       eligible:
@@ -828,6 +842,35 @@ function validateChapterMember(input) {
     !Number.isFinite(input.credits) || input.credits < 0 || input.credits > 30
   ) fail(422, "Enter a name, valid email, optional badge number, tier and credits.");
   return { name, email, badge, tier: input.tier, credits: input.credits };
+}
+async function processInvitation(session, user, email, action, generation, input) {
+  if (!production || authMode !== "chapter" || !chapterAuthConfigured(env))
+    fail(422, "Account setup requires real chapter sign-in.");
+  if (action !== "reconcile" && !chapterEmailReady)
+    fail(503, "Configure and test chapter email before sending setup emails.");
+  if (rosterStatus(env).mode === "public_email_csv" && !rosterView(await stateOf(session.workspace)).fresh)
+    await refreshRoster(session, user);
+  const result = await runInvitation({
+    db, workspace: session.workspace, email, input, action,
+    authorize: () => assertActiveSession(session, user),
+    guard: state => {
+      academicGuard(state, generation);
+      if (rosterStatus(env).mode === "public_email_csv" &&
+        (!rosterView(state).fresh || !state.roster.emails.includes(email)))
+        fail(409, "Refresh the roster and confirm this member is still eligible before continuing.");
+    },
+    provider: {
+      find: address => invitationAccountByEmail(env, address),
+      create: (address, proof) => prepareInvitationAccount(env, address, proof),
+      send: account => sendInvitationAccount(env, account, `${origin}/account/setup`),
+    },
+    audit: (actionName, subject, detail) => audit(session.workspace, user.name, actionName, subject, detail),
+  });
+  return {
+    member: result.memberId ? await member(session.workspace, result.memberId) : null,
+    loginId: result.invitation.loginId,
+    invitation: result.invitation, message: result.invitation.message,
+  };
 }
 async function coordinatedCanvasRefresh(
   session,
@@ -1032,12 +1075,19 @@ const server = http.createServer(async (req, res) => {
       const email = candidate?.email ||
         (identifier.toLowerCase() === bootstrapEmail ? bootstrapEmail :
           `${sha(identifier).slice(0, 24)}@invalid.example`);
-      const verified = await verifyPassword(env, email, password);
+      const authVersion = candidate ? await authMutationVersion(db, "chapter", candidate.id) : null;
+      const isChairLogin = candidate?.role === "chair" || email === bootstrapEmail;
+      const bootstrapFenceId = `supabase:${env.CHAIR_AUTH_USER_ID}`;
+      const bootstrapVersion = isChairLogin ? await authMutationVersion(db, "chapter", bootstrapFenceId) : null;
+      const verified = await (isChairLogin ? verifyChairPassword : verifyPassword)(env, email, password);
       if (!verified || verified.email !== email)
         fail(401, "Invalid sign-in details.");
       const issued = await atomic(async () => {
         await lockWorkspace("chapter");
         let binding = await identityMember("chapter", "supabase", verified.id);
+        // A first-login lookup cannot skip the account's mutation epoch after
+        // another request bootstraps it. Retry against the now-existing member.
+        if (!candidate && binding) fail(401, "Account setup changed during sign-in. Sign in again.");
         if (
           !binding && !candidate &&
           equal(env.CHAIR_AUTH_USER_ID, verified.id) &&
@@ -1059,9 +1109,20 @@ const server = http.createServer(async (req, res) => {
         const user = binding && await member("chapter", binding.member_id);
         if (!user?.active || (candidate && candidate.id !== user.id) || user.email !== verified.email)
           fail(401, "Invalid sign-in details.");
+        if (candidate) await assertAuthMutationVersion(db, "chapter", user.id, authVersion);
+        if (isChairLogin) await assertAuthMutationVersion(db, "chapter", bootstrapFenceId, bootstrapVersion);
+        if (user.role === "chair") {
+          if (!verified.accessToken) fail(401, "Sign in with the Scholarship Chair office email.");
+          return { user, mfa: await startChairMfa(db, env, verified, user.id) };
+        }
         await audit("chapter", user.name, "session.login", user.id, "chapter");
         return { ...await issueSession("chapter", user.id, (await currentSession(req))?.id), user };
       });
+      if (issued.mfa) {
+        const oldSession = await currentSession(req);
+        if (oldSession) await db.prepare("DELETE FROM sessions WHERE id=?").run(oldSession.id);
+        return json(res, 200, chairMfaPayload(issued.mfa), { "Set-Cookie": [cookie(sessionCookie, "", 0), cookie(mfaCookie, issued.mfa.raw, CHAIR_MFA_LIFETIME / 1000)] });
+      }
       if (issued.user.role === "member") {
         try {
           let state = await stateOf("chapter");
@@ -1084,6 +1145,46 @@ const server = http.createServer(async (req, res) => {
         { ...await sessionPayload(issued.session, await member("chapter", issued.session.member_id)),
           ...(issued.recoveryKey ? { recoveryKey: issued.recoveryKey } : {}) },
         { "Set-Cookie": issued.cookie });
+    }
+    if (production && authMode === "chapter" && path.startsWith("/api/auth/mfa")) {
+      if (!["/api/auth/mfa", "/api/auth/mfa/verify", "/api/auth/mfa/cancel"].includes(path)) fail(404, "Endpoint not found.");
+      if (req.method !== "GET" && req.method !== "POST") fail(405, "Method not allowed.");
+      if (req.method === "POST") requireOrigin(req);
+      const input = req.method === "POST" ? await readBody(req) : null;
+      if (path === "/api/auth/mfa/verify" && req.method === "POST") {
+        const attempt = await pendingChairMfa(db, env, getCookie(req, mfaCookie));
+        if (!equal(req.headers["x-csrf-token"], attempt.data.csrf)) fail(403, "Refresh the verification screen and try again.");
+        await authAttempt("chair_mfa_attempt", attempt.data.authUserId, 10);
+      }
+      const result = await atomic(async () => {
+        await lockWorkspace("chapter");
+        const pending = await pendingChairMfa(db, env, getCookie(req, mfaCookie));
+        const user = await member("chapter", pending.data.memberId);
+        const binding = await identityMember("chapter", "supabase", pending.data.authUserId);
+        if (!user?.active || user.role !== "chair" || binding?.member_id !== user.id || user.email !== pending.data.email)
+          fail(401, "The Scholarship Chair account is no longer active.");
+        await authMutationVersion(db, "chapter", user.id);
+        if (req.method === "POST" && !equal(req.headers["x-csrf-token"], pending.data.csrf)) fail(403, "Refresh the verification screen and try again.");
+        if (path === "/api/auth/mfa" && req.method === "GET") return { payload: chairMfaPayload(pending) };
+        if (path === "/api/auth/mfa/cancel" && req.method === "POST") {
+          await db.prepare("DELETE FROM transactions WHERE id=?").run(pending.id);
+          return { cancelled: true };
+        }
+        if (path !== "/api/auth/mfa/verify" || req.method !== "POST") fail(405, "Method not allowed.");
+        // The persistent counter also survives provider failures without logging codes.
+        const checked = await verifyChairMfaCode(db, env, pending, input?.code);
+        if (checked.error) return checked;
+        await db.prepare("DELETE FROM transactions WHERE id=?").run(pending.id);
+        const issued = await issueSession("chapter", user.id, (await currentSession(req))?.id, true);
+        await audit("chapter", user.name, "session.login", user.id, "chapter; authenticator verified");
+        return { issued, user };
+      });
+      if (result.error) fail(result.error.status, result.error.message);
+      if (result.payload) return json(res, 200, result.payload);
+      if (result.cancelled) return json(res, 200, { cancelled: true }, { "Set-Cookie": cookie(mfaCookie, "", 0) });
+      await clearAuthAttempts("login_attempt", result.user.id);
+      await clearAuthAttempts("login_attempt", result.user.email);
+      return json(res, 200, await sessionPayload(result.issued.session, result.user), { "Set-Cookie": [result.issued.cookie, cookie(mfaCookie, "", 0)] });
     }
     if (production && authMode === "chapter" && path === "/api/auth/request-reset" && req.method === "POST") {
       requireOrigin(req);
@@ -1128,32 +1229,33 @@ const server = http.createServer(async (req, res) => {
         if (!current?.active || current.role !== "member")
           fail(401, "The account or recovery key was not recognized.");
         const generation = (await stateOf("chapter")).semesterGeneration || "initial";
+        const mutationEpoch = await beginAuthMutation(db, "chapter", current.id);
         const result = await beginRecovery(db, "chapter", current.id, generation, recoveryKey);
         if (!result) fail(401, "The account or recovery key was not recognized.");
         await audit("chapter", current.name, "account.recovery.started", current.id);
-        return result;
+        return {token:result, mutationEpoch};
       });
       try {
         await setPasswordByAdmin(env, linked.subject, password);
       } catch {
         await atomic(async () => {
           await lockWorkspace("chapter");
-          await cancelRecovery(db, "chapter", candidate.id, reservation);
+          await cancelRecovery(db, "chapter", candidate.id, reservation.token);
+          // Keep the mutation fence while an ambiguous provider request settles.
         });
-        fail(503, "The password could not be changed. Your recovery key remains valid; try again or contact the portal administrator.");
+        fail(503, "The password update could not be confirmed. This recovery key has been retired. Wait two minutes, then try signing in with your new password, then your previous password, or request an email reset.");
       }
-      const nextKey = await atomic(async () => {
+      await atomic(async () => {
         await lockWorkspace("chapter");
         const generation = (await stateOf("chapter")).semesterGeneration || "initial";
-        const key = await finishRecovery(db, "chapter", candidate.id, generation, reservation);
+        await finishRecovery(db, "chapter", candidate.id, generation, reservation.token);
+        await finishAuthMutation(db, "chapter", candidate.id, reservation.mutationEpoch);
         await audit("chapter", candidate.name, "account.recovery.complete", candidate.id,
-          "Password changed; portal sessions revoked; recovery key rotated.");
-        return key;
+          "Password changed; portal sessions revoked; recovery key consumed.");
       });
       await clearAuthAttempts("recovery_attempt", candidate.id);
       return json(res, 200, {
-        message: "Password changed. Save the new 16-word recovery key, then sign in.",
-        recoveryKey: nextKey,
+        message: "Password changed. Sign in with your new password to save a new recovery key.",
       }, { "Set-Cookie": cookie(sessionCookie, "", 0) });
     }
     if (production && authMode === "chapter" && path === "/api/auth/complete" && req.method === "POST") {
@@ -1171,28 +1273,46 @@ const server = http.createServer(async (req, res) => {
           !(equal(env.CHAIR_AUTH_USER_ID, account.id) &&
             equal(env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase(), account.email)))
         fail(403, "This account is not approved for the portal.");
-      if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id)))
-        fail(401, "This account link has expired. Request a new one.");
-      let recoveryKey;
-      if (user) {
-        recoveryKey = await atomic(async () => {
-          await lockWorkspace("chapter");
-          const currentUser = await member("chapter", user.id);
-          if (!currentUser?.active || currentUser.email !== account.email)
-            fail(403, "This account is not approved for the portal.");
-          await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
-            .run("chapter", user.id);
-          await audit("chapter", user.name, "account.password_change", user.id,
-            "Existing portal sessions revoked after password update.");
-          if (currentUser.role === "member") {
-            await clearRecoveryKey(db, "chapter", user.id);
-            return issueSemesterRecoveryKey(db, "chapter", user.id,
-              (await stateOf("chapter")).semesterGeneration || "initial");
-          }
-        });
+      const isConfiguredChair = equal(env.CHAIR_AUTH_USER_ID, account.id) &&
+        equal(env.CHAIR_ACCOUNT_EMAIL?.trim().toLowerCase(), account.email);
+      if (input.code !== undefined && input.code !== "") {
+        if (typeof input.code !== "string" || !/^\d{6}$/.test(input.code))
+          fail(422, "Enter the six-digit code from your authenticator.");
+        await authAttempt("chair_mfa_attempt", account.id, 10);
       }
-      return json(res, 200, { message: "Password set. Sign in to continue.",
-        ...(recoveryKey ? { recoveryKey } : {}) });
+      const resetMfa = await verifyPasswordResetMfa(env, input.accessToken, account, input.code);
+      if (resetMfa.mfaRequired) return json(res, 200, {
+        mfaRequired: true, message: "Enter your authenticator code to finish changing the password.",
+      });
+      const bootstrapFenceId = `supabase:${env.CHAIR_AUTH_USER_ID}`;
+      const mutation = await atomic(async () => {
+        await lockWorkspace("chapter");
+        // Bootstrap login may have bound the office account while the token was
+        // being verified. Re-read the binding under the same lock as sign-in.
+        const currentBinding = await identityMember("chapter", "supabase", account.id);
+        const currentUser = currentBinding && await member("chapter", currentBinding.member_id);
+        if (currentUser ? (!currentUser.active || currentUser.email !== account.email) : !isConfiguredChair)
+          fail(403, "This account is not approved for the portal.");
+        const bootstrapEpoch = isConfiguredChair ? await beginAuthMutation(db, "chapter", bootstrapFenceId) : null;
+        const epoch = currentUser ? await beginAuthMutation(db, "chapter", currentUser.id) : null;
+        if (currentUser) {
+          await audit("chapter", currentUser.name, "account.password_change", currentUser.id,
+            "Existing portal sessions and recovery key revoked before password update.");
+          if (currentUser.role === "member") await clearRecoveryKey(db, "chapter", currentUser.id);
+        }
+        return { userId: currentUser?.id, epoch, bootstrapEpoch };
+      });
+      try {
+        if (!(await setPasswordWithToken(env, resetMfa.accessToken, input.password, account.id))) throw Error('Unconfirmed password update');
+      } catch {
+        fail(503, "Password update could not be confirmed. Wait two minutes, then try signing in with your new password or request a new reset link.");
+      }
+      await atomic(async () => {
+        await lockWorkspace("chapter");
+        if (mutation.epoch) await finishAuthMutation(db, "chapter", mutation.userId, mutation.epoch);
+        if (mutation.bootstrapEpoch) await finishAuthMutation(db, "chapter", bootstrapFenceId, mutation.bootstrapEpoch);
+      });
+      return json(res, 200, { message: "Password set. Sign in to continue." });
     }
     if (path === "/api/demo/session" && req.method === "POST" && !production) {
       requireOrigin(req);
@@ -1360,7 +1480,7 @@ const server = http.createServer(async (req, res) => {
           fail(422, "Enter your current password and matching new passwords of at least 12 characters.");
         if (input.currentPassword === input.newPassword) fail(422, "Choose a different new password.");
         await authAttempt("password_change", user.id, 5);
-        await atomic(async () => {
+        const identity = await atomic(async () => {
           await lockWorkspace(session.workspace);
           await assertActiveSession(session, user);
           const linked = await identityMember(session.workspace, "supabase",
@@ -1368,14 +1488,53 @@ const server = http.createServer(async (req, res) => {
           if (linked?.member_id !== user.id) fail(401, "The current password is incorrect.");
           const identity = await db.prepare("SELECT subject FROM identities WHERE workspace=? AND provider='supabase' AND member_id=?")
             .get(session.workspace, user.id);
-          await setPasswordByAdmin(env, identity.subject, input.newPassword);
-          await db.prepare("DELETE FROM transactions WHERE session_id IN (SELECT id FROM sessions WHERE workspace=? AND member_id=?)")
-            .run(session.workspace, user.id);
-          await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?").run(session.workspace, user.id);
-          await audit(session.workspace, user.name, "account.password_change", user.id, "Current password verified; all portal sessions revoked.");
+          const mutationEpoch = await beginAuthMutation(db, session.workspace, user.id);
+          if (user.role === "member") await clearRecoveryKey(db, session.workspace, user.id);
+          await audit(session.workspace, user.name, "account.password_change", user.id, "Current password verified; sessions and recovery key revoked before provider update.");
+          return {...identity, mutationEpoch};
+        });
+        try { await setPasswordByAdmin(env, identity.subject, input.newPassword); }
+        catch {
+          fail(503, "The password update could not be confirmed. You have been signed out. Wait two minutes, then try signing in with your new password, then your previous password.");
+        }
+        await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await finishAuthMutation(db, session.workspace, user.id, identity.mutationEpoch);
         });
         await clearAuthAttempts("password_change", user.id);
         return json(res, 200, { message: "Password changed. Sign in with your new password." }, { "Set-Cookie": cookie(sessionCookie, "", 0) });
+      }
+      if (path === "/api/account/recovery-key/confirm" && req.method === "POST") {
+        individual(user);
+        if (!production || authMode !== "chapter") fail(422, "Recovery keys require a real chapter account.");
+        const result = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const generation = (await stateOf(session.workspace)).semesterGeneration || "initial";
+          return confirmRecoveryKey(db, session.workspace, user.id, generation, input.recoveryKey);
+        });
+        return json(res, 200, result);
+      }
+      if (path === "/api/account/recovery-key" && req.method === "POST") {
+        individual(user);
+        if (!production || authMode !== "chapter") fail(422, "Recovery keys require a real chapter account.");
+        await authAttempt("recovery_issue", user.id, 5);
+        const key = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const generation = (await stateOf(session.workspace)).semesterGeneration || "initial";
+          if (!(await recoveryKeyStatus(db, session.workspace, user.id, generation)).needsKey) {
+            if (typeof input.currentPassword !== "string" || input.currentPassword.length > 1024)
+              fail(422, "Enter your current password to replace your saved recovery key.");
+            const linked = await identityMember(session.workspace, "supabase",
+              (await verifyPassword(env, user.email, input.currentPassword))?.id || "");
+            if (linked?.member_id !== user.id) fail(401, "The current password is incorrect.");
+          }
+          const replacement = await issueSemesterRecoveryKey(db, session.workspace, user.id, generation, { replace: true });
+          await audit(session.workspace, user.name, "account.recovery.reissued", user.id, "New key awaiting member confirmation.");
+          return replacement;
+        });
+        return json(res, 200, { recoveryKey: key });
       }
       if (path === "/api/session" && req.method === "GET")
         return json(res, 200, await sessionPayload(session, user));
@@ -1403,6 +1562,7 @@ const server = http.createServer(async (req, res) => {
                 state.tierAssignments?.[entry.email] ?? null,
               accountStatus: !account ? "not_invited" : !account.active ? "inactive" :
                 linked.has(account.id) ? "invited" : "missing_sign_in",
+              invitation: invitationView(state.invitations?.[entry.email]),
             };
           });
         }
@@ -2502,6 +2662,33 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 200, result);
       }
+      if (path === "/api/admin/invitations" && req.method === "GET") {
+        chair(user);
+        const state = await stateOf(session.workspace);
+        const invitations = invitationList(state);
+        for (const existing of await listMembers(session.workspace, state)) {
+          if (existing.role !== "member" || !existing.active || existing.email.endsWith("@pilot.invalid") || state.invitations?.[existing.email]) continue;
+          invitations.push({
+            email: existing.email, name: existing.name, status: "untracked", memberId: existing.id,
+            loginId: null, lastSentAt: null, retryAt: null, canReconcile: true, canResend: false,
+            message: "This account predates invitation tracking. Check its setup before sending another setup email.",
+          });
+        }
+        invitations.sort((a, b) => a.name.localeCompare(b.name));
+        return json(res, 200, { invitations, emailReady: chapterEmailReady });
+      }
+      const invitationAction = path.match(/^\/api\/admin\/invitations\/([^/]+)\/(reconcile|resend)$/);
+      if (invitationAction && req.method === "POST") {
+        chair(user);
+        let email;
+        try { email = decodeURIComponent(invitationAction[1]).trim().toLowerCase(); }
+        catch { fail(422, "Invalid member email."); }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)
+          fail(422, "Invalid member email.");
+        if (Object.keys(input).length) fail(422, "This action does not accept account changes.");
+        const result = await processInvitation(session, user, email, invitationAction[2], requestGeneration);
+        return json(res, 200, result);
+      }
       if (path === "/api/roster" && req.method === "POST") {
         chair(user);
         if (production && authMode === "chapter") {
@@ -2519,57 +2706,8 @@ const server = http.createServer(async (req, res) => {
             invited.tier = listed?.membership === "new_member" ? 1 :
               state.tierAssignments?.[invited.email] ?? invited.tier;
           }
-          const existing = await db
-            .prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
-            .get(session.workspace, invited.email);
-          if (existing) fail(409, "A member already uses this email address.");
-          if (invited.badge && await identityMember(session.workspace, "login", invited.badge))
-            fail(409, "A member already uses this badge number.");
-          const authUserId = await inviteAccount(env, invited.email, `${origin}/account/setup`);
-          let created;
-          try {
-            created = await atomic(async () => {
-              await lockWorkspace(session.workspace);
-              await assertActiveSession(session, user);
-              if (await db.prepare("SELECT id FROM members WHERE workspace=? AND LOWER(email)=?")
-                .get(session.workspace, invited.email))
-                fail(409, "A member already uses this email address.");
-              if (invited.badge && await identityMember(session.workspace, "login", invited.badge))
-                fail(409, "A member already uses this badge number.");
-              let alias;
-              do { alias = loginAlias().toLowerCase(); }
-              while (await identityMember(session.workspace, "login", alias));
-              const id = randomUUID();
-              const state = await stateOf(session.workspace);
-              academicGuard(state, requestGeneration);
-              if (rosterStatus(env).mode === "public_email_csv" &&
-                (!rosterView(state).fresh || !state.roster.emails.includes(invited.email)))
-                fail(409, "Roster eligibility changed while the invitation was being created.");
-              const listed = state.roster?.directory?.find((entry) => entry.email === invited.email);
-              const assignedTier = listed?.membership === "new_member" ? 1 :
-                state.tierAssignments?.[invited.email] ?? invited.tier;
-              await insertMember(session.workspace, { ...invited, tier: assignedTier, id, role: "member" });
-              if (state.tierAssignments?.[invited.email]) {
-                delete state.tierAssignments[invited.email];
-                await db.prepare("UPDATE chapters SET data=? WHERE workspace=?")
-                  .run(JSON.stringify(state), session.workspace);
-              }
-              for (const [provider, subject] of [
-                ["supabase", authUserId], ["login", alias],
-                ...(invited.badge ? [["login", invited.badge]] : []),
-              ]) await db.prepare("INSERT INTO identities VALUES (?,?,?,?)")
-                .run(session.workspace, provider, subject, id);
-              await audit(session.workspace, user.name, "roster.invite", id,
-                `chapter account; tier ${assignedTier}; credits ${invited.credits}`);
-              return { member: await member(session.workspace, id), loginId: alias.toUpperCase() };
-            });
-          } catch (error) {
-            // Auth and the chapter database cannot share one transaction. An
-            // invitation may already be in flight; never delete an Auth user
-            // here because it might have existed before this request.
-            fail(503, "The invitation may have been sent, but the portal account was not saved. Contact the portal administrator before retrying.");
-          }
-          return json(res, 201, created);
+          const result = await processInvitation(session, user, invited.email, "create", requestGeneration, invited);
+          return json(res, 201, result);
         }
         const invited = validateRoster(input);
         const created = await atomic(async () => {
@@ -2972,6 +3110,7 @@ const server = http.createServer(async (req, res) => {
       "/profile-data.mjs": "profile-data.mjs",
       "/syllabus-data.mjs": "syllabus-data.mjs",
       "/syllabus-ui.mjs": "syllabus-ui.mjs",
+      "/chair-mfa-ui.mjs": "chair-mfa-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",
       "/credit-ui.mjs": "credit-ui.mjs",

@@ -51,8 +51,9 @@ async function load(db, workspace, memberId) {
   if (!row) return null;
   try {
     const state = JSON.parse(row.data);
-    if (typeof state.generation !== "string" || typeof state.salt !== "string" ||
-        typeof state.hash !== "string") throw Error();
+    if (typeof state.generation !== "string" ||
+        (state.hash !== null && typeof state.hash !== "string") ||
+        (state.salt !== null && typeof state.salt !== "string")) throw Error();
     return state;
   } catch { throw Error("Recovery credential state is unavailable."); }
 }
@@ -63,39 +64,66 @@ async function save(db, workspace, memberId, state) {
   ).run(credentialId(workspace, memberId), JSON.stringify(state), NEVER_EXPIRES);
 }
 
-// Call under the workspace transaction lock after verified member sign-in.
-export async function issueSemesterRecoveryKey(db, workspace, memberId, generation) {
+// New keys are not considered delivered until the member confirms saving them.
+// Legacy keys predate confirmation; preserve them until rotation or use.
+const confirmed = row => !!row?.hash && (row.schema !== 2 || !!row.confirmedAt);
+export async function recoveryKeyStatus(db, workspace, memberId, generation) {
   const row = await load(db, workspace, memberId);
-  if (row?.generation === generation && row.hash) {
-    if (row.pendingUntil > Date.now())
-      throw Object.assign(Error("Account recovery is in progress. Try again shortly."), { status: 409 });
-    return null;
-  }
+  return { needsKey: row?.generation !== generation || !confirmed(row) };
+}
+
+// Caller must hold the workspace lock and verify the session (and password for
+// replacement of a confirmed key). Only hashes are persisted, never the words.
+export async function issueSemesterRecoveryKey(db, workspace, memberId, generation, { replace = false } = {}) {
+  const row = await load(db, workspace, memberId);
+  if (row?.pendingUntil > Date.now())
+    throw Object.assign(Error("Account recovery is in progress. Try again shortly."), { status: 409 });
+  if (!replace && row?.generation === generation && confirmed(row)) return null;
   const secret = freshSecret();
   await save(db, workspace, memberId, {
-    generation, salt: secret.salt, hash: secret.hash, pendingToken: null,
-    pendingUntil: null, issuedAt: new Date().toISOString(),
+    schema: 2, generation, salt: secret.salt, hash: secret.hash,
+    confirmedAt: null, pendingToken: null, pendingUntil: null,
+    issuedAt: new Date().toISOString(),
   });
   return secret.key;
 }
 
-// Call under the workspace transaction lock. A reservation prevents simultaneous use.
+export async function confirmRecoveryKey(db, workspace, memberId, generation, enteredKey) {
+  const row = await load(db, workspace, memberId);
+  const phrase = normalizeRecoveryKey(enteredKey);
+  const actual = digest(row?.salt || "00000000000000000000000000000000", phrase || "");
+  if (!phrase || row?.generation !== generation || !equalHash(row?.hash, actual) || row.pendingToken)
+    throw Object.assign(Error("This key was replaced. Get a new key and save it before continuing."), { status: 409 });
+  if (!row.confirmedAt) {
+    row.confirmedAt = new Date().toISOString();
+    await save(db, workspace, memberId, row);
+  }
+  return { confirmed: true };
+}
+
+// Irrevocably consume the credential BEFORE contacting the password provider.
+// A timeout is ambiguous: it must never make an already-used key reusable.
 export async function beginRecovery(db, workspace, memberId, generation, enteredKey) {
   const row = await load(db, workspace, memberId);
   const phrase = normalizeRecoveryKey(enteredKey);
   const actual = digest(row?.salt || "00000000000000000000000000000000", phrase || "");
-  if (!phrase || row?.generation !== generation || !equalHash(row?.hash, actual) ||
-      (row.pendingUntil && row.pendingUntil > Date.now())) return null;
+  if (!phrase || row?.generation !== generation || !confirmed(row) ||
+      !equalHash(row.hash, actual) || row.pendingToken) return null;
   const reservation = randomBytes(32).toString("hex");
+  row.hash = null;
+  row.salt = null;
+  row.confirmedAt = null;
   row.pendingToken = reservation;
   row.pendingUntil = Date.now() + PENDING_MS;
+  row.consumedAt = new Date().toISOString();
   await save(db, workspace, memberId, row);
   await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
     .run(workspace, memberId);
   return reservation;
 }
 
-// A known provider failure leaves the same key usable for a retry.
+// On provider failure the member can sign in with the current password or use
+// email recovery. The consumed key is NEVER restored, even after the lease ends.
 export async function cancelRecovery(db, workspace, memberId, reservation) {
   const row = await load(db, workspace, memberId);
   if (row?.pendingToken !== reservation) return;
@@ -104,20 +132,17 @@ export async function cancelRecovery(db, workspace, memberId, reservation) {
   await save(db, workspace, memberId, row);
 }
 
-// Call under the workspace lock after the provider confirms the password update.
 export async function finishRecovery(db, workspace, memberId, generation, reservation) {
   const row = await load(db, workspace, memberId);
-  if (row?.generation !== generation || row?.pendingToken !== reservation ||
-      !row.pendingUntil || row.pendingUntil <= Date.now())
+  if (row?.generation !== generation || row?.pendingToken !== reservation)
     throw Error("Recovery reservation changed or expired.");
-  const secret = freshSecret();
-  await save(db, workspace, memberId, {
-    generation, salt: secret.salt, hash: secret.hash, pendingToken: null,
-    pendingUntil: null, issuedAt: new Date().toISOString(),
-  });
+  row.pendingToken = null;
+  row.pendingUntil = null;
+  await save(db, workspace, memberId, row);
   await db.prepare("DELETE FROM sessions WHERE workspace=? AND member_id=?")
     .run(workspace, memberId);
-  return secret.key;
+  // The next verified password sign-in issues a fresh, confirmable key.
+  return null;
 }
 
 export async function clearRecoveryKey(db, workspace, memberId) {

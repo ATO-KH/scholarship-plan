@@ -1,3 +1,4 @@
+import { completeChairMfa, responseCookies } from "./chair-mfa-helper.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -68,7 +69,13 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       });
       const payload = await response.json();
       return { status: response.status, payload,
-        cookie: response.headers.get("set-cookie")?.split(";")[0] || cookie };
+        cookie: responseCookies(response, cookie) };
+    };
+    const confirmKey = async session => {
+      assert.equal(session.payload.recoveryKey.split(' ').length,16);
+      const confirmed = await request('/api/account/recovery-key/confirm', {recoveryKey:session.payload.recoveryKey}, session.cookie, session.payload.csrfToken);
+      assert.equal(confirmed.status,200,JSON.stringify(confirmed.payload));
+      assert.equal((await request('/api/session', undefined, session.cookie)).payload.recoveryKeyPending,false);
     };
     const config = await request("/api/config");
     assert.equal(config.payload.chapterAuth.enabled, true);
@@ -87,9 +94,9 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.match(await demoScript.text(), /selectedDemoAccount/);
     assert.equal((await fetch(base + "/demo/demo-worker.js")).status, 200);
     assert.equal((await request("/auth/microsoft")).status, 404);
-    const chair = await request("/api/auth/login", {
+    const chair = await completeChairMfa(request, await request("/api/auth/login", {
       identifier: "chair@example.edu", password: "correct-test-password",
-    });
+    }));
     assert.equal(chair.status, 200, JSON.stringify(chair.payload));
     assert.equal(chair.payload.user.role, "chair");
     assert.equal(chair.payload.user.name, "Scholarship Chair Office");
@@ -130,7 +137,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.match(added.payload.loginId, /^KH-[A-F0-9]{10}$/);
     assert.equal((await request("/api/roster", {
       name: "Duplicate", email: "member@example.edu", tier: 1, credits: 15,
-    }, chairCookie, chairCsrf)).status, 409);
+    }, chairCookie, chairCsrf)).status, 201);
     const roster = await request("/api/roster", undefined, chairCookie);
     assert.equal(roster.status, 200);
     const rosterById = new Map(roster.payload.members.map((entry) => [entry.id, entry]));
@@ -153,6 +160,12 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal(member.status, 200, JSON.stringify(member.payload));
     assert.equal(member.payload.user.name, "Sample Member");
     assert.equal(member.payload.recoveryKey.split(" ").length, 16);
+    // An interrupted key display is recoverable on the next password sign-in.
+    const reopened = await request('/api/auth/login', {identifier:'1234',password:'correct-test-password'});
+    assert.notEqual(reopened.payload.recoveryKey,member.payload.recoveryKey);
+    assert.equal((await request('/api/account/recovery-key/confirm', {recoveryKey:member.payload.recoveryKey}, reopened.cookie, reopened.payload.csrfToken)).status,409);
+    member.payload.recoveryKey = reopened.payload.recoveryKey;
+    await confirmKey(reopened);
     assert.equal((await request("/api/roster", undefined, member.cookie)).status, 403);
     const byEmail = await request("/api/auth/login", {
       identifier: "member@example.edu", password: "correct-test-password",
@@ -172,14 +185,24 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       recoveryKey: member.payload.recoveryKey,
       password: "provider-failure-test-password",
     })).status, 503);
+    assert.equal((await request('/api/auth/login', {identifier:'1234',password:'correct-test-password'})).status,409);
+    const settling = new DatabaseSync(join(directory, 'production', 'chapter.sqlite'));
+    try {
+      for (const row of settling.prepare("SELECT id,data FROM transactions WHERE kind='auth_mutation'").all()) {
+        const data = JSON.parse(row.data); data.busyUntil = Date.now()-1;
+        settling.prepare('UPDATE transactions SET data=? WHERE id=?').run(JSON.stringify(data), row.id);
+      }
+    } finally { settling.close(); }
+    assert.equal((await request('/api/auth/recover-key', {identifier:'1234', recoveryKey:member.payload.recoveryKey,password:'recovered-test-password'})).status,401);
+    const retryLogin = await request('/api/auth/login', {identifier:'1234',password:'correct-test-password'});
+    await confirmKey(retryLogin);
     const recovered = await request("/api/auth/recover-key", {
       identifier: added.payload.loginId,
-      recoveryKey: member.payload.recoveryKey,
+      recoveryKey: retryLogin.payload.recoveryKey,
       password: "recovered-test-password",
     });
     assert.equal(recovered.status, 200, JSON.stringify(recovered.payload));
-    assert.equal(recovered.payload.recoveryKey.split(" ").length, 16);
-    assert.notEqual(recovered.payload.recoveryKey, member.payload.recoveryKey);
+    assert.equal(recovered.payload.recoveryKey,undefined);
     assert.equal((await request("/api/session", undefined, member.cookie)).status, 401);
     assert.equal((await request("/api/session", undefined, byEmail.cookie)).status, 401);
     assert.equal((await request("/api/session", undefined, byPortalId.cookie)).status, 401);
@@ -192,7 +215,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       identifier: "member@example.edu", password: "recovered-test-password",
     });
     assert.equal(afterRecovery.status, 200);
-    assert.equal(afterRecovery.payload.recoveryKey, undefined);
+    await confirmKey(afterRecovery);
 
     const reset = await request(`/api/roster/${member.payload.user.id}/reset-password`, {}, chairCookie, chairCsrf);
     assert.equal(reset.status, 200);
@@ -216,8 +239,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       accessToken: "test-account-token", password: "a-long-new-password",
     });
     assert.equal(completedSetup.status, 200);
-    assert.equal(completedSetup.payload.recoveryKey.split(" ").length, 16);
-    assert.notEqual(completedSetup.payload.recoveryKey, recovered.payload.recoveryKey);
+    assert.equal(completedSetup.payload.recoveryKey,undefined);
     assert.equal((await request("/api/session", undefined, member.cookie)).status, 401);
     assert.equal((await request("/api/session", undefined, byEmail.cookie)).status, 401);
     assert.equal((await request("/api/session", undefined, byPortalId.cookie)).status, 401);
@@ -226,7 +248,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       identifier: "1234", password: "a-long-new-password",
     });
     assert.equal(afterEmailReset.status, 200);
-    assert.equal(afterEmailReset.payload.recoveryKey, undefined);
+    await confirmKey(afterEmailReset);
     const preview = await request("/api/semester/preview", undefined, chairCookie);
     assert.equal(preview.status, 200);
     const nextSemester = await request("/api/semester/reset", {
@@ -249,10 +271,11 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     });
     assert.equal(afterSemester.status, 200);
     assert.equal(afterSemester.payload.recoveryKey.split(" ").length, 16);
-    assert.notEqual(afterSemester.payload.recoveryKey, completedSetup.payload.recoveryKey);
+    assert.notEqual(afterSemester.payload.recoveryKey, afterEmailReset.payload.recoveryKey);
+    await confirmKey(afterSemester);
     assert.equal((await request("/api/auth/recover-key", {
       identifier: "1234",
-      recoveryKey: completedSetup.payload.recoveryKey,
+      recoveryKey: afterEmailReset.payload.recoveryKey,
       password: "another-long-password",
     })).status, 401);
     for (let i = 0; i < 3; i++) {
@@ -284,7 +307,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
     assert.equal((await request("/api/auth/login", {identifier:"1234",password:"a-long-new-password"})).status, 401);
     const changedLogin = await request("/api/auth/login", {identifier:"1234",password:"member-changed-password"});
     assert.equal(changedLogin.status, 200);
-    assert.equal(changedLogin.payload.recoveryKey, undefined);
+    await confirmKey(changedLogin);
     const deactivated = await request(`/api/roster/${member.payload.user.id}/deactivate`, {}, chairCookie, chairCsrf);
     assert.equal(deactivated.status, 200);
     assert.equal((await request("/api/session", undefined, member.cookie)).status, 401);
@@ -292,7 +315,7 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       identifier: "1234", password: "correct-test-password",
     })).status, 401);
     const chairSetup = await request("/api/auth/complete", {
-      accessToken: "test-chair-account-token", password: "a-new-chair-password",
+      accessToken: "test-chair-account-token", password: "a-new-chair-password", code: "123456",
     });
     assert.equal(chairSetup.status, 200);
     assert.equal(chairSetup.payload.recoveryKey, undefined);

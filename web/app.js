@@ -79,25 +79,31 @@ function toast(message) {
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => $("#toast").classList.remove("visible"), 4000);
 }
-async function api(path, { method = "GET", body, raw = false } = {}) {
+async function api(path, { method = "GET", body, raw = false, headers = {} } = {}) {
   const start = performance.now();
-  const sensitive = path.startsWith("/api/admin/tier-import");
+  const sensitive = /^\/api\/(auth\/|account\/|admin\/tier-import)/.test(path);
   const epoch = sessionEpoch,
     owner = user?.id,
     csrf = csrfToken;
   const current = () =>
     epoch === sessionEpoch && owner === user?.id && csrf === csrfToken;
+  const controller = new AbortController();
+  const timeoutMs = /^\/api\/(auth|account)\//.test(path) ? 45_000 : 135_000;
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   let response, payload;
   try {
     response = await fetch(path, {
       method,
       credentials: "same-origin",
+      signal: controller.signal,
       headers: {
         ...(user ? { "X-ATO-Expected-User": user.id } : {}),
         ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
         ...(method === "POST"
           ? { "Content-Type": "application/json", "X-ATO-Demo": "1" }
           : {}),
+        ...headers,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
@@ -120,17 +126,24 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
       });
     return payload;
   } catch (e) {
-    if (!response && current())
+    const error = timedOut
+      ? Error("The request timed out and its result was not confirmed. Check the current status before trying again.")
+      : e;
+    if ((!response || timedOut) && current()) {
       logs.unshift({
         method,
         path,
-        status: "Network error",
+        status: timedOut ? "Request timed out" : "Network error",
         ms: Math.round(performance.now() - start),
         time: new Date().toLocaleTimeString(),
         request: sensitive ? "[redacted]" : body ? redact(body) : null,
-        response: { error: e.message },
+        response: { error: error.message },
       });
-    throw e;
+      logs = logs.slice(0, 50);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
 const loading = (message, compact = false) => window.atoLoading.markup(message, compact);
@@ -442,26 +455,42 @@ function mountPasswordForm(container) {
     container.innerHTML = '<h2>Change password</h2><p>Password changes are available for real chapter accounts. Public demo passwords stay unchanged.</p>';
     return;
   }
-  container.innerHTML = `<h2>Change password</h2><form id="change-password-form"><div class="field"><label for="current-password">Current password</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required maxlength="1024"></div><div class="field"><label for="profile-new-password">New password</label><input id="profile-new-password" name="newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"><small>At least 12 characters.</small></div><div class="field"><label for="profile-confirm-password">Confirm new password</label><input id="profile-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></div><p class="muted">Changing your password signs you out on all devices. Your saved recovery key stays valid.</p><div class="password-feedback" role="status" aria-live="polite"></div><button class="button gold" type="submit">Change password</button></form>`;
+  container.innerHTML = `<h2>Change password</h2><form id="change-password-form"><div class="field"><label for="current-password">Current password</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required maxlength="1024"></div><div class="field"><label for="profile-new-password">New password</label><input id="profile-new-password" name="newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"><small>At least 12 characters.</small></div><div class="field"><label for="profile-confirm-password">Confirm new password</label><input id="profile-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></div><p class="muted">Changing your password signs you out on all devices. Members save a new recovery key on their next sign-in.</p><div class="password-feedback" role="status" aria-live="polite"></div><button class="button gold" type="submit">Change password</button></form>`;
   const form = container.querySelector("form"), feedback = container.querySelector(".password-feedback");
+  const owner = user.id, epoch = sessionEpoch;
+  const sameAccount = () => user?.id === owner && sessionEpoch === epoch;
+  let pending = false;
   form.onsubmit = async event => {
     event.preventDefault();
+    if (pending || !sameAccount()) return;
     const body = Object.fromEntries(new FormData(form));
     if (body.newPassword !== body.confirmPassword) { feedback.textContent = "The new passwords do not match."; return; }
+    pending = true;
     const controls = [...form.querySelectorAll("input,button")];
     controls.forEach(control => control.disabled = true);
     feedback.innerHTML = loading("Changing password…", true);
     try {
       await api("/api/account/password", {method:"POST",body});
+      if (!sameAccount()) return;
       form.reset();
-      sessionEpoch++;
-      logs = []; rosterAccounts = []; rosterCandidates = [];
-      main.innerHTML = '<section class="panel"><h2>Password changed</h2><p>Sign in again using your new password.</p><a class="button gold" href="/">Return to sign in</a></section>';
-      user = null; csrfToken = null;
-      $("#nav").innerHTML = "";
+      rosterAccounts = []; rosterCandidates = [];
+      loginPage();
+      toast("Password changed. Sign in again using your new password.");
     } catch (error) {
-      feedback.textContent = error.message;
-      controls.forEach(control => control.disabled = false);
+      if (!sameAccount()) return;
+      if (!error.status || error.status >= 500) {
+        // A lost response can follow successful password replacement and session
+        // revocation. Do not keep an apparently signed-in workspace on screen.
+        rosterAccounts = []; rosterCandidates = [];
+        loginPage();
+        const message = `${error.message} Try signing in with your new password first. If it does not work, try your previous password or account recovery.`;
+        const notice = $("#form-error");
+        if (notice) notice.textContent = message;
+        else toast(message);
+      } else if (container.isConnected) feedback.textContent = error.message;
+    } finally {
+      pending = false;
+      if (sameAccount() && container.isConnected) controls.forEach(control => control.disabled = false);
     }
   };
 }
@@ -478,6 +507,8 @@ async function profilePage() {
   </div>`;
   main.querySelector(".profile-account").insertAdjacentHTML("beforeend", '<section class="panel password-shell"></section>');
   mountPasswordForm(main.querySelector(".password-shell"));
+  main.querySelector(".profile-account").insertAdjacentHTML("beforeend", '<section class="panel recovery-shell"></section>');
+  mountRecoverySettings(main.querySelector('.recovery-shell'));
   const container = main.querySelector(".profile-shell");
   loadCreditPanel(main.querySelector(".credit-shell"), false);
   loadProfilePicture(main.querySelector(".picture-shell"));
@@ -558,8 +589,25 @@ function openModal(title, subtitle, body) {
     `<div class="modal-heading"><div><h2>${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ""}</div><button class="close" data-action="close" aria-label="Close dialog">×</button></div>${body}`;
   if (!modal.open) modal.showModal();
 }
+function mountRecoverySettings(container) {
+  if (isDemo() || !appConfig.chapterAuth?.enabled) { container.remove(); return; }
+  container.innerHTML = `<h2>Recovery key</h2><p>Lost your saved words? Replace your key here. Your previous key will stop working.</p><form><div class="field"><label for="recovery-current-password">Current password</label><input id="recovery-current-password" name="currentPassword" type="password" autocomplete="current-password" maxlength="1024" required></div><div class="recovery-feedback" role="status"></div><button class="button ghost" type="submit">Replace recovery key</button></form>`;
+  const form = container.querySelector('form'), feedback = container.querySelector('.recovery-feedback');
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const body = Object.fromEntries(new FormData(form)), button = form.querySelector('button');
+    button.disabled = true; feedback.innerHTML = loading('Replacing recovery key…', true);
+    try {
+      const result = await api('/api/account/recovery-key', {method:'POST', body});
+      if (!container.isConnected) return;
+      form.reset(); feedback.textContent = '';
+      showRecoveryKeyModal(result.recoveryKey, () => toast('New recovery key saved.'));
+    } catch (error) { if (container.isConnected) feedback.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+}
 function recoveryKeyContent(key) {
-  return `<div class="notice info"><strong>Save these 16 words now.</strong><p>This key is shown only once. Keep it somewhere private so you can reset your password if you lose access to your email. The Scholarship Chair cannot see or retrieve it.</p></div><p class="recovery-key" aria-label="Your new 16-word recovery key">${esc(key)}</p><label class="recovery-confirm"><input type="checkbox" id="saved-recovery-key"> I saved this key in a private place.</label><div class="modal-actions"><button class="button gold" id="recovery-key-done" type="button" disabled>Continue</button></div>`;
+  return `<div class="notice info"><strong>Save these 16 words now.</strong><p>Keep these words somewhere private so you can reset your password if you lose access to your email. The Scholarship Chair cannot see or retrieve it.</p></div><p class="recovery-key" aria-label="Your new 16-word recovery key">${esc(key)}</p><label class="recovery-confirm"><input type="checkbox" id="saved-recovery-key"> I saved this key in a private place.</label><div class="recovery-feedback" role="status" aria-live="polite"></div><div class="modal-actions"><button class="button ghost" id="recovery-key-replace" type="button">Get a new key</button><button class="button gold" id="recovery-key-done" type="button" disabled>Continue</button></div>`;
 }
 function showRecoveryKeyModal(key, onSaved) {
   openModal("YOUR RECOVERY KEY", "Shown once for this semester", recoveryKeyContent(key));
@@ -568,10 +616,32 @@ function showRecoveryKeyModal(key, onSaved) {
   $("#saved-recovery-key").onchange = (event) => {
     $("#recovery-key-done").disabled = !event.target.checked;
   };
-  $("#recovery-key-done").onclick = () => {
-    delete modal.dataset.recoveryLocked;
-    modal.close();
-    onSaved?.();
+  const feedback = modal.querySelector('.recovery-feedback');
+  let pending = false;
+  $("#recovery-key-done").onclick = async () => {
+    if (pending) return;
+    pending = true;
+    const controls = [...modal.querySelectorAll('button,input')];
+    controls.forEach(control => control.disabled = true);
+    feedback.innerHTML = loading('Saving recovery confirmation…', true);
+    try {
+      await api('/api/account/recovery-key/confirm', {method:'POST', body:{recoveryKey:key}});
+      delete modal.dataset.recoveryLocked;
+      modal.close();
+      $('#modal-content').replaceChildren();
+      onSaved?.();
+    } catch (error) { feedback.textContent = error.message; }
+    finally { pending = false; controls.forEach(control => control.disabled = false); }
+  };
+  $("#recovery-key-replace").onclick = async () => {
+    if (pending) return;
+    pending = true;
+    feedback.innerHTML = loading('Getting a new key…', true);
+    try {
+      const result = await api('/api/account/recovery-key', {method:'POST', body:{}});
+      showRecoveryKeyModal(result.recoveryKey, onSaved);
+    } catch (error) { feedback.textContent = error.message; }
+    finally { pending = false; }
   };
 }
 function formError(message) {
@@ -928,7 +998,7 @@ async function handleAction(e) {
     openModal(
       "YOUR ACCOUNT",
       esc(user.name),
-      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair office account" : "Chapter member"}</p>${user.role === "chair" && appConfig.chapterAuth?.enabled ? `<p class="muted">${appConfig.chapterAuth.emailReady ? "At a chair transition, use the chapter inbox to reset this password. That signs out existing portal sessions." : "The chapter inbox is not connected for password resets yet. Contact the portal administrator if this office account needs recovery."}</p>` : ""}<div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
+      `<p>${esc(user.email || "")}</p><p>${user.role === "chair" ? "Scholarship Chair office account" : "Chapter member"}</p>${user.role === "chair" && appConfig.chapterAuth?.enabled ? `<p class="muted">${appConfig.chapterAuth.emailReady ? "At a Chair transition, ask the portal operator to transfer the office password and authenticator and end the outgoing Chair’s access." : "The chapter inbox is not connected for password resets yet. Contact the portal administrator if this office account needs recovery."}</p>` : ""}<div class="modal-actions"><button class="button ghost" data-action="logout">Sign out</button><button class="button gold" data-action="close">Close</button></div>`,
     );
     return;
   }
@@ -1042,6 +1112,10 @@ async function init(sessionFromLogin = null) {
       const e = sessionOutcome.error;
       if (e.status !== 401) throw e;
       if (!isDemo()) {
+        if (appConfig.chapterAuth?.enabled) {
+          try { const pending = await api('/api/auth/mfa'); await chairMfaPage(pending); return; }
+          catch (error) { if (error.status !== 401) throw error; }
+        }
         loginPage();
         return;
       }
@@ -1060,6 +1134,13 @@ async function init(sessionFromLogin = null) {
         body: { persona: requested },
       });
     user = result.user;
+    if (!isDemo() && user.role === 'member' && (result.recoveryKey || result.recoveryKeyPending)) {
+      const key = result.recoveryKey || (await api('/api/account/recovery-key', {method:'POST', body:{}})).recoveryKey;
+      document.body.classList.remove('portal-loading');
+      setAuthLoading(false);
+      showRecoveryKeyModal(key, () => init({...result, recoveryKey:null, recoveryKeyPending:false}));
+      return;
+    }
     appConfig.semester = result.semester || appConfig.semester;
     rules = null;
     submissions = [];
@@ -1119,6 +1200,17 @@ async function init(sessionFromLogin = null) {
     $("#retry").onclick = () => init();
   }
 }
+async function chairMfaPage(initial) {
+  loginPage();
+  const epoch = sessionEpoch;
+  main.innerHTML = heading('', 'Chair verification', '') + `<section class="panel login-panel">${loading('Loading verification…', true)}</section>`;
+  const container = main.querySelector('.login-panel');
+  const {mountChairMfa} = await import('/chair-mfa-ui.mjs');
+  if (epoch !== sessionEpoch || !container.isConnected) return;
+  await mountChairMfa(container, {api, esc, initial, loadingMarkup:loading,
+    onComplete: result => epoch === sessionEpoch ? init(result) : undefined,
+    onCancel: () => epoch === sessionEpoch ? loginPage() : undefined});
+}
 function loginPage() {
   document.body.classList.remove("portal-loading");
   setAuthLoading(false);
@@ -1130,6 +1222,8 @@ function loginPage() {
   points = {};
   canvasConnected = false;
   modal.close();
+  delete modal.dataset.recoveryLocked;
+  $('#modal-content').replaceChildren();
   user = null;
   csrfToken = null;
   $(".term").textContent = appConfig.semester?.name || "Current semester";
@@ -1160,14 +1254,11 @@ function loginPage() {
           return;
         }
         const signedIn = await api("/api/auth/login", { method: "POST", body: values });
-        if (signedIn.recoveryKey) {
-          setAuthLoading(false);
-          const { recoveryKey, ...session } = signedIn;
-          showRecoveryKeyModal(recoveryKey, () => init(session));
-        }
+        if (signedIn.mfaRequired) await chairMfaPage(signedIn);
         else await init(signedIn);
       } catch (error) {
         setAuthLoading(false);
+        if (!$("#form-error")) loginPage();
         $("#form-error").textContent = error.message;
       } finally {
         loginPending = false;
@@ -1190,24 +1281,29 @@ function loginPage() {
             return;
           }
           delete values.confirm;
+          if (event.target.dataset.pending) return;
+          event.target.dataset.pending = 'true';
+          setAuthLoading(true, 'Resetting password…');
           try {
             const result = await api("/api/auth/recover-key", { method: "POST", body: values });
-            panel.innerHTML = `<h2>Save your new recovery key</h2><p>Your password was changed. The old key no longer works.</p>${recoveryKeyContent(result.recoveryKey)}`;
-            $("#saved-recovery-key").onchange = (event) => {
-              $("#recovery-key-done").disabled = !event.target.checked;
-            };
-            $("#recovery-key-done").onclick = loginPage;
-          } catch (error) { $("#form-error").textContent = error.message; }
+            panel.innerHTML = `<h2>Password changed</h2><p>${esc(result.message)}</p><button class="button gold" id="back-login" type="button">Sign in</button>`;
+            $('#back-login').onclick = loginPage;
+          } catch (error) { if ($('#form-error')) $('#form-error').textContent = error.message; }
+          finally { delete event.target.dataset.pending; setAuthLoading(false); }
         };
       };
       if (!emailReady) return;
       $("#reset-request").onsubmit = async (event) => {
         event.preventDefault();
+        if (event.target.dataset.pending) return;
+        event.target.dataset.pending = 'true';
+        setAuthLoading(true, 'Requesting reset link…');
         try {
           const result = await api("/api/auth/request-reset", { method: "POST", body: Object.fromEntries(new FormData(event.target)) });
           panel.innerHTML = `<h2>Check your email</h2><p>${esc(result.message)}</p><button class="button ghost" id="back-login" type="button">Back to sign in</button>`;
           $("#back-login").onclick = loginPage;
-        } catch (error) { $("#form-error").textContent = error.message; }
+        } catch (error) { if ($('#form-error')) $('#form-error').textContent = error.message; }
+        finally { delete event.target.dataset.pending; setAuthLoading(false); }
       };
     };
     return;
@@ -1248,18 +1344,25 @@ function accountSetupPage() {
     setupPending = true;
     setAuthLoading(true, "Saving your password…");
     try {
-      const result = await api("/api/auth/complete", { method: "POST", body: { accessToken: accountToken, password: values.password } });
+      const result = await api("/api/auth/complete", { method: "POST", body: { accessToken: accountToken, password: values.password, ...(values.code ? {code:values.code} : {}) } });
       setAuthLoading(false);
+      if (result.mfaRequired) {
+        const form = $('#account-setup');
+        if (!form.elements.code) {
+          form.querySelector('#form-error').insertAdjacentHTML('beforebegin', '<div class="field"><label for="reset-mfa-code">Chair authenticator code</label><input id="reset-mfa-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required><small>Enter the current six-digit code from the Chair authenticator. If you have lost it, contact the portal operator for office-account recovery.</small></div>');
+        }
+        form.querySelector('button[type="submit"]').textContent = 'Verify and save password';
+        $('#form-error').textContent = 'Verify the Chair account before changing its password.';
+        form.elements.code.focus();
+        return;
+      }
       accountToken = null;
       history.replaceState(null, "", "/");
       const continueToLogin = () => {
         loginPage();
         toast("Password saved. Sign in to continue.");
       };
-      if (result.recoveryKey) {
-        main.innerHTML = '<section class="panel login-panel"><h2>Password saved</h2><p>Save your recovery key before continuing to sign in.</p></section>';
-        showRecoveryKeyModal(result.recoveryKey, continueToLogin);
-      } else continueToLogin();
+      continueToLogin();
     } catch (error) { $("#form-error").textContent = error.message; }
     finally { setupPending = false; setAuthLoading(false); }
   };
@@ -1504,17 +1607,60 @@ async function rosterPage() {
       "Manage member identities and access.",
       '<div class="heading-actions"><button class="button ghost" data-action="create-pilot-accounts">Create pilot accounts</button><button class="button ghost" data-action="import-gpa-tiers">Import GPA tiers</button><button class="button gold" data-action="add-member">Add member</button></div>',
     ) +
-    `${appConfig.chapterAuth?.enabled ? '<div class="notice info"><strong>Scholarship Chair office account</strong><p>This account belongs to the office, not to a member. Transfer control of its chapter inbox to the incoming chair and reset its password during each transition. Other members have separate accounts.</p></div>' : ""}<section class="panel" id="roster-sync">${loading("Checking sheet connection…")}</section><section class="panel recent" id="roster-table">${loading("Loading roster…")}</section>`;
+    `${appConfig.chapterAuth?.enabled ? '<div class="notice info"><strong>Scholarship Chair office account</strong><p>This account belongs to the office, not to a member. Transfer control of its chapter inbox to the incoming chair and reset its password during each transition. Other members have separate accounts.</p></div>' : ""}<section class="panel" id="roster-sync">${loading("Checking sheet connection…")}</section>${appConfig.chapterAuth?.enabled ? `<section class="panel" id="invitation-status">${loading("Loading invitation status…")}</section>` : ""}<section class="panel recent" id="roster-table">${loading("Loading roster…")}</section>`;
   loadRosterSync();
+  if (appConfig.chapterAuth?.enabled) loadInvitationStatus();
   const destination = $("#roster-table");
   try {
     const result = await api("/api/roster");
     if (!destination.isConnected) return;
     rosterAccounts = result.members;
-    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.role === "member" ? `Tier ${m.tier} · ${m.credits} credits<small>${m.goal} point goal${m.active === false || m.active === 0 ? "" : ` · <button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}">Manage member</button>`}</small>` : "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+    destination.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Member / Portal Member ID</th><th>${appConfig.chapterAuth?.enabled ? "Sign-in ID" : "Identity provider"}</th><th>Role</th><th>Tier / credits</th><th>Access</th></tr></thead><tbody>${result.members.map((m) => `<tr><td><strong>${esc(m.name)}</strong><small>${esc(m.email || "")}</small><code>${esc(m.id)}</code></td><td>${appConfig.chapterAuth?.enabled ? esc(m.role === "chair" ? m.email : m.identities?.filter((i) => i.provider === "login").map((i) => i.subject.toUpperCase()).join(" · ") || "Pending") : esc(m.identities?.length ? m.identities.map((i) => i.provider).join(", ") : isDemo() ? "Demo" : "Not linked")}</td><td>${esc(m.role)}</td><td>${m.role === "member" ? `Tier ${m.tier} · ${m.credits} credits<small>${m.goal} point goal${m.active === false || m.active === 0 ? "" : ` · <button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}">Manage member</button>`}</small>` : "—"}</td><td>${m.active === false || m.active === 0 ? "Inactive" : m.id === user.id ? "Current account" : `${appConfig.chapterAuth?.enabled ? `<button class="table-link" data-action="reset-member-password" data-id="${esc(m.id)}">Send reset</button> · ` : ""}<button class="table-link" data-action="deactivate-member" data-id="${esc(m.id)}">Deactivate</button>`}</td></tr>`).join("")}</tbody></table></div>`;
   } catch (e) {
     if (destination.isConnected)
       destination.innerHTML = '<div class="error">' + esc(e.message) + "</div>";
+  }
+}
+let invitationStatusLoad = 0;
+async function loadInvitationStatus() {
+  const panel = $('#invitation-status'), revision = ++invitationStatusLoad;
+  if (!panel?.isConnected) return;
+  const current = () => panel.isConnected && revision === invitationStatusLoad;
+  const labels = {untracked:'Check setup', preparing:'Preparing account', ready:'Ready to send', sending:'Sending', sent:'Accepted by email service', delivery_unknown:'Delivery uncertain', failed:'Needs attention'};
+  try {
+    const {invitations, emailReady} = await api('/api/admin/invitations');
+    if (!current()) return;
+    panel.innerHTML = `<div class="section-heading"><h2>INVITATION STATUS</h2><button class="text-btn" data-refresh-invitations type="button">Refresh</button></div><p class="muted">A successful send means the email service accepted the request. Ask the recipient to confirm it arrived.</p>${emailReady ? '' : '<p class="notice info">Email sending is not enabled. You can still check and repair account setup without sending anything.</p>'}${invitations.length ? `<div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Status</th><th>Last sent</th><th>Actions</th></tr></thead><tbody>${invitations.map((item,index) => `<tr><td><strong>${esc(item.name)}</strong><small>${esc(item.email)}</small><code>${esc(item.loginId || '')}</code></td><td>${esc(labels[item.status] || item.status)}<small>${esc(item.message || '')}</small></td><td>${item.lastSentAt ? esc(new Date(item.lastSentAt).toLocaleString()) : '—'}</td><td>${item.canReconcile ? `<button class="table-link" data-invitation-index="${index}" data-operation="reconcile">Check account setup</button>` : ''}${item.canResend && emailReady ? `<button class="table-link" data-invitation-index="${index}" data-operation="resend">Review resend</button>` : item.retryAt > Date.now() ? '<small>Wait one minute, then refresh.</small>' : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p>No invitations have been prepared.</p>'}`;
+    panel.querySelector('[data-refresh-invitations]').onclick = loadInvitationStatus;
+    panel.querySelectorAll('[data-invitation-index]').forEach(button => button.onclick = () => {
+      const item = invitations[Number(button.dataset.invitationIndex)], operation = button.dataset.operation;
+      const resend = operation === 'resend';
+      openModal(resend ? 'SEND ACCOUNT SETUP?' : 'CHECK ACCOUNT SETUP?', '', `<p>${resend ? 'Send a new one-time password setup link to' : 'Check and repair the portal account connection for'} <strong>${esc(item.email)}</strong>?</p><p>${resend ? 'If the earlier delivery was uncertain, check the inbox first. This action sends another email.' : 'This does not send an email or change an existing password.'}</p><form id="invitation-action-form">${resend ? '<label class="checkbox-line"><input type="checkbox" required><span>I checked the recipient and want to send this email now.</span></label>' : ''}<div class="invitation-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" data-action="close" type="button">Cancel</button><button class="button gold" type="submit">${resend ? 'Send setup link' : 'Check account setup'}</button></div></form>`);
+      const form = $('#invitation-action-form');
+      form.onsubmit = async event => {
+        event.preventDefault();
+        if (form.dataset.pending) return;
+        form.dataset.pending = 'true';
+        const controls = [...form.querySelectorAll('input,button')];
+        controls.forEach(control => control.disabled = true);
+        const feedback = form.querySelector('.invitation-feedback');
+        feedback.innerHTML = loading(resend ? 'Sending setup link…' : 'Repairing account…', true);
+        try {
+          const result = await api(`/api/admin/invitations/${encodeURIComponent(item.email)}/${operation}`, {method:'POST',body:{}});
+          if (!form.isConnected || !modal.open) { await loadInvitationStatus(); return; }
+          modal.close(); await rosterPage(); toast(result.message);
+        } catch (error) {
+          feedback.textContent = `${error.message} Close this window and refresh invitation status before trying again.`;
+          form.querySelector('[data-action="close"]').disabled = false;
+          loadInvitationStatus();
+        }
+      };
+    });
+  } catch (error) {
+    if (current()) {
+      panel.innerHTML = `<h2>Invitation status</h2><p class="error">${esc(error.message)}</p><button class="button ghost" type="button">Try again</button>`;
+      panel.querySelector('button').onclick = loadInvitationStatus;
+    }
   }
 }
 async function loadRosterSync() {
@@ -1709,11 +1855,11 @@ function addMember(prefill = {}) {
       body.tier = Number(body.tier);
       body.credits = Number(body.credits);
       openModal("REVIEW INVITATION", "Nothing has been sent yet.",
-        `<dl class="details"><div><dt>Recipient</dt><dd>${esc(body.name)}</dd></div><div><dt>To</dt><dd>${esc(body.email)}</dd></div><div><dt>Tier / credits</dt><dd>Tier ${body.tier} · ${body.credits} credits</dd></div><div><dt>Sign-in ID</dt><dd>${esc(body.badge || "Assigned automatically")}</dd></div></dl><p>This sends the account-setup email with a one-time link to choose a password. It does not send a temporary password. The email wording is managed in Supabase’s Invite user template.</p><form id="confirm-invitation"><label class="checkbox-line"><input type="checkbox" required><span>I checked this recipient and want to send this invitation now.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button id="edit-invitation" class="button ghost" type="button">Back</button><button class="button gold" type="submit">Send invitation to this member</button></div></form>`);
+        `<dl class="details"><div><dt>Recipient</dt><dd>${esc(body.name)}</dd></div><div><dt>To</dt><dd>${esc(body.email)}</dd></div><div><dt>Tier / credits</dt><dd>Tier ${body.tier} · ${body.credits} credits</dd></div><div><dt>Sign-in ID</dt><dd>${esc(body.badge || "Assigned automatically")}</dd></div></dl><p>This sends the account-setup email with a one-time link to choose a password. It does not send a temporary password. The email wording is managed in the account setup/reset email template.</p><form id="confirm-invitation"><label class="checkbox-line"><input type="checkbox" required><span>I checked this recipient and want to send this invitation now.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button id="edit-invitation" class="button ghost" type="button">Back</button><button class="button gold" type="submit">Send invitation to this member</button></div></form>`);
       $("#edit-invitation").onclick = () => addMember({ ...prefill, ...body, assignedTier: body.tier });
       $("#confirm-invitation").onsubmit = async confirmEvent => {
         confirmEvent.preventDefault();
-        const form = confirmEvent.target, owner = user?.id;
+        const form = confirmEvent.target, owner = user?.id, epoch = sessionEpoch;
         const buttons = [...form.querySelectorAll("button,input")];
         if (form.dataset.sending) return;
         form.dataset.sending = "true";
@@ -1721,12 +1867,18 @@ function addMember(prefill = {}) {
         $("#form-error").innerHTML = loading("Sending invitation…", true);
         try {
           const result = await api("/api/roster", { method: "POST", body });
-          if (user?.id !== owner) return;
+          if (user?.id !== owner || sessionEpoch !== epoch) return;
+          if (!form.isConnected || !modal.open) { await loadInvitationStatus(); return; }
           modal.close();
           await rosterPage();
-          toast(`Invitation sent. Sign-in ID: ${result.loginId}`);
+          toast(result.message || `Account prepared. Sign-in ID: ${result.loginId}`);
         } catch (error) {
-          if (form.isConnected) { form.querySelector("#form-error").textContent = error.message; delete form.dataset.sending; buttons.forEach(button => button.disabled = false); }
+          if (user?.id !== owner || sessionEpoch !== epoch) return;
+          if (form.isConnected && modal.open) {
+            form.querySelector("#form-error").textContent = `${error.message} Close this window and check Invitation status before trying again.`;
+            form.querySelector('#edit-invitation').disabled = false;
+          }
+          loadInvitationStatus();
         }
       };
     };
