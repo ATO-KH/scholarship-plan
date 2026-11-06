@@ -476,3 +476,114 @@ test("interrupted preparation leaves a recoverable status even for an already li
   assert.equal(failed.canResend, false);
   assert.equal(f.calls.sends, 1);
 });
+
+async function rosterFixture(t, membership = 'active', tier) {
+  const f = await fixture(t);
+  await f.setState({ ...(await f.state()), roster: { emails: [f.input.email], directory: [{
+    email: f.input.email, name: 'Roster Member', membership,
+  }] }, ...(tier ? {tierAssignments: {[f.input.email]:tier}} : {}) });
+  return f;
+}
+
+test('direct roster invitation creates and sends with server roster details, staged tiers and default credits', async t => {
+  const f = await rosterFixture(t, 'active', 4);
+  const result = await f.run('invite-roster', {input:{...f.input,name:'Untrusted name',tier:5,credits:30,badge:'unsafe'}});
+  const member = await f.storage.prepare('SELECT * FROM members WHERE id=?').get(result.memberId);
+  assert.equal(member.name,'Roster Member'); assert.equal(member.tier,4); assert.equal(member.credits,15);
+  assert.equal((await f.state()).invitations[f.input.email].badge,'');
+  assert.equal(result.invitation.status,'sent'); assert.equal(result.invitation.canInviteFromRoster,false);
+  assert.equal(f.calls.creates,1); assert.equal(f.calls.sends,1);
+  await assert.rejects(f.run('invite-roster'), error=>error.status===409);
+  assert.equal(f.calls.sends,1);
+});
+
+test('direct roster invitation permits unassigned tiers and always gives new members Tier 1', async t => {
+  for (const [membership,tier] of [['active',undefined],['new_member',5]]) {
+    const f = await rosterFixture(t,membership,tier);
+    const result = await f.run('invite-roster');
+    assert.equal((await f.storage.prepare('SELECT tier FROM members WHERE id=?').get(result.memberId)).tier,1);
+    assert.equal(f.calls.sends,1);
+  }
+});
+
+test('direct roster invitation preserves edited prepared profile and aliases', async t => {
+  const f = await rosterFixture(t);
+  const ready = await f.run('prepare');
+  await f.storage.prepare('UPDATE members SET name=?,tier=?,credits=? WHERE id=?').run('Edited Member',5,12,ready.memberId);
+  const result = await f.run('invite-roster');
+  const member = await f.storage.prepare('SELECT * FROM members WHERE id=?').get(result.memberId);
+  assert.equal(member.name,'Edited Member'); assert.equal(member.tier,5); assert.equal(member.credits,12);
+  assert.equal(result.invitation.loginId,ready.invitation.loginId);
+  assert.equal((await f.state()).invitations[f.input.email].badge,'1234');
+  assert.equal(f.calls.creates,1); assert.equal(f.calls.sends,1);
+});
+
+test('direct roster invitation resumes an interrupted account preparation without duplication', async t => {
+  const f = await rosterFixture(t), create = f.provider.create;
+  f.provider.create = async (email,proof) => { await create(email,proof); throw Error('lost create response'); };
+  await assert.rejects(f.run('invite-roster'),error=>error.status===503);
+  assert.equal(f.calls.sends,0);
+  assert.equal(invitationView((await f.state()).invitations[f.input.email],f.clock()).canInviteFromRoster,true);
+  const result=await f.run('invite-roster');
+  assert.equal(result.invitation.status,'sent');
+  assert.equal(f.calls.creates,1); assert.equal(f.calls.sends,1);
+});
+
+test('direct roster invitation refuses unlisted and untracked existing accounts before provider effects', async t => {
+  const missing = await fixture(t);
+  await assert.rejects(missing.run('invite-roster'),error=>error.status===409);
+  assert.deepEqual(missing.calls,{creates:0,sends:0,finds:0});
+  const f=await rosterFixture(t);
+  await f.storage.prepare('INSERT INTO members(workspace,id,name,email,role,tier,credits,active) VALUES (?,?,?,?,?,?,?,1)')
+    .run('chapter',randomUUID(),'Legacy',f.input.email,'member',3,15);
+  await assert.rejects(f.run('invite-roster'),error=>error.status===409);
+  assert.deepEqual(f.calls,{creates:0,sends:0,finds:0});
+});
+
+test('direct roster invitation never sends recovery mail to a confirmed provider identity', async t => {
+  const f=await rosterFixture(t);
+  f.accounts.set(f.input.email,{id:randomUUID(),email:f.input.email,confirmed:true});
+  await assert.rejects(f.run('invite-roster'),error=>error.status===409);
+  assert.equal(f.calls.sends,0);
+  assert.equal(invitationView((await f.state()).invitations[f.input.email],f.clock()).canInviteFromRoster,false);
+});
+
+test('concurrent direct invitations reserve one account and deliver at most one first email', async t => {
+  const f=await rosterFixture(t), find=f.provider.find;
+  let release, reached;
+  const started=new Promise(resolve=>{reached=resolve;}), gate=new Promise(resolve=>{release=resolve;});
+  f.provider.find=async email=>{reached(); await gate; return find(email);};
+  const first=f.run('invite-roster'); await started;
+  await assert.rejects(f.run('invite-roster'),error=>error.status===409);
+  release(); await first;
+  assert.equal(f.calls.creates,1); assert.equal(f.calls.sends,1);
+});
+
+test('direct invitations retain unknown-result protection and allow only definite rate-limit retries', async t => {
+  const f=await rosterFixture(t), send=f.provider.send;
+  f.provider.send=async()=>{throw Object.assign(Error('rate limit'),{status:429,emailNotAccepted:true});};
+  await assert.rejects(f.run('invite-roster'),error=>error.status===429);
+  assert.equal(invitationView((await f.state()).invitations[f.input.email],f.clock()).canInviteFromRoster,false);
+  await assert.rejects(f.run('invite-roster'),error=>error.status===409);
+  f.advance(60*60_000+1);
+  assert.equal(invitationView((await f.state()).invitations[f.input.email],f.clock()).canInviteFromRoster,true);
+  f.provider.send=async account=>{await send(account);throw Error('unknown result');};
+  await assert.rejects(f.run('invite-roster'),error=>error.status===503);
+  f.advance(60*60_000+1);
+  await f.run('reconcile');
+  assert.equal(invitationView((await f.state()).invitations[f.input.email],f.clock()).canInviteFromRoster,false);
+  await assert.rejects(f.run('invite-roster'),error=>error.status===409);
+  assert.equal(f.calls.creates,1); assert.equal(f.calls.sends,1);
+});
+
+test('direct invitation rechecks authorization and roster eligibility after provider preparation', async t => {
+  for (const kind of ['session','roster']) {
+    const f=await rosterFixture(t), create=f.provider.create;
+    let allowed=true;
+    f.provider.create=async (...args)=>{ const account=await create(...args); allowed=false; return account; };
+    const check=async()=>{if(!allowed)throw Object.assign(Error('access changed'),{status:409});};
+    await assert.rejects(f.run('invite-roster',{[kind==='session'?'authorize':'guard']:check}),error=>error.status===409);
+    assert.equal(f.calls.sends,0);
+    assert.equal((await f.storage.prepare('SELECT COUNT(*) AS n FROM members').get()).n,0);
+  }
+});

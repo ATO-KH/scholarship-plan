@@ -1,6 +1,6 @@
 import { authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./auth-mutation.mjs";
 import { pilotEligible } from "./pilot-access.mjs";
-import { invitationView, invitationList, runInvitation } from "./invitations.mjs";
+import { invitationView, invitationList, runInvitation, ROSTER_INVITATION_DEFAULTS } from "./invitations.mjs";
 import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { creditSummary } from "../web/credit-data.mjs";
@@ -862,8 +862,10 @@ async function accountSettingsView(workspace, target, state) {
 async function processInvitation(session, user, email, action, generation, input) {
   if (!production || authMode !== "chapter" || !chapterAuthConfigured(env))
     fail(422, "Account setup requires real chapter sign-in.");
-  if (["create", "resend", "send-initial"].includes(action) && !chapterEmailReady)
+  if (["create", "resend", "send-initial", "invite-roster"].includes(action) && !chapterEmailReady)
     fail(503, "Configure and test chapter email before sending setup emails.");
+  if (action === "invite-roster" && rosterStatus(env).mode !== "public_email_csv")
+    fail(422, "Direct invitations require the connected name-and-email roster.");
   if (rosterStatus(env).mode === "public_email_csv" && !rosterView(await stateOf(session.workspace)).fresh)
     await refreshRoster(session, user);
   const result = await runInvitation({
@@ -2653,21 +2655,37 @@ const server = http.createServer(async (req, res) => {
         const members = await listMembers(session.workspace, state);
         const eligibleMembers = new Map(members.filter(member => member.role === "member" && member.active)
           .map(member => [member.email, member.id]));
+        const allMembers = new Map(members.map(member => [member.email, member]));
         const emailRoster = rosterStatus(env).mode === "public_email_csv";
+        const freshRoster = emailRoster && rosterView(state).fresh;
         for (const invitation of invitations) {
           invitation.canSendInitial = invitation.canSendInitial && eligibleMembers.get(invitation.email) === invitation.memberId &&
             (!emailRoster || rosterView(state).fresh && state.roster.emails.includes(invitation.email));
+          const existing = allMembers.get(invitation.email), record = state.invitations[invitation.email];
+          invitation.canInviteFromRoster = invitation.canInviteFromRoster && freshRoster && state.roster.emails.includes(invitation.email) &&
+            (record.bound ? eligibleMembers.get(invitation.email) === record.memberId : !existing || existing.role === "member" && existing.active && existing.id === record.memberId);
         }
         for (const existing of members) {
           if (existing.role !== "member" || !existing.active || existing.email.endsWith("@pilot.invalid") || state.invitations?.[existing.email]) continue;
           invitations.push({
             email: existing.email, name: existing.name, status: "untracked", memberId: existing.id,
-            loginId: null, lastSentAt: null, retryAt: null, canReconcile: true, canResend: false, canSendInitial: false,
+            loginId: null, lastSentAt: null, retryAt: null, canReconcile: true, canResend: false, canSendInitial: false, canInviteFromRoster: false,
             message: "This account predates invitation tracking. Check its setup before sending another setup email.",
           });
         }
+        if (emailRoster) for (const entry of state.roster?.directory || []) {
+          if (allMembers.has(entry.email) || state.invitations?.[entry.email]) continue;
+          invitations.push({
+            email: entry.email, name: entry.name, status: "unprepared", memberId: null, loginId: null,
+            lastSentAt: null, retryAt: null, canReconcile: false, canResend: false, canSendInitial: false,
+            canInviteFromRoster: freshRoster && state.roster.emails.includes(entry.email) && ["active", "new_member"].includes(entry.membership),
+            tier: entry.membership === "new_member" ? 1 : state.tierAssignments?.[entry.email] ?? ROSTER_INVITATION_DEFAULTS.tier,
+            credits: ROSTER_INVITATION_DEFAULTS.credits,
+            message: "The account will be created when its invitation is sent. Member details can be adjusted afterward.",
+          });
+        }
         invitations.sort((a, b) => a.name.localeCompare(b.name));
-        return json(res, 200, { invitations, emailReady: chapterEmailReady });
+        return json(res, 200, { invitations, emailReady: chapterEmailReady, defaults: ROSTER_INVITATION_DEFAULTS });
       }
       if (path === "/api/admin/invitations/prepare" && req.method === "POST") {
         chair(user);
@@ -2677,7 +2695,7 @@ const server = http.createServer(async (req, res) => {
         const result = await processInvitation(session, user, prepared.email, "prepare", requestGeneration, prepared);
         return json(res, 201, result);
       }
-      const invitationAction = path.match(/^\/api\/admin\/invitations\/([^/]+)\/(reconcile|resend|send-initial)$/);
+      const invitationAction = path.match(/^\/api\/admin\/invitations\/([^/]+)\/(reconcile|resend|send-initial|invite-roster)$/);
       if (invitationAction && req.method === "POST") {
         chair(user);
         let email;

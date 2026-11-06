@@ -2,6 +2,13 @@
 
 This is a working acceptance checklist, not a claim that version 1.0 is approved. Keep member emails, grades, passwords, recovery keys and private backup paths out of this public repository. Record the Chair's real decisions and test-recipient addresses in a chapter-controlled location.
 
+## Direct roster invitations — November 6, 2026
+
+- 260 automated tests passed without failures or skips, including isolated PostgreSQL and automatic roster-account creation, first-send protection, authorization, and later account editing.
+- A fictional Chair browser session selected one prepared and two unprepared members together. One confirmation created the missing accounts and processed three invitations through a fake email provider. The reviewed Tier 4 assignment, existing Tier 3 / 12-credit account and badge, and new-member Tier 1 default were preserved.
+- The Chair then changed an automatically created account's name and tier. The portal ID stayed the same and the fake email count stayed at three. Browser errors were empty. The confirmation had no horizontal overflow at a 390-pixel viewport; physical iPhone acceptance remains outstanding.
+- Individual account preparation is optional. No real accounts were created and no real email was sent during these tests. Authorized inbox delivery testing and sender allowance checks remain necessary for rollout.
+
 ## Bulk invitation controls — October 30, 2026
 
 - 247 automated tests passed without failures or skips, including isolated PostgreSQL and first-invitation replay, concurrency, role, eligibility, rate-limit and interruption checks.

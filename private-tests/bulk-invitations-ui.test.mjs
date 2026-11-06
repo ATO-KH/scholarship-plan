@@ -7,11 +7,12 @@ const source = await readFile(new URL('../web/app.js', import.meta.url), 'utf8')
 const extract = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
 const selectionSource = extract('function mountInvitationSelection(', '\nfunction reviewBulkInvitations(');
 const reviewSource = extract('function reviewBulkInvitations(', '\nasync function loadInvitationStatus(');
+const statusSource = extract('async function loadInvitationStatus(', '\nasync function loadRosterSync(');
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return {promise, resolve, reject}; };
 const recipients = [
-  {name:'First Fictional Member', email:'first@example.test', canSendInitial:true},
-  {name:'Second Fictional Member', email:'second@example.test', canSendInitial:true},
-  {name:'Already Sent Member', email:'sent@example.test', canSendInitial:false},
+  {name:'First Fictional Member', email:'first@example.test', status:'unprepared', canSendInitial:false, canInviteFromRoster:true},
+  {name:'Second Fictional Member', email:'second@example.test', status:'ready', canSendInitial:true, canInviteFromRoster:true},
+  {name:'Already Sent Member', email:'sent@example.test', status:'sent', canSendInitial:false, canInviteFromRoster:false},
 ];
 
 function fixture() {
@@ -27,7 +28,7 @@ function fixture() {
     openModal: (title, subtitle, body) => { context.body = body; },
     $: selector => selector === '#invitation-batch-form' ? form : {querySelector: key => outcomes[Number(key.match(/"(\d+)"/)[1])]},
     api: (path, options) => { const d = deferred(); pending.push(d); requests.push({path,options}); return d.promise; },
-    setTimeout: callback => { delays.push(callback); }, loadInvitationStatus: async () => { context.refreshes++; }, refreshes:0,
+    setTimeout: callback => { delays.push(callback); }, rosterPage: async () => { context.refreshes++; }, refreshes:0,
   };
   runInNewContext(`(${reviewSource})`,context)(recipients,panel);
   return {context, form, panel, feedback, confirmation, submit, stop, requests, pending, delays, outcomes,
@@ -35,22 +36,39 @@ function fixture() {
 }
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
 
-test('one recipient-list confirmation sends initial invitations sequentially and never bulk-resends', async () => {
+test('canceling or closing the batch confirmation never prepares an account or sends an email', async () => {
+  for (const mode of ['cancel', 'close']) {
+    const f = fixture();
+    f.confirmation.checked = true;
+    if (mode === 'cancel') f.stop.onclick(); else f.context.modal.close();
+    await f.send();
+    assert.equal(f.requests.length, 0, mode);
+    assert.equal(f.context.refreshes, 0, mode);
+  }
+});
+
+test('one confirmation invites unprepared and prepared members together without per-person forms or bulk-resends', async () => {
   const f = fixture();
   assert.match(f.context.body,/first@example.test/); assert.match(f.context.body,/second@example.test/);
   assert.doesNotMatch(f.context.body,/sent@example.test/);
+  assert.match(f.context.body,/Accounts are created automatically/);
+  assert.match(f.context.body,/Existing account settings and imported tiers are kept/);
+  assert.match(f.context.body,/15 credits/); assert.match(f.context.body,/Tier 1 if none is assigned/);
+  assert.match(f.context.body,/adjust details afterward through Manage member/);
+  assert.doesNotMatch(f.context.body,/name="(?:tier|credits|email|name)"/,'no per-person preparation form');
   await f.send(); assert.equal(f.requests.length,0,'explicit confirmation required');
   f.confirmation.checked = true;
   const batch = f.send(); await f.send();
   assert.equal(f.requests.length,1,'double clicks cannot start another batch');
-  assert.equal(f.requests[0].path,'/api/admin/invitations/first%40example.test/send-initial');
+  assert.equal(f.requests[0].path,'/api/admin/invitations/first%40example.test/invite-roster');
   assert.equal(JSON.stringify(f.requests[0].options),'{"method":"POST","body":{}}');
   f.pending[0].resolve({invitation:{status:'sent'}}); await tick();
   assert.equal(f.requests.length,1,'next send waits for pacing');
   f.delays.shift()(); await tick();
   assert.equal(f.requests.length,2);
+  assert.equal(f.requests[1].path,'/api/admin/invitations/second%40example.test/invite-roster');
   f.pending[1].resolve({invitation:{status:'sent'}}); await batch;
-  assert.equal(f.context.refreshes,1); assert.match(f.feedback.textContent,/2 of 2 accepted/);
+  assert.equal(f.context.refreshes,1,'new accounts become editable after the roster refresh'); assert.match(f.feedback.textContent,/2 of 2 accepted/);
   assert.match(f.feedback.textContent,/Inbox delivery is not verified/);
   assert.equal(f.stop.textContent,'Done');
   await f.send(); assert.equal(f.requests.length,2,'completed confirmation cannot replay');
@@ -101,7 +119,7 @@ test('closing during pacing stops the next recipient', async () => {
   assert.equal(f.requests.length,1);
 });
 
-test('select-all respects visible ready rows, preserves explicit hidden selections, and clear resets everything', () => {
+test('select-all respects visible unsent rows, preserves explicit hidden selections, and clear resets everything', () => {
   const rows=[{hidden:false},{hidden:true}], boxes=rows.map((row,index)=>({dataset:{selectInvitation:String(index)},checked:false,closest:()=>row}));
   const fields={'[data-select-ready]':{},'[data-clear-ready]':{},'[data-review-invitations]':{},'[data-selected-count]':{},'#prepared-search':{value:'First'},'#prepared-status':{value:'all'}};
   const panel={querySelector:key=>fields[key],querySelectorAll:()=>boxes};
@@ -116,4 +134,33 @@ test('select-all respects visible ready rows, preserves explicit hidden selectio
   assert.equal(fields['[data-selected-count]'].textContent,'2 selected (1 hidden by filters)');
   fields['[data-clear-ready]'].onclick();
   assert.equal(boxes.some(box=>box.checked),false); assert.equal(fields['[data-review-invitations]'].disabled,true);
+});
+
+async function renderStatus(emailReady) {
+  const refresh = {}, panel = {isConnected:true, innerHTML:'', querySelector:key=>key==='[data-refresh-invitations]'?refresh:null, querySelectorAll:()=>[]};
+  const selections = [];
+  const context = {$:()=>panel, invitationStatusLoad:0, esc:value=>String(value),
+    api:async path=>{assert.equal(path,'/api/admin/invitations'); return {invitations:recipients,emailReady};},
+    mountInvitationSelection:(destination,items)=>{selections.push(items);return ()=>{};}};
+  await runInNewContext(`(${statusSource})`,context)();
+  return {html:panel.innerHTML,selections};
+}
+
+test('recipient list includes selectable unprepared members without needing a tier assignment first', async () => {
+  const f=await renderStatus(true);
+  assert.match(f.html,/2 can be invited/);
+  assert.match(f.html,/Account created when sent/);
+  assert.match(f.html,/data-select-invitation="0"/);
+  assert.match(f.html,/data-select-invitation="1"/);
+  assert.doesNotMatch(f.html,/data-select-invitation="2"/);
+  assert.match(f.html,/Select all unsent/);
+  assert.match(f.html,/No individual account preparation is required/);
+  assert.equal(f.selections[0].length,3);
+});
+
+test('loading the list only reads status and leaves email actions unavailable while sending is disabled', async () => {
+  const f=await renderStatus(false);
+  assert.match(f.html,/Email sending is not enabled/);
+  assert.doesNotMatch(f.html,/data-select-invitation="/);
+  assert.match(f.html,/data-select-ready type="button" disabled/);
 });

@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 const LEASE_MS = 90_000;
 const SEND_COOLDOWN_MS = 60_000;
 const EMAIL_LIMIT_COOLDOWN_MS = 60 * 60_000;
+export const ROSTER_INVITATION_DEFAULTS = Object.freeze({ tier: 1, credits: 15 });
 const fail = (status, message) => { throw Object.assign(Error(message), { status }); };
 
 export function invitationView(record, time = Date.now()) {
@@ -19,6 +20,9 @@ export function invitationView(record, time = Date.now()) {
     canReconcile: !busy,
     canResend: !busy && Boolean(record.bound) && ["ready", "sent", "delivery_unknown"].includes(status) && (record.retryAt || 0) <= time,
     canSendInitial: !busy && Boolean(record.bound) && record.initialEmailEligible !== false && status === "ready" &&
+      (!record.lastAttemptAt || record.lastSendRejected === "rate_limit") && !record.lastSentAt && (record.retryAt || 0) <= time,
+    canInviteFromRoster: !busy && record.initialEmailEligible !== false &&
+      (record.bound ? status === "ready" : ["preparing", "failed"].includes(status)) &&
       (!record.lastAttemptAt || record.lastSendRejected === "rate_limit") && !record.lastSentAt && (record.retryAt || 0) <= time,
     message: ["ready", "sent"].includes(status) && record.lastSendRejected === "rate_limit"
       ? (record.retryAt || 0) > time ? "The latest email request was declined because the email service's sending limit was reached. Wait at least one hour before selecting it again."
@@ -43,7 +47,7 @@ export async function runInvitation({
   db, workspace, email, input, action = "create", authorize, guard,
   provider, audit = async () => {}, now = Date.now,
 }) {
-  if (!["create", "prepare", "reconcile", "resend", "send-initial"].includes(action)) fail(422, "Unknown invitation action.");
+  if (!["create", "prepare", "reconcile", "resend", "send-initial", "invite-roster"].includes(action)) fail(422, "Unknown invitation action.");
   const operationId = randomUUID();
   const load = async () => {
     const row = await db.prepare("SELECT data FROM chapters WHERE workspace=? FOR UPDATE").get(workspace);
@@ -88,15 +92,29 @@ export async function runInvitation({
     if (action === "send-initial" && (!existing || !record?.authUserId ||
       !invitationView(record, now())?.canSendInitial))
       fail(409, "This account is not eligible for a first setup email. Refresh its status; review any resend separately.");
+    // The roster action may prepare a new account, but cannot adopt an
+    // untracked existing member or replay an accepted/ambiguous email.
+    const listed = action === "invite-roster" && state.roster?.directory?.find(entry => entry.email === email);
+    if (action === "invite-roster") {
+      if (!listed || !["active", "new_member"].includes(listed.membership))
+        fail(409, "This email is no longer on the eligible chapter roster. Refresh before continuing.");
+      if (existing && (!record || existing.id !== record.memberId) || record &&
+        (!invitationView(record, now()).canInviteFromRoster || record.bound && (!existing || !record.authUserId)))
+        fail(409, "This account cannot receive a first roster invitation. Refresh its status; review any resend separately.");
+    }
     // Repeated create/prepare requests never send an email. Sending a prepared
     // account or retrying a delivery always requires the explicit send action.
     if (record && ["create", "prepare"].includes(action) && record.bound)
       return { complete: true, record: structuredClone(record) };
     if (!record) {
-      if (!["create", "prepare"].includes(action) && !existing) fail(404, "No account setup was found for this email.");
+      if (!["create", "prepare", "invite-roster"].includes(action) && !existing) fail(404, "No account setup was found for this email.");
       if (existing && action === "create") fail(409, "A member already uses this email address. Use Check account setup or Resend setup email.");
       isNewIntent = true;
-      const details = existing || input;
+      const details = existing || (action === "invite-roster" ? {
+        name: listed.name, email, badge: "",
+        tier: listed.membership === "new_member" ? 1 : state.tierAssignments?.[email] ?? ROSTER_INVITATION_DEFAULTS.tier,
+        credits: ROSTER_INVITATION_DEFAULTS.credits,
+      } : input);
       if (!details || details.email.toLowerCase() !== email) fail(422, "Member details are required.");
       const existingAliases = existing ? (await db.prepare("SELECT subject FROM identities WHERE workspace=? AND provider='login' AND member_id=? ORDER BY subject")
         .all(workspace, existing.id)).map(entry => entry.subject) : [];
@@ -186,7 +204,7 @@ export async function runInvitation({
       else if (!["sent", "delivery_unknown"].includes(record.status)) record.status = "ready";
       await audit("roster.invitation_reconcile", record.memberId, `Account ready; ${!existing ? `tier ${tier}; credits ${record.credits}` : "existing member retained"}.`);
     });
-    const shouldSend = ["resend", "send-initial"].includes(action) || (action === "create" && isNewIntent && createdAuth);
+    const shouldSend = ["resend", "send-initial", "invite-roster"].includes(action) || (action === "create" && isNewIntent && createdAuth);
     if (shouldSend) {
       // Mark the attempt before crossing the email boundary. If the server
       // crashes after the provider accepts it, no automatic replay is possible.
@@ -194,7 +212,7 @@ export async function runInvitation({
         const existing = await memberForEmail();
         if (!existing || existing.id !== record.memberId || existing.role !== "member" || !existing.active)
           fail(409, "This member is no longer eligible to receive a setup email.");
-        if (action === "send-initial" && (account.confirmed || record.initialEmailEligible === false ||
+        if (["send-initial", "invite-roster"].includes(action) && (account.confirmed || record.initialEmailEligible === false ||
           record.status !== "ready" || (record.lastAttemptAt && record.lastSendRejected !== "rate_limit") || record.lastSentAt))
           fail(409, "This account no longer qualifies for a first setup email. Refresh its status; review any resend separately.");
         sendPriorStatus = record.status;
