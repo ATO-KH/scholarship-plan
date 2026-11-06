@@ -830,14 +830,23 @@ function validateRoster(input) {
     credits: input.credits,
   };
 }
+function validateBadge(value) {
+  if (typeof value !== "string") fail(422, "Enter a chapter badge number, or leave it blank to remove it.");
+  const badge = value.trim().toLowerCase();
+  if (badge && !/^[a-z0-9][a-z0-9-]{0,31}$/.test(badge))
+    fail(422, "Use up to 32 letters, numbers or hyphens for the chapter badge number.");
+  if (/^900\d{6}$/.test(badge)) fail(422, "Use your chapter badge number, not your university 900 number.");
+  if (/^kh-[a-f0-9]{10}$/.test(badge) || ["test1", "test2"].includes(badge))
+    fail(422, "That sign-in ID is reserved. Enter your chapter badge number instead.");
+  return badge;
+}
 function validateChapterMember(input) {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
-  const badge = typeof input.badge === "string" ? input.badge.trim().toLowerCase() : "";
+  const badge = validateBadge(input.badge ?? "");
   if (
     !name || name.length > 100 || /[\u0000-\u001f\u007f]/.test(name) ||
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 ||
-    (badge && !/^[a-z0-9][a-z0-9-]{0,31}$/.test(badge)) ||
     !Number.isInteger(input.tier) || input.tier < 1 || input.tier > 5 ||
     !Number.isFinite(input.credits) || input.credits < 0 || input.credits > 30
   ) fail(422, "Enter a name, valid email, optional badge number, tier and credits.");
@@ -858,6 +867,40 @@ async function accountSettingsView(workspace, target, state) {
     invitation: invitation && { updatedAt: invitation.updatedAt, operation: invitation.operation },
   }));
   return { member: target, badge, loginId: alias.toUpperCase() || null, version, membership, creditsManaged: managedCredits };
+}
+// Both Chair and member edits use the same identity update under the chapter lock.
+async function updateMemberBadge(workspace, target, state, current, badge) {
+  const record = state.invitations?.[target.email];
+  if (record && record.memberId !== target.id)
+    fail(409, "The saved account setup does not match this member. Ask the portal operator to check it.");
+  if ((record?.operation?.until || 0) > Date.now())
+    fail(409, "Account setup is in progress. Refresh its status before editing.");
+  let alias = current.loginId?.toLowerCase();
+  if (!alias) {
+    do { alias = loginAlias().toLowerCase(); }
+    while (await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?").get(workspace, alias) ||
+      Object.values(state.invitations || {}).some(entry => entry.alias?.toLowerCase() === alias || entry.badge?.toLowerCase() === alias));
+  }
+  const permanentLogin = await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?")
+    .get(workspace, alias);
+  if (permanentLogin && permanentLogin.member_id !== target.id)
+    fail(409, "The permanent login is linked to another account. Ask the portal operator to check it.");
+  if (!permanentLogin) await db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(workspace, "login", alias, target.id);
+  if (badge && badge === alias) fail(422, "The badge must be different from the permanent login ID.");
+  if (badge) {
+    const existing = await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?")
+      .get(workspace, badge);
+    if (existing && existing.member_id !== target.id || Object.values(state.invitations || {})
+      .some(entry => entry.email !== target.email && (entry.badge?.toLowerCase() === badge || entry.alias?.toLowerCase() === badge)))
+      fail(409, "Another member already uses or has reserved this badge number.");
+  }
+  if (current.badge && current.badge !== alias && current.badge !== badge)
+    await db.prepare("DELETE FROM identities WHERE workspace=? AND provider='login' AND subject=? AND member_id=?")
+      .run(workspace, current.badge, target.id);
+  if (badge && !(await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?").get(workspace, badge)))
+    await db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(workspace, "login", badge, target.id);
+  if (record) Object.assign(record, { badge, alias, updatedAt: now() });
+  return alias;
 }
 async function processInvitation(session, user, email, action, generation, input) {
   if (!production || authMode !== "chapter" || !chapterAuthConfigured(env))
@@ -1126,6 +1169,8 @@ const server = http.createServer(async (req, res) => {
         }
         const user = binding && await member("chapter", binding.member_id);
         if (!user?.active || (candidate && candidate.id !== user.id) || user.email !== verified.email)
+          fail(401, "Invalid sign-in details.");
+        if (candidate && (await accountForIdentifier(identifier))?.id !== candidate.id)
           fail(401, "Invalid sign-in details.");
         if (candidate) await assertAuthMutationVersion(db, "chapter", user.id, authVersion);
         if (isChairLogin) await assertAuthMutationVersion(db, "chapter", bootstrapFenceId, bootstrapVersion);
@@ -1442,6 +1487,35 @@ const server = http.createServer(async (req, res) => {
           409,
           "The account changed in another tab. Refresh before continuing.",
         );
+      if (path === "/api/account/badge" && ["GET", "POST"].includes(req.method)) {
+        individual(user);
+        if (!production || authMode !== "chapter" || user.email?.endsWith("@pilot.invalid"))
+          fail(422, "Badge changes are unavailable for demo and test accounts.");
+        if (req.method === "POST" && (Object.keys(input).sort().join(",") !== "badge,version" ||
+          typeof input.version !== "string" || !/^[a-f0-9]{64}$/.test(input.version)))
+          fail(422, "Submit only your chapter badge number and the current settings version.");
+        const badge = req.method === "POST" ? validateBadge(input.badge) : null;
+        const result = await atomic(async () => {
+          await lockWorkspace(session.workspace);
+          await assertActiveSession(session, user);
+          const state = await stateOf(session.workspace);
+          const target = await member(session.workspace, user.id);
+          individual(target);
+          const current = await accountSettingsView(session.workspace, target, state);
+          if (req.method === "POST") {
+            academicGuard(state, requestGeneration);
+            if (current.version !== input.version)
+              fail(409, "Your account changed. Reload your badge details before saving.");
+            await updateMemberBadge(session.workspace, target, state, current, badge);
+            await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
+            await audit(session.workspace, target.name, "account.badge_updated", target.id,
+              badge ? "Member updated their chapter badge sign-in. No email sent." : "Member removed their chapter badge sign-in. No email sent.");
+          }
+          const saved = await accountSettingsView(session.workspace, target, state);
+          return { badge: saved.badge, loginId: saved.loginId, version: saved.version };
+        });
+        return json(res, 200, result);
+      }
       if (path === "/api/account/password" && req.method === "POST") {
         if (!production || authMode !== "chapter") fail(422, "Password changes require a real chapter account.");
         if (typeof input.currentPassword !== "string" || !input.currentPassword || input.currentPassword.length > 1024 ||
@@ -2788,35 +2862,8 @@ const server = http.createServer(async (req, res) => {
             fail(422, "New members must be assigned Tier 1.");
           if (current.creditsManaged && target.credits !== details.credits)
             fail(409, "This member’s credit hours come from approved classes. Review their classes to change the total.");
+          const alias = await updateMemberBadge(session.workspace, target, state, current, details.badge);
           const record = state.invitations?.[target.email];
-          if ((record?.operation?.until || 0) > Date.now())
-            fail(409, "Account setup is in progress. Refresh its status before editing.");
-          let alias = current.loginId?.toLowerCase();
-          if (!alias) {
-            do { alias = loginAlias().toLowerCase(); }
-            while (await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?").get(session.workspace, alias) ||
-              Object.values(state.invitations || {}).some(entry => entry.alias === alias || entry.badge === alias));
-          }
-          const permanentLogin = await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?")
-            .get(session.workspace, alias);
-          if (permanentLogin && permanentLogin.member_id !== target.id)
-            fail(409, "The permanent login is linked to another account. Ask the portal operator to check it.");
-          if (!permanentLogin) await db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(session.workspace, "login", alias, target.id);
-          if (details.badge && details.badge === alias)
-            fail(422, "The badge must be different from the permanent login ID.");
-          if (details.badge) {
-            const existing = await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?")
-              .get(session.workspace, details.badge);
-            if (existing && existing.member_id !== target.id || Object.values(state.invitations || {})
-              .some(entry => entry.email !== target.email && (entry.badge === details.badge || entry.alias === details.badge)))
-              fail(409, "Another member already uses or has reserved this badge number.");
-          }
-          if (current.badge && current.badge !== alias && current.badge !== details.badge)
-            await db.prepare("DELETE FROM identities WHERE workspace=? AND provider='login' AND subject=? AND member_id=?")
-              .run(session.workspace, current.badge, target.id);
-          if (details.badge && !(await db.prepare("SELECT member_id FROM identities WHERE workspace=? AND provider='login' AND subject=?")
-            .get(session.workspace, details.badge)))
-            await db.prepare("INSERT INTO identities VALUES (?,?,?,?)").run(session.workspace, "login", details.badge, target.id);
           await db.prepare("UPDATE members SET name=?,tier=?,credits=? WHERE workspace=? AND id=? AND role='member' AND active=1")
             .run(details.name, details.tier, details.credits, session.workspace, target.id);
           if (record) Object.assign(record, { name: details.name, badge: details.badge, alias, tier: details.tier, credits: details.credits, updatedAt: now() });
@@ -3207,6 +3254,7 @@ const server = http.createServer(async (req, res) => {
       "/syllabus-ui.mjs": "syllabus-ui.mjs",
       "/file-preview-ui.mjs": "file-preview-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
+      "/badge-ui.mjs": "badge-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",
       "/credit-ui.mjs": "credit-ui.mjs",
       "/picture-ui.mjs": "picture-ui.mjs",

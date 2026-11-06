@@ -179,6 +179,9 @@
 
 .password-shell { max-width: 680px; width: 100%; }
 .password-feedback { margin-bottom: 12px; }
+.badge-feedback { margin: 12px 0; }
+.badge-shell code { overflow-wrap: anywhere; }
+.badge-form .button { min-height: 44px; }
 
 /* Touch controls stay usable without triggering iOS input zoom. */
 @media (pointer: coarse), (max-width: 600px) {

@@ -32,7 +32,7 @@ globalThis.fetch = async (input, options = {}) => {
       body.email === "member@example.edu" ? memberId : null;
     if (!id || body.password !== passwords.get(id))
       return respond({ error: "invalid_grant" }, 400);
-    if (id === chairId && process.env.TEST_AUTH_TOKEN_SIGNAL) {
+    if (body.email === (process.env.TEST_AUTH_TOKEN_DELAY_EMAIL || "chair@example.edu") && process.env.TEST_AUTH_TOKEN_SIGNAL) {
       await writeFile(process.env.TEST_AUTH_TOKEN_SIGNAL, 'password-verified');
       await new Promise(resolve => setTimeout(resolve, 250));
     }

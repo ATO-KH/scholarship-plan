@@ -491,9 +491,9 @@ async function profilePage() {
     mountPasswordForm(main.querySelector(".password-shell"));
     return;
   }
-  const owner = user.id;
+  const owner = user.id, epoch = sessionEpoch;
   main.innerHTML = heading("", "My profile", "") + `<div class="profile-layout">
-    <div class="profile-column profile-account" role="group" aria-label="Account information"><section class="picture-shell panel">${loading("Loading profile picture…")}</section></div>
+    <div class="profile-column profile-account" role="group" aria-label="Account information"><section class="picture-shell panel">${loading("Loading profile picture…")}</section><section class="badge-shell panel">${loading("Loading badge details…", true)}</section></div>
     <div class="profile-column profile-academic" role="group" aria-label="Academic information"><section class="profile-shell panel">${loading("Loading profile…")}</section></div>
   </div>`;
   main.querySelector(".profile-account").insertAdjacentHTML("beforeend", '<section class="panel password-shell"></section>');
@@ -502,6 +502,16 @@ async function profilePage() {
   mountRecoverySettings(main.querySelector('.recovery-shell'));
   const container = main.querySelector(".profile-shell");
   loadProfilePicture(main.querySelector(".picture-shell"));
+  const badgeContainer = main.querySelector(".badge-shell");
+  import("/badge-ui.mjs").then(({ mountBadgeSettings }) => {
+    const isCurrent = () => user?.id === owner && sessionEpoch === epoch && route() === "profile";
+    if (!isCurrent() || !badgeContainer.isConnected) return;
+    return mountBadgeSettings(badgeContainer, { api, esc, loading, isCurrent,
+      demo: isDemo() || !appConfig.chapterAuth?.enabled || user.email?.endsWith("@pilot.invalid") });
+  }).catch(error => {
+    if (user?.id === owner && sessionEpoch === epoch && badgeContainer.isConnected)
+      badgeContainer.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
+  });
   try {
     const { mountProfile } = await import("/profile-ui.mjs");
     if (user?.id !== owner || route() !== "profile" || !container.isConnected) return;
