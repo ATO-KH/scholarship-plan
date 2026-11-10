@@ -30,10 +30,19 @@ export async function reviewCorrectionsScenario(call, evidence, persona = 'alex'
   assert.equal((await call('/api/members')).members.find(row=>row.id===persona).approved,approved-3,'correction removes the original award rather than adding another');
   const historical=(await call(path)).submission;
 
-  for (const course of [first,second]) {
-    const item=(await call('/api/syllabi')).syllabi.find(row=>row.id===course.class.syllabusId);
-    assert.equal((await call(`/api/syllabi/${item.id}/review`,{decision:'approved',version:item.version,note:''})).status,200);
-  }
+  const batchItems=(await call('/api/syllabi')).syllabi.filter(row=>[first.class.syllabusId,second.class.syllabusId].includes(row.id));
+  const approvals=batchItems.map(item=>({id:item.id,version:item.version,credits:item.credits,note:''}));
+  await signIn(persona);
+  assert.equal((await call('/api/syllabi/approve-batch',{approvals})).status,403);
+  await signIn('chair');
+  assert.equal((await call('/api/syllabi/approve-batch',{approvals:[approvals[0],{...approvals[1],version:'stale'}]})).status,409);
+  assert.equal((await call('/api/syllabi/approve-batch',{approvals:[approvals[0],{...approvals[1],credits:30,note:'Invalid combined account hours'}]})).status,422);
+  assert.equal((await call('/api/syllabi')).syllabi.find(row=>row.id===approvals[0].id).status,'pending','a later invalid class cannot leave earlier approvals saved');
+  assert.equal((await call('/api/syllabi/approve-batch',{approvals:[approvals[0],approvals[0]]})).status,422);
+  const batch=await call('/api/syllabi/approve-batch',{approvals});
+  assert.equal(batch.status,200,JSON.stringify(batch)); assert.equal(batch.approved,2);
+  assert.equal(batch.results.length,1); assert.equal(batch.results[0].member.credits,15);
+  assert.equal((await call('/api/syllabi/approve-batch',{approvals})).status,409,'saved batch cannot replay');
   const classPath=`/api/syllabi/${first.class.syllabusId}`;
   let item=(await call('/api/syllabi')).syllabi.find(row=>row.id===first.class.syllabusId);
   assert.equal(item.currentAccountCredits,15);

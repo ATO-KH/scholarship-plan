@@ -1,3 +1,4 @@
+import { rosterDirectory } from './roster-directory.mjs';
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 const LEASE_MS = 90_000;
@@ -47,7 +48,7 @@ export function invitationView(record, time = Date.now()) {
     email: record.email, name: record.name, status,
     version: invitationVersion(record), acceptedAt: record.acceptedAt || null,
     expiresAt: status === "accepted" || deliveryStatus === "delivery_unknown" ? null : expiresAt,
-    memberId: record.bound ? record.memberId : null,
+    memberId: record.bound || record.emailCorrectedMember ? record.memberId : null,
     loginId: record.bound ? record.alias?.toUpperCase() || null : null,
     lastSentAt: record.lastSentAt || null,
     retryAt: Math.max(record.retryAt || 0, busy ? record.operation.until : 0) || null,
@@ -68,7 +69,7 @@ export function invitationView(record, time = Date.now()) {
       : status === "sent" ? "Awaiting acceptance. Ask the member to check their inbox and spam folder."
       : status === "delivery_unknown" ? "The account is ready, but email delivery could not be confirmed. Check the inbox before choosing to resend."
       : status === "ready" ? "The account is ready. No setup email was sent by this check."
-      : status === "failed" ? "Account preparation was interrupted. Check account setup to safely resume."
+      : status === "failed" ? record.emailCorrectedAt ? "Email corrected. Send a fresh invitation to verify this address." : "Account preparation was interrupted. Check account setup to safely resume."
       : "Account setup is in progress. Refresh shortly.",
   };
 }
@@ -143,7 +144,7 @@ export async function runInvitation({
       fail(409, "This account is not eligible for a first setup email. Refresh its status; review any resend separately.");
     // The roster action may prepare a new account, but cannot adopt an
     // untracked existing member or replay an accepted/ambiguous email.
-    const listed = action === "invite-roster" && state.roster?.directory?.find(entry => entry.email === email);
+    const listed = action === "invite-roster" && rosterDirectory(state).find(entry => entry.email === email);
     if (action === "invite-roster") {
       if (!listed || !["active", "new_member"].includes(listed.membership))
         fail(409, "This email is no longer on the eligible chapter roster. Refresh before continuing.");
@@ -185,6 +186,7 @@ export async function runInvitation({
         email, name: details.name, badge: badge || "", tier: details.tier, credits: details.credits,
         memberId: existing?.id || randomUUID(), alias,
         authUserId: linked?.subject || null, bound: Boolean(linked),
+        requiresNewIdentity: Object.values(state.rosterEmailCorrections || {}).some(row => row.email === email),
         status: "preparing", createdAt: new Date(now()).toISOString(),
       };
     }
@@ -212,10 +214,10 @@ export async function runInvitation({
     if (!account?.id || account.email !== email ||
       (reservation.record.authUserId && reservation.record.authUserId !== account.id))
       fail(409, "The sign-in account does not match the saved member. Ask the portal operator to check it.");
-    if (!reservation.record.authUserId && !account.confirmed &&
+    if (!reservation.record.authUserId && (!account.confirmed || reservation.record.requiresNewIdentity) &&
         (account.invitationProof?.version !== 1 || account.invitationProof.workspace !== workspace ||
          account.invitationProof.nonce !== reservation.record.provenance))
-      fail(409, "An unconfirmed sign-in already exists for this email and could not be verified as a portal-created account. Ask the portal operator to check it before continuing.");
+      fail(409, reservation.record.requiresNewIdentity ? "An existing sign-in already uses this address. It was not linked to this member. Check the corrected email or ask the portal operator to verify ownership." : "An unconfirmed sign-in already exists for this email and could not be verified as a portal-created account. Ask the portal operator to check it before continuing.");
     await update(async (record, state) => {
       const existing = await memberForEmail();
       if (existing && (existing.id !== record.memberId || existing.role !== "member" || !existing.active))
@@ -227,7 +229,7 @@ export async function runInvitation({
         .get(workspace, record.memberId);
       if (memberIdentity && memberIdentity.subject !== account.id)
         fail(409, "This member already has a different sign-in account.");
-      const listed = state.roster?.directory?.find(entry => entry.email === email);
+      const listed = rosterDirectory(state).find(entry => entry.email === email);
       const tier = listed?.membership === "new_member" ? 1 : state.tierAssignments?.[email] ?? record.tier;
       if (!existing) await db.prepare("INSERT INTO members(workspace,id,name,email,role,tier,credits,active) VALUES (?,?,?,?,?,?,?,1)")
         .run(workspace, record.memberId, record.name, email, "member", tier, record.credits);

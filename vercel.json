@@ -17,5 +17,6 @@
         { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }
       ]
     }
-  ]
+  ],
+  "regions": ["pdx1"]
 }

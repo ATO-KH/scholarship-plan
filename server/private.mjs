@@ -1,3 +1,5 @@
+import { correctInvitationEmail, emailCorrectionVersion } from './roster-emails.mjs';
+import { rosterDirectory, rosterEmails } from './roster-directory.mjs';
 import { authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./auth-mutation.mjs";
 import { cleanupExpiredAuth } from "./auth-cleanup.mjs";
 import { submissionPage, submissionReviewVersion } from "./submission-list.mjs";
@@ -7,7 +9,7 @@ import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustme
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { creditSummary } from "../web/credit-data.mjs";
 import { profileView } from "../web/profile-data.mjs";
-import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
@@ -226,15 +228,16 @@ async function lockWorkspace(workspace) {
     .get(workspace);
   if (!row) fail(404, "Chapter workspace not found.");
 }
-async function assertActiveSession(session, user, checkEligibility = true) {
+async function assertActiveSession(session, user, checkEligibility = true, state) {
+  state ??= await stateOf(session.workspace);
   const fresh = await db
     .prepare("SELECT id FROM sessions WHERE id=? AND expires>?")
     .get(session.id, Date.now());
-  const currentMember = await member(session.workspace, user.id);
+  const currentMember = await member(session.workspace, user.id, state);
   if (!fresh || !currentMember?.active || currentMember.role !== user.role)
     fail(401, "Your account session is no longer active.");
   if (checkEligibility && user.role !== "chair")
-    assertRosterEligibility(await stateOf(session.workspace), currentMember);
+    assertRosterEligibility(state, currentMember);
   return currentMember;
 }
 
@@ -271,7 +274,7 @@ function rosterView(state) {
 function listedOnRoster(state, user) {
   const snapshot = state.roster;
   return rosterStatus(env).mode === "public_email_csv"
-    ? snapshot?.emails?.includes(user.email?.trim().toLowerCase()) === true
+    ? rosterEmails(state).includes(user.email?.trim().toLowerCase()) === true
     : snapshot?.ids?.includes(user.id) === true;
 }
 function assertRosterEligibility(state, user) {
@@ -357,7 +360,7 @@ async function refreshRoster(session, user, force = false) {
       return state;
     state.roster = snapshot;
     if (state.tierAssignments) {
-      const eligible = new Set(snapshot.emails || []);
+      const eligible = new Set(rosterEmails(state));
       state.tierAssignments = Object.fromEntries(Object.entries(state.tierAssignments)
         .filter(([email]) => eligible.has(email)));
     }
@@ -408,12 +411,12 @@ function memberView(row, checkpoint, finalCheckpoint) {
       : {}),
   };
 }
-async function member(workspace, id) {
+async function member(workspace, id, state) {
   const row = await db
     .prepare("SELECT * FROM members WHERE workspace=? AND id=?")
     .get(workspace, id);
   if (!row) return null;
-  const state = await stateOf(workspace);
+  state ??= await stateOf(workspace);
   const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
@@ -444,7 +447,7 @@ async function tierImportView(workspace, state) {
   if (production) {
     if (rosterView(state).mode !== "public_email_csv" || !rosterView(state).fresh)
       fail(503, "Refresh the connected name-and-email roster before importing tiers.");
-    directory = state.roster.directory;
+    directory = rosterDirectory(state);
   } else {
     directory = existing.filter((entry) => entry.active).map((entry) => ({
       name: entry.name, email: entry.email, membership: "active",
@@ -550,11 +553,11 @@ async function currentSession(req) {
 }
 async function requireSession(req) {
   const session = await currentSession(req);
-  const user = session && (await member(session.workspace, session.member_id));
+  let state = session && await stateOf(session.workspace);
+  const user = session && (await member(session.workspace, session.member_id, state));
   if (!session || !user?.active)
     fail(401, "Sign in to an active chapter account.");
   if (user.role !== "chair" && req.url?.split("?")[0] !== "/api/logout") {
-    let state = await stateOf(session.workspace);
     const status = rosterView(state);
     if (!pilotEligible(state, user) && status.required && !status.fresh)
       state = await refreshRoster(session, user);
@@ -610,8 +613,8 @@ async function cleanup() {
 async function mutate(session, user, fn) {
   return await atomic(async () => {
     await lockWorkspace(session.workspace);
-    const currentMember = await assertActiveSession(session, user);
     const state = await stateOf(session.workspace);
+    const currentMember = await assertActiveSession(session, user, true, state);
     const result = await fn(state, currentMember);
     await db
       .prepare("UPDATE chapters SET data=? WHERE workspace=?")
@@ -876,7 +879,7 @@ async function accountSettingsView(workspace, target, state) {
   const invitation = state.invitations?.[target.email];
   const alias = invitation?.alias || aliases.find(value => /^kh-[a-f0-9]{10}$/.test(value)) || aliases[0] || "";
   const badge = invitation?.badge ?? aliases.find(value => value !== alias) ?? "";
-  const membership = state.roster?.directory?.find(entry => entry.email === target.email)?.membership || "active";
+  const membership = rosterDirectory(state).find(entry => entry.email === target.email)?.membership || "active";
   const managedCredits = creditsManaged(state, target.id);
   const version = sha(JSON.stringify({
     id: target.id, name: target.name, email: target.email, role: target.role,
@@ -935,7 +938,7 @@ async function processInvitation(session, user, email, action, generation, input
     guard: state => {
       academicGuard(state, generation);
       if (rosterStatus(env).mode === "public_email_csv" &&
-        (!rosterView(state).fresh || !state.roster.emails.includes(email)))
+        (!rosterView(state).fresh || !rosterEmails(state).includes(email)))
         fail(409, "Refresh the roster and confirm this member is still eligible before continuing.");
     },
     provider: {
@@ -987,13 +990,13 @@ async function invitationStatusForChair(session, user) {
   const allMembers = new Map(members.map(item => [item.email, item]));
   const emailRoster = rosterStatus(env).mode === "public_email_csv";
   const freshRoster = emailRoster && rosterView(state).fresh;
-  const eligible = email => !emailRoster || freshRoster && state.roster.emails.includes(email);
+  const eligible = email => !emailRoster || freshRoster && rosterEmails(state).includes(email);
   for (const invitation of invitations) {
     const record = state.invitations[invitation.email], existing = allMembers.get(invitation.email);
     const bound = eligibleMembers.get(invitation.email) === invitation.memberId && bindings.get(invitation.memberId) === record.authUserId;
     const account = accounts.get(record.authUserId);
     invitation.canSendInitial = invitation.canSendInitial && bound && eligible(invitation.email);
-    invitation.canInviteFromRoster = invitation.canInviteFromRoster && freshRoster && state.roster.emails.includes(invitation.email) &&
+    invitation.canInviteFromRoster = invitation.canInviteFromRoster && freshRoster && rosterEmails(state).includes(invitation.email) &&
       (record.bound ? bound : !existing || existing.role === "member" && existing.active && existing.id === record.memberId);
     invitation.canResendPending = invitation.canResendPending && bound && eligible(invitation.email) && Boolean(checkedAt && account && !account.confirmed);
     invitation.canResend = invitation.canResendPending;
@@ -1016,16 +1019,26 @@ async function invitationStatusForChair(session, user) {
       message: "This account predates invitation tracking. Check its setup before sending another setup email.",
     });
   }
-  if (emailRoster) for (const entry of state.roster?.directory || []) {
+  if (emailRoster) for (const entry of rosterDirectory(state)) {
     if (allMembers.has(entry.email) || state.invitations?.[entry.email]) continue;
     invitations.push({
       email: entry.email, name: entry.name, status: "unprepared", memberId: null, loginId: null,
       lastSentAt: null, expiresAt: null, acceptedAt: null, retryAt: null, canReconcile: false, canResend: false, canResendPending: false, canSendInitial: false,
-      canInviteFromRoster: freshRoster && state.roster.emails.includes(entry.email) && ["active", "new_member"].includes(entry.membership),
+      canInviteFromRoster: freshRoster && rosterEmails(state).includes(entry.email) && ["active", "new_member"].includes(entry.membership),
       tier: entry.membership === "new_member" ? 1 : state.tierAssignments?.[entry.email] ?? ROSTER_INVITATION_DEFAULTS.tier,
       credits: ROSTER_INVITATION_DEFAULTS.credits,
       message: "The account will be created when its invitation is sent. Member details can be adjusted afterward.",
     });
+  }
+  for (const invitation of invitations) {
+    const target = allMembers.get(invitation.email);
+    invitation.emailVersion = emailCorrectionVersion(state, invitation.email, target || null, bindings.get(target?.id) || null);
+    invitation.canCorrectEmail = emailRoster && freshRoster && eligible(invitation.email) &&
+      (!target || target.active && target.role === 'member') && !(state.invitations?.[invitation.email]?.operation?.until > Date.now());
+    invitation.sourceEmail = rosterDirectory(state).find(row => row.email === invitation.email)?.sourceEmail || null;
+  }
+  if (Object.keys(state.rosterEmailCorrections || {}).length && rosterDirectory(state).length < (state.roster?.directory || []).length) {
+    statusWarning = [statusWarning, 'A corrected address conflicts with the roster sheet or its member name changed. Check the source sheet; affected addresses are unavailable until the conflict is resolved.'].filter(Boolean).join(' ');
   }
   invitations.sort((a, b) => a.name.localeCompare(b.name));
   return { invitations, emailReady: chapterEmailReady, defaults: ROSTER_INVITATION_DEFAULTS,
@@ -1706,7 +1719,7 @@ const server = http.createServer(async (req, res) => {
           const linked = new Set((await db.prepare(
             "SELECT member_id FROM identities WHERE workspace=? AND provider='supabase'",
           ).all(session.workspace)).map((entry) => entry.member_id));
-          view.candidates = state.roster.directory.map((entry) => {
+          view.candidates = rosterDirectory(state).map((entry) => {
             const account = enrolled.get(entry.email);
             const invitation = invitationView(state.invitations?.[entry.email]);
             return {
@@ -2027,6 +2040,25 @@ const server = http.createServer(async (req, res) => {
           removals: (state.classRecords || []).filter(row => !row.archived && row.pendingRemoval)
             .map(row => ({ ...removalView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Former member" })) });
       }
+      if (path === '/api/syllabi/approve-batch' && req.method === 'POST') {
+        chair(user);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          const { owners, ids } = applySyllabusBatch(state, input, { reviewer: user.name, at: now(), newVersion: randomUUID });
+          const members = new Map((await listMembers(session.workspace, state)).map(row => [row.id, row]));
+          const results = [];
+          for (const [owner, credits] of owners) {
+            const target = members.get(owner);
+            if (!target?.active || target.role !== 'member') fail(409, 'A selected member is no longer active. No approvals were saved.');
+            await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(credits, session.workspace, owner);
+            refreshPendingCreditEstimates(state, owner, multiplier({ credits }));
+            results.push(classReviewResult(state, { ...target, credits }));
+          }
+          for (const id of ids) await audit(session.workspace, user.name, 'syllabus.review', id, JSON.stringify(state.syllabi.find(row => row.id === id).history.at(-1)));
+          return { results, approved: ids.length };
+        });
+        return json(res, 200, result);
+      }
       const syllabusRoute = path.match(/^\/api\/syllabi\/([^/]+)\/(evidence|review|revise)$/);
       if (syllabusRoute) {
         const state = await stateOf(session.workspace);
@@ -2045,7 +2077,7 @@ const server = http.createServer(async (req, res) => {
             const syllabus = (current.syllabi || []).find(row => row.id === item.id);
             const course = (current.classRecords || []).find(row => row.id === syllabus?.classId && row.owner === syllabus.owner);
             if (!course) fail(409, "This class changed. Reload the list.");
-            const target = await member(session.workspace, course.owner);
+            const target = await member(session.workspace, course.owner, current);
             if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
             const { total } = applySyllabusDecision(current, syllabus, course, input, { correction, reviewer: user.name, at: now(), newVersion: randomUUID });
             if (total !== null) {
@@ -2755,7 +2787,7 @@ const server = http.createServer(async (req, res) => {
         chair(user);
         const view = await tierImportView(session.workspace, await stateOf(session.workspace));
         if (production) {
-          const identifiers = await fetchRosterImportIdentifiers({ env });
+          const identifiers = rosterDirectory(await stateOf(session.workspace), await fetchRosterImportIdentifiers({ env }));
           const byEmail = new Map(identifiers.map((entry) => [entry.email, entry]));
           if (identifiers.length !== view.targets.length || view.targets.some((target) => {
             const entry = byEmail.get(target.email);
@@ -2884,9 +2916,9 @@ const server = http.createServer(async (req, res) => {
             if (!rosterView(state).fresh) state = await refreshRoster(session, user);
             if (!rosterView(state).fresh)
               fail(503, "Current roster eligibility is unavailable. Refresh the roster before inviting members.");
-            if (!state.roster.emails.includes(invited.email))
+            if (!rosterEmails(state).includes(invited.email))
               fail(422, "This email is not eligible on the connected chapter roster.");
-            const listed = state.roster.directory.find((entry) => entry.email === invited.email);
+            const listed = rosterDirectory(state).find((entry) => entry.email === invited.email);
             invited.tier = listed?.membership === "new_member" ? 1 :
               state.tierAssignments?.[invited.email] ?? invited.tier;
           }
@@ -2928,6 +2960,24 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 201, { member: created });
       }
+      const correctEmail = path.match(/^\/api\/admin\/invitations\/([^/]+)\/correct-email$/);
+      if (correctEmail && req.method === 'POST') {
+        chair(user);
+        if (!production || authMode !== 'chapter' || rosterStatus(env).mode !== 'public_email_csv') fail(422, 'Email corrections require the connected chapter roster.');
+        if (Object.keys(input).sort().join(',') !== 'email,version' || typeof input.version !== 'string' || !/^[a-f0-9]{64}$/.test(input.version))
+          fail(422, 'Submit the corrected email and the reviewed recipient version.');
+        if (!rosterView(await stateOf(session.workspace)).fresh) await refreshRoster(session, user);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          if (!rosterView(state).fresh) fail(409, 'Refresh the roster before correcting an address.');
+          let email;
+          try { email = decodeURIComponent(correctEmail[1]).trim().toLowerCase(); } catch { fail(422, 'Invalid recipient address.'); }
+          return correctInvitationEmail({ db, workspace: session.workspace, state, email,
+            nextEmail: input.email, version: input.version,
+            audit: (action, subject, detail) => audit(session.workspace, user.name, action, subject, detail) });
+        });
+        return json(res, 200, result);
+      }
       const accountSettings = path.match(/^\/api\/roster\/([^/]+)\/account-settings$/);
       if (accountSettings && ["GET", "POST"].includes(req.method)) {
         chair(user);
@@ -2947,7 +2997,7 @@ const server = http.createServer(async (req, res) => {
           academicGuard(state, requestGeneration);
           if (current.version !== input.version) fail(409, "This account changed. Reopen its settings before saving.");
           if (production && rosterStatus(env).mode === "public_email_csv" && !target.email.endsWith("@pilot.invalid") &&
-            (!rosterView(state).fresh || !state.roster.emails.includes(target.email)))
+            (!rosterView(state).fresh || !rosterEmails(state).includes(target.email)))
             fail(409, "Refresh the roster and confirm this member is still eligible before saving.");
           const details = validateChapterMember({ ...input, email: target.email });
           if (current.membership === "new_member" && details.tier !== 1)
@@ -2984,7 +3034,7 @@ const server = http.createServer(async (req, res) => {
           const target = await member(session.workspace, academicSettings[1]);
           if (!target?.active || target.role !== "member")
             fail(404, "Active member not found.");
-          if (state.roster?.directory?.find((entry) => entry.email === target.email)?.membership === "new_member" && input.tier !== 1)
+          if (rosterDirectory(state).find((entry) => entry.email === target.email)?.membership === "new_member" && input.tier !== 1)
             fail(422, "New members must be assigned Tier 1.");
           if (creditsManaged(state, target.id) && target.credits !== input.credits)
             fail(409, "This member’s credit hours come from approved classes. Review their classes to change the total.");

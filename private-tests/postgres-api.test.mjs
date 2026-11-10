@@ -145,6 +145,16 @@ test(
       assert.deepEqual(corrections.map(result=>result.status).sort(),[200,409]);
       const corrected=(await request(a, `/api/submissions/${id}`)).submission;
       assert.equal(corrected.awarded,7); assert.equal(corrected.history.filter(event=>event.correction).length,1);
+      const classState = JSON.parse((await db.prepare('SELECT data FROM chapters WHERE workspace=?').get(workspace)).data);
+      classState.classRecords.push(...['batch-a','batch-b'].map(id=>({id,owner:'alex',name:id,syllabusId:id,version:'1',archived:false})));
+      classState.syllabi.push(...['batch-a','batch-b'].map(id=>({id,classId:id,className:id,owner:'alex',status:'pending',credits:3,version:'1',createdAt:'2026-11-10T12:00:00Z'})));
+      await db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify(classState),workspace);
+      const batchInput={approvals:['batch-a','batch-b'].map(id=>({id,version:'1',credits:3,note:''}))};
+      const batches=await Promise.all([request(a,'/api/syllabi/approve-batch',batchInput),request(b,'/api/syllabi/approve-batch',batchInput)]);
+      assert.deepEqual(batches.map(result=>result.status).sort(),[200,409]);
+      const classFinal=JSON.parse((await db.prepare('SELECT data FROM chapters WHERE workspace=?').get(workspace)).data);
+      for(const id of ['batch-a','batch-b']) assert.equal(classFinal.syllabi.find(row=>row.id===id).history.length,1);
+      assert.equal((await db.prepare('SELECT credits FROM members WHERE workspace=? AND id=?').get(workspace,'alex')).credits,6);
       await request(a, "/api/demo/session", { persona: "alex" });
       assert.equal((await request(b, "/api/points")).approved, 25);
       await request(a, "/api/logout", {});

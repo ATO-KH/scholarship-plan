@@ -147,5 +147,31 @@ test("Chair invitation API repairs interrupted setup without mail, protects rese
     const accepted = (await chairRequest('/api/admin/invitations')).payload.invitations.find(entry => entry.email === input.email);
     assert.equal(accepted.status,'accepted'); assert.ok(accepted.acceptedAt); assert.equal(accepted.canResendPending,false);
     assert.equal(storage.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='roster.invitation_send_started'").get().n, 2, 'acceptance between selection and sending never sends another email');
+
+    const correctionBody = {email:'corrected@example.edu',version:accepted.emailVersion};
+    assert.equal(accepted.canCorrectEmail,true);
+    assert.equal((await request(`${routes}/correct-email`,correctionBody,chair.cookie)).status,403);
+    const freshMember=await request('/api/auth/login',{identifier:'1234',password:'a-long-fictional-password'});
+    assert.equal(freshMember.status,200);
+    assert.equal((await request(`${routes}/correct-email`,correctionBody,freshMember.cookie,freshMember.payload.csrfToken)).status,403);
+    assert.equal((await chairRequest(`${routes}/correct-email`,{...correctionBody,email:'new@example.edu'})).status,409);
+    const mailBefore=storage.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='roster.invitation_send_started'").get().n;
+    const corrected=await chairRequest(`${routes}/correct-email`,correctionBody);
+    assert.equal(corrected.status,200,JSON.stringify(corrected.payload)); assert.equal(corrected.payload.memberId,created.payload.member.id);
+    assert.equal((await request('/api/me',undefined,freshMember.cookie)).status,401,'correcting a verified address revokes existing portal sessions');
+    assert.equal((await request('/api/auth/complete',{accessToken:'test-account-token',password:'must-not-be-applied-password'})).status,403,'old setup tokens cannot touch the corrected account');
+    assert.equal((await request('/api/auth/login',{identifier:'1234',password:'a-long-fictional-password'})).status,401);
+    assert.equal(storage.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='roster.invitation_send_started'").get().n,mailBefore,'saving a correction sends no email');
+    assert.equal((await chairRequest(`${routes}/correct-email`,correctionBody)).status,409,'old recipient snapshot cannot replay');
+    await chairRequest('/api/admin/roster-sync',{});
+    let correctedList=(await chairRequest('/api/admin/invitations')).payload.invitations;
+    assert.equal(correctedList.some(row=>row.email==='member@example.edu'),false);
+    const fixed=correctedList.find(row=>row.email==='corrected@example.edu');
+    assert.equal(fixed.canInviteFromRoster,true); assert.equal(fixed.sourceEmail,'member@example.edu');
+    const tierView=await chairRequest('/api/admin/tier-import'); assert.equal(tierView.status,200,JSON.stringify(tierView.payload));
+    assert.ok(tierView.payload.targets.find(row=>row.email==='corrected@example.edu').schoolId);
+    const newInvite=await chairRequest('/api/admin/invitations/corrected%40example.edu/invite-roster',{});
+    assert.equal(newInvite.status,200,JSON.stringify(newInvite.payload)); assert.equal(newInvite.payload.member.id,created.payload.member.id);
+    assert.equal(newInvite.payload.invitation.status,'sent');
   } finally { storage.close(); }
 });

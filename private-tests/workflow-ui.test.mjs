@@ -350,3 +350,90 @@ test('approved submission offers an explicit correction and saves replacement po
   assert.equal(sent.path,'/api/submissions/done/revise'); assert.equal(sent.options.body.version,'fresh-version');
   assert.equal(sent.options.body.points,6); assert.equal(w.roster[0].approved,6); assert.equal(w.modal.open,false);
 });
+
+
+test('class batch approval retains drafts through filters, explicitly reviews hidden selections, and saves once', async t => {
+  const {w}=fixture(t),container=w.document.createElement('section'); w.document.body.append(container);
+  const rows=[
+    {id:'a',classId:'a',owner:'member',className:'Calculus',memberName:'Member One',credits:3,approvedCredits:null,approvedAccountCredits:0,currentAccountCredits:15,status:'pending',version:'a1'},
+    {id:'b',classId:'b',owner:'member',className:'History',memberName:'Member One',credits:3,approvedCredits:null,approvedAccountCredits:0,currentAccountCredits:15,status:'pending',version:'b1'},
+  ];
+  const writes=[], saved=deferred(); let reads=0;
+  await mountSyllabusQueue(container,{api:async(path,options)=>{
+    if(!options){ if(path!=='/api/syllabi')return {}; reads++;return {syllabi:rows}; }
+    writes.push({path,body:options.body});return saved.promise;
+  },esc,loading:()=>'',isCurrent:()=>container.isConnected});
+  let cards=container.querySelectorAll('.syllabus-review-card');
+  cards[0].open=true;
+  const hours=cards[0].querySelector('[name="credits"]'), note=cards[0].querySelector('textarea');
+  hours.value='4'; hours.dispatchEvent(new w.Event('input',{bubbles:true}));
+  note.value='Correct four syllabus hours'; note.dispatchEvent(new w.Event('input',{bubbles:true}));
+  cards[0].querySelector('[data-select-class]').click(); cards[1].querySelector('[data-select-class]').click();
+  const search=container.querySelector('input[type="search"]'); search.value='History'; search.dispatchEvent(new w.Event('input'));
+  assert.equal(container.querySelectorAll('.syllabus-review-card').length,1);
+  container.querySelector('[data-review-classes]').click();
+  assert.match(container.querySelector('.class-batch-confirm').textContent,/Calculus/);
+  assert.match(container.querySelector('.class-batch-confirm').textContent,/Correct four syllabus hours/);
+  assert.equal(writes.length,0,'reviewing the confirmation must not approve classes');
+  const confirm=container.querySelector('[data-confirm-batch]'); const work=confirm.onclick(); await confirm.onclick();
+  assert.equal(writes.length,1); assert.equal(writes[0].path,'/api/syllabi/approve-batch');
+  assert.deepEqual(writes[0].body.approvals,[{id:'a',version:'a1',credits:4,note:'Correct four syllabus hours'},{id:'b',version:'b1',credits:3,note:''}]);
+  saved.resolve({approved:2,results:[{classReviews:{owner:'member',syllabi:rows.map(row=>({...row,status:'approved',version:row.version+'saved'})),removals:[]},member:{id:'member',credits:7}}]});
+  await work; assert.equal(reads,1); assert.equal(container.querySelector('.class-batch-bar').hidden,true);
+  assert.match(container.querySelector('.class-review-result').textContent,/2 classes approved/);
+});
+
+test('saving one class preserves another class’s unsaved hours and review reason', async t => {
+  const {w}=fixture(t),container=w.document.createElement('section'); w.document.body.append(container);
+  const rows=['a','b'].map(id=>({id,classId:id,owner:'member',className:id,memberName:'Member',credits:3,approvedCredits:null,approvedAccountCredits:0,currentAccountCredits:15,status:'pending',version:id+'1'}));
+  await mountSyllabusQueue(container,{api:async(path,options)=>options ? {classReviews:{owner:'member',syllabi:[{...rows[0],status:'approved',version:'a2'},{...rows[1],approvedAccountCredits:3}],removals:[]},member:{credits:3}} : {syllabi:rows},esc,loading:()=>'',isCurrent:()=>container.isConnected});
+  const forms=container.querySelectorAll('form'); forms[1].querySelector('[name="credits"]').value='4'; forms[1].querySelector('textarea').value='Keep this unfinished explanation';
+  await forms[0].onsubmit({preventDefault(){},submitter:{value:'approved'}});
+  const remaining=container.querySelector('form'); assert.equal(remaining.querySelector('[name="credits"]').value,'4'); assert.equal(remaining.querySelector('textarea').value,'Keep this unfinished explanation');
+});
+
+test('class requests group by member identity and select only that member’s visible pending classes', async t => {
+  const { w } = fixture(t), container = w.document.createElement('section'); w.document.body.append(container);
+  const rows = [
+    { id: 'b1', owner: 'second', memberName: 'Same Name', className: 'Biology' },
+    { id: 'a1', owner: 'first', memberName: 'Same Name', className: 'Algebra' },
+    { id: 'b2', owner: 'second', memberName: 'Same Name', className: 'History' },
+    { id: 'b3', owner: 'second', memberName: 'Same Name', className: 'Chemistry', status: 'approved' },
+  ].map(row => ({ credits: 3, approvedAccountCredits: 0, currentAccountCredits: 15, status: 'pending', version: row.id + '-v1', ...row }));
+  const calls = [];
+  await mountSyllabusQueue(container, { api: async (path, options) => { calls.push({ path, options }); return { syllabi: rows }; },
+    esc, loading: () => '', isCurrent: () => container.isConnected, selectedFilter: 'all' });
+  assert.equal(container.querySelectorAll('.class-member-group').length, 2, 'equal names must not merge distinct accounts');
+  const second = () => container.querySelector('[data-class-owner="second"]');
+  assert.equal(second().querySelectorAll('.syllabus-review-card').length, 3);
+  second().querySelector('textarea').value = 'Retain this unfinished note';
+  second().querySelector('[data-select-member-classes]').click();
+  assert.equal(second().querySelectorAll('[data-select-class]:checked').length, 2);
+  assert.equal(container.querySelector('[data-class-owner="first"] [data-select-class]').checked, false);
+  assert.equal(second().querySelector('textarea').value, 'Retain this unfinished note');
+  assert.equal(second().querySelector('[data-select-member-classes]').textContent, 'Clear this member');
+  second().querySelector('[data-select-class]').click();
+  assert.equal(second().querySelector('[data-select-member-classes]').textContent, 'Select 2 pending classes');
+  second().querySelector('[data-select-member-classes]').click();
+  assert.equal(second().querySelectorAll('[data-select-class]:checked').length, 2);
+  second().querySelector('[data-select-member-classes]').click();
+  assert.equal(second().querySelectorAll('[data-select-class]:checked').length, 0);
+  assert.equal(calls.length, 1, 'group selection does not save decisions or reload the queue');
+});
+
+test('saving a class continues within the same member’s group before moving to another member', async t => {
+  const { w } = fixture(t), container = w.document.createElement('section'); w.document.body.append(container);
+  const rows = [
+    { id: 'a', owner: 'first', memberName: 'A Member' },
+    { id: 'b', owner: 'second', memberName: 'B Member' },
+    { id: 'c', owner: 'second', memberName: 'B Member' },
+  ].map(row => ({ ...row, className: row.id, credits: 3, approvedAccountCredits: 0, currentAccountCredits: 0, status: 'pending', version: row.id + '-v1' }));
+  await mountSyllabusQueue(container, { api: async (path, options) => options ? {
+    member: { id: 'second', credits: 3 }, classReviews: { owner: 'second', removals: [],
+      syllabi: [{ ...rows[1], status: 'approved', version: 'b-v2' }, { ...rows[2], approvedAccountCredits: 3, currentAccountCredits: 3 }] },
+  } : { syllabi: rows }, esc, loading: () => '', isCurrent: () => container.isConnected });
+  await container.querySelector('[data-class-owner="second"] form').onsubmit({ preventDefault() {}, submitter: { value: 'approved' } });
+  assert.equal(container.querySelector('[data-class-owner="first"] .syllabus-review-card').open, false);
+  assert.equal(container.querySelector('[data-class-owner="second"] .syllabus-review-card').open, true);
+  assert.match(container.querySelector('[data-class-owner="second"] summary').textContent, /c/);
+});

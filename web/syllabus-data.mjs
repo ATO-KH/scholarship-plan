@@ -62,6 +62,26 @@ export function applySyllabusDecision(state, syllabus, course, input, { correcti
   (state.memberProfiles[course.owner] ||= { courses: [] }).version = newVersion();
   return { total };
 }
+export function applySyllabusBatch(state, input, options) {
+  if (!input || Object.keys(input).join(',') !== 'approvals' || !Array.isArray(input.approvals) || !input.approvals.length || input.approvals.length > 20)
+    throw Object.assign(Error('Select between 1 and 20 classes to approve together.'), { status: 422 });
+  const draft = structuredClone(state), owners = new Map(), seen = new Set();
+  for (const approval of input.approvals) {
+    if (!approval || Object.keys(approval).sort().join(',') !== 'credits,id,note,version' || typeof approval.id !== 'string' || seen.has(approval.id))
+      throw Object.assign(Error('Each approval must include one unique class, its version, hours, and note.'), { status: 422 });
+    seen.add(approval.id);
+    const syllabus = draft.syllabi?.find(row => row.id === approval.id);
+    const course = draft.classRecords?.find(row => row.id === syllabus?.classId && row.owner === syllabus.owner);
+    if (!syllabus || !course) throw Object.assign(Error('A selected class changed. Reload the list before approving.'), { status: 409 });
+    const { total } = applySyllabusDecision(draft, syllabus, course, { ...approval, decision: 'approved' }, options);
+    owners.set(course.owner, total);
+  }
+  // Validate every decision before exposing any changes, including in the
+  // browser demo. A stale class or excessive total cannot partially approve.
+  Object.assign(state, draft);
+  return { owners, ids: [...seen] };
+}
+
 export function ownerClassReviews(state, owner, accountCredits, memberName) {
   return { owner,
     syllabi: (state.syllabi || []).filter(row => row.owner === owner).map(row => ({ ...syllabusView(state, row, accountCredits), memberName })).filter(row => row.current),

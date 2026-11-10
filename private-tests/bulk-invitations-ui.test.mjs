@@ -6,7 +6,7 @@ import { runInNewContext } from 'node:vm';
 const source = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
 const extract = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
 const selectionSource = extract('function mountInvitationSelection(', '\nfunction reviewBulkInvitations(');
-const reviewSource = extract('function reviewBulkInvitations(', '\nasync function loadInvitationStatus(');
+const reviewSource = extract('function reviewBulkInvitations(', '\nasync function correctInvitationAddress(');
 const statusSource = extract('async function loadInvitationStatus(', '\nasync function loadRosterSync(');
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return {promise, resolve, reject}; };
 const recipients = [

@@ -13,3 +13,6 @@ CREATE TABLE IF NOT EXISTS canvas_leases (workspace TEXT NOT NULL, member_id TEX
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL, at TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
 CREATE INDEX IF NOT EXISTS audit_workspace ON audit(workspace,id);
+
+CREATE INDEX IF NOT EXISTS identities_member ON identities(workspace,member_id,provider);
+CREATE INDEX IF NOT EXISTS uploads_owner ON uploads(workspace,owner);

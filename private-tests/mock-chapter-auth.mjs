@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFile, writeFile } from "node:fs/promises";
 const originalFetch = globalThis.fetch;
 const chairId = "aab93409-383f-4d8a-b443-3d940a277153";
@@ -46,7 +47,7 @@ globalThis.fetch = async (input, options = {}) => {
   if (url.pathname === "/auth/v1/admin/users" && options.method === "POST") {
     const { email, app_metadata } = JSON.parse(options.body);
     if (invitationUsers.has(email)) return respond({ error: "duplicate" }, 422);
-    const user = { id: email === "member@example.edu" ? memberId : "aadf192d-7b32-42d1-ab6f-a63ce8f0a1b4", email, app_metadata };
+    const user = { id: email === "member@example.edu" ? memberId : randomUUID(), email, app_metadata };
     invitationUsers.set(email, user);
     return respond(user);
   }

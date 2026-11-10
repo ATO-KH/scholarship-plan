@@ -16,12 +16,20 @@ The portal's **Roster** page is the recipient list. Do not upload a second maili
 ## Optional account setup before sending
 
 1. Sign in as the Scholarship Chair and open **Roster → Roster sheet**.
-2. Refresh the roster. Correct missing, duplicate or mistyped school emails in the source sheet, then refresh again. Include both active members and new members.
+2. Refresh the roster. Correct missing or duplicate school emails in the source sheet, then refresh again. A typo in an existing address can also be fixed with **Roster → Invitations → Correct email**. Include both active members and new members.
 3. If the GPA file is available, import it, select its GPA and 900-number columns, and review the proposed matches and tiers. This can happen before or after invitations. The source GPA and 900 numbers are used temporarily for matching; the portal retains the assigned tier.
 4. To configure someone ahead of time, choose **Edit / prepare account**, adjust their details, then **Save without sending email**. This is optional: the bulk invitation action also creates accounts automatically. Members without a badge receive a separate portal sign-in ID.
 5. Use **Roster → Members → Account settings** to correct existing account details. Saving member details and checking account setup are separate from sending a setup email.
 
-For a new member, account preparation creates and binds an unconfirmed sign-in identity without a password email. It is not evidence that the member has received anything or can already sign in. An interrupted preparation can be checked and resumed without sending mail. Avoid using a 900 number as a badge or portal username. The sign-in email is read-only in account settings: changing it requires a separate reviewed identity update because it binds the account to the roster and Supabase.
+For a new member, account preparation creates and binds an unconfirmed sign-in identity without a password email. It is not evidence that the member has received anything or can already sign in. An interrupted preparation can be checked and resumed without sending mail. Avoid using a 900 number as a badge or portal username. The sign-in email is read-only in account settings; use the separate **Correct email** action below.
+
+## Correct an invitation address
+
+1. Open **Roster → Invitations**, find the member, and choose **Correct email**.
+2. Enter the corrected address and review it carefully. Saving preserves the member's points, classes, credit hours, badge, portal ID and history. It revokes their existing portal sessions, recovery key and previous email's portal access. Saving sends no email.
+3. Choose **Review invitation** at the corrected address and confirm sending a fresh setup link. The member verifies that address, sets a password and saves a new recovery key. Previous links cannot access this member's portal account.
+
+The portal remembers the correction across roster refreshes; the connected sheet remains read-only. Update the sheet too when possible. A correction only remains eligible while the same named member remains on the source roster. Conflicting source rows disable access until resolved. The portal refuses an address already attached to another roster entry or member. A pre-existing Supabase identity at the destination is not automatically attached to the corrected account: an operator must verify ownership first. Interrupted sends and simultaneous edits require a fresh status check before another correction.
 
 ## Before the first authorized email
 

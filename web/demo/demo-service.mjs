@@ -3,7 +3,7 @@ import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { creditSummary } from "../credit-data.mjs";
 import { profileView } from "../profile-data.mjs";
-import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
 import {
@@ -278,6 +278,17 @@ async function handleRequest(req, path) {
       const owners = new Map(sessionMembers.map(row => [row.id, row]));
       return json({ syllabi: (state.syllabi || []).map(item => ({ ...syllabusView(state, item, owners.get(item.owner)?.credits ?? null), memberName: owners.get(item.owner)?.name || "Member" })).filter(item => item.current).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         removals: (state.classRecords || []).filter(row => !row.archived && row.pendingRemoval).map(row => ({ ...removalView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Member" })) });
+    }
+    if (path === '/api/syllabi/approve-batch' && req.method === 'POST') {
+      chair();
+      const { owners, ids } = applySyllabusBatch(state, input, { reviewer: user.name, at: new Date().toISOString(), newVersion: () => crypto.randomUUID() });
+      state.creditOverrides ||= {};
+      for (const [owner, credits] of owners) {
+        state.creditOverrides[owner] = credits;
+        refreshPendingCreditEstimates(state, owner, multiplier({ credits }));
+      }
+      await save(session);
+      return json({ approved: ids.length, results: [...owners.keys()].map(owner => classReviewResult(state, sessionMembers.find(row => row.id === owner))) });
     }
     const syllabusRoute = path.match(/^\/api\/syllabi\/([a-f0-9-]{36})\/(evidence|review|revise)$/);
     if (syllabusRoute) {

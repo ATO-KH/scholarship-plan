@@ -118,6 +118,7 @@ p {
   gap: 16px;
   border-bottom: 1px solid #efd9b7;
 }
+.demo-bar[hidden] { display: none; }
 .demo-bar strong {
   font-size: 11px;
   letter-spacing: 1px;

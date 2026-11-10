@@ -310,3 +310,20 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 @media (max-width: 640px) { .invitation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .roster-tabs .button { flex: 1; } }
 
 :root[data-theme="dark"] .roster-tabs [aria-pressed="true"] { border-color: var(--gold); background: var(--navy); color: #fff; }
+
+/* Class review work area: selections stay visible and confirmation is explicit. */
+.class-batch-bar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:16px; margin:16px 0; border:1px solid var(--line); background:var(--paper); }
+.class-batch-bar [data-class-selected] { margin-right:auto; font-weight:700; }
+.class-batch-confirm { border:2px solid var(--navy); padding:20px; margin:16px 0; }
+.class-batch-confirm li { margin:8px 0; overflow-wrap:anywhere; }
+.class-select { display:flex; align-items:center; gap:10px; padding:12px 0; cursor:pointer; }
+.class-select input { width:20px; height:20px; }
+.class-batch-bar[hidden], .class-batch-confirm[hidden] { display:none; }
+@media (max-width:600px) { .class-batch-bar > button { width:100%; min-height:44px; } .class-batch-confirm { padding:16px; } }
+
+.class-member-group { border-top:1px solid var(--line); padding-top:16px; margin-top:24px; }
+.class-member-group:first-child { margin-top:0; }
+.class-member-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:12px; }
+.class-member-heading h3 { margin:0; font-size:20px; }
+.class-member-heading p { margin:4px 0 0; font-size:13px; }
+@media (max-width:600px) { .class-member-heading { align-items:stretch; flex-direction:column; } .class-member-heading button { min-height:44px; } }
