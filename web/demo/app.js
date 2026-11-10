@@ -114,6 +114,7 @@ function navigation() {
     ? [
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
+        ["leaderboard", "Leaderboard"],
         ["syllabi", "Classes"],
         ["earn", "Point rules"],
         ["faq", "FAQ"],
@@ -121,6 +122,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["leaderboard", "Leaderboard"],
         ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
@@ -184,7 +186,7 @@ function overview() {
       "Track submissions, decisions, and approved points.",
       "",
     ) +
-    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><div class="overview-points-stack"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><div class="stats-row overview-stats"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div></div><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar("2026-10-10", checkpoint)}</section></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">Demo date: September 28, 2026. *Pending estimates are not awarded points.</p>`;
+    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div id="leader-honor"></div><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><div class="overview-points-stack"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><div class="stats-row overview-stats"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div></div><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar("2026-10-10", checkpoint)}</section></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Academic evidence stays private to you and the Chair.</p><p class="footnote">Demo date: September 28, 2026. *Pending estimates are not awarded points.</p>`;
   const calendarTrigger = main.querySelector(".calendar-trigger");
   let calendarOffset = 0;
   calendarTrigger.onclick = event => {
@@ -198,6 +200,32 @@ function overview() {
   };
   calendarTrigger.onkeydown = event => { if (event.target.classList.contains("mini-calendar-open") && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openCalendar(); } };
   window.atoCelebrate.goal(user.id + ":" + (rules.semester?.name || "semester"), points.approved, points.goal);
+  loadLeaderHonor(main.querySelector('#leader-honor'));
+  window.atoCelebrate.checkpoint({ memberId: user.id, role: user.role, approved: points.approved, today: rules.today, checkpoints: rules.checkpoints, semesterKey: rules.semester?.startDate || rules.semester?.name || 'semester' });
+}
+function leaderboardPage() {
+  main.innerHTML = heading('', 'Leaderboard', '') + `<section class="panel leaderboard-panel"><h2>Chapter leaderboard</h2><p class="muted">Approved points this semester, highest first. Gold, silver and bronze mark the first three places; tied scores share a place. Pending submissions are excluded.</p><div id="leaderboard-content"></div></section>`;
+  loadLeaderboard(main.querySelector('#leaderboard-content'));
+}
+async function loadLeaderboard(container) {
+  const account = user;
+  const isCurrent = () => user === account && route() === 'leaderboard' && container.isConnected;
+  container.innerHTML = loading('Loading chapter points…', true);
+  try {
+    const { mountLeaderboard } = await import('/leaderboard-ui.mjs');
+    if (isCurrent()) await mountLeaderboard(container, { api, esc, loading, isCurrent });
+  } catch (error) {
+    if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p><button class="button ghost" type="button">Try again</button>`;
+    container.querySelector('button')?.addEventListener('click', () => loadLeaderboard(container));
+  }
+}
+async function loadLeaderHonor(container) {
+  const account = user;
+  const isCurrent = () => user === account && account.role === 'member' && route() === 'overview' && container.isConnected;
+  try {
+    const { mountLeaderHonor } = await import('/leaderboard-ui.mjs');
+    if (isCurrent()) await mountLeaderHonor(container, { api, esc, isCurrent });
+  } catch { /* The overview remains usable if optional recognition is unavailable. */ }
 }
 function filters() {
   return `<div class="filters" aria-label="Filter submissions">${["all", "pending", "approved", "denied"].map((f) => `<button class="filter ${f === filter ? "active" : ""}" data-action="filter" data-value="${f}" aria-pressed="${f === filter}">${f === "all" ? "All submissions" : f === "pending" ? "Pending review" : f[0].toUpperCase() + f.slice(1)} <span>(${submissions.filter((s) => f === "all" || s.status === f).length})</span></button>`).join("")}</div>`;
@@ -455,6 +483,7 @@ function render() {
       submissions: submissionPage,
       queue,
       members: membersPage,
+      leaderboard: leaderboardPage,
       earn: earnPage,
       canvas: canvasPage,
       faq: faqPage,

@@ -164,7 +164,7 @@ export async function mountSyllabusQueue(container, { api, esc, loading, isCurre
           const total = projectedTotal(), value = creditValue();
           const invalid = !removal && (value === null || !Number.isFinite(value) || value < 0 || value > 30 || Math.abs(value * 100 - Math.round(value * 100)) > 1e-8);
           form.querySelector('[value="approved"]').disabled = invalid || total > 30;
-          form.querySelector('.class-credit-change').textContent = total > 30 ? 'This would exceed the 30-hour account limit. Correct the hours before approving.' : Number.isFinite(total) ? `Account hours: ${item.currentAccountCredits} → ${total} if approved.` : 'Enter the credit hours shown in the syllabus.';
+          form.querySelector('.class-credit-change').textContent = total > 30 ? 'This would exceed the 30-hour account limit. Correct the hours before approving.' : Number.isFinite(total) ? `Account hours: ${item.currentAccountCredits ?? 'N/A'} → ${total} if approved.` : 'Enter the credit hours shown in the syllabus.';
         };
         if (creditInput) creditInput.oninput = updateHours;
         updateHours();

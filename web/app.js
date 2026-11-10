@@ -181,6 +181,7 @@ function navigation() {
     ? [
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
+        ["leaderboard", "Leaderboard"],
         ["syllabi", "Classes"],
         ["roster", "Chapter roster"],
         ["semester", "Semester settings"],
@@ -192,6 +193,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["leaderboard", "Leaderboard"],
         ["classes", "My classes"],
         ["profile", "My profile"],
         ["earn", "Ways to earn points"],
@@ -284,7 +286,7 @@ function rows(items, chair = false) {
   submissionPageIndex = Math.min(submissionPageIndex, pages - 1);
   const page = items.slice(submissionPageIndex * 50, (submissionPageIndex + 1) * 50);
   const pagination = pages > 1 ? `<nav class="submission-pagination" aria-label="Submission pages"><button class="button ghost small" data-action="submissions-page" data-page="${submissionPageIndex - 1}" ${submissionPageIndex === 0 ? 'disabled' : ''}>Previous</button><span role="status">${submissionPageIndex * 50 + 1}–${Math.min(items.length, (submissionPageIndex + 1) * 50)} of ${items.length}</span><button class="button ghost small" data-action="submissions-page" data-page="${submissionPageIndex + 1}" ${submissionPageIndex === pages - 1 ? 'disabled' : ''}>Next</button></nav>` : '';
-  return `<div class="table-wrap"><table class="submission-table"><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${page.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td class="submission-member"><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td class="submission-main"><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>${pagination}`;
+  return `<div class="table-wrap"><table class="submission-table"><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${page.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td class="submission-member"><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td class="submission-main"><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}${chair && ["approved", "denied"].includes(s.status) ? `<button class="table-link submission-correct" type="button" data-action="correct-submission" data-id="${esc(s.id)}">Edit decision / points</button>` : ""}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>${pagination}`;
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
@@ -299,7 +301,7 @@ function overview() {
       "",
       "",
     ) +
-    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><div class="overview-points-stack"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><div class="stats-row overview-stats"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div></div><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar(checkpointDate(), checkpoint)}</section></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">${isDemo() ? "Demo date" : "As of"}: ${esc(rules.today)}. *Pending estimates are not awarded points.</p>`;
+    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div id="leader-honor"></div><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><div class="overview-points-stack"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><div class="stats-row overview-stats"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.creditsManaged ? esc(user.credits) : 'N/A'} credit hours${user.creditsManaged ? '' : ' · Awaiting class approval'}</span></div></div></div><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar(checkpointDate(), checkpoint)}</section></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Academic evidence stays private to you and the Chair.</p><p class="footnote">${isDemo() ? "Demo date" : "As of"}: ${esc(rules.today)}. *Pending estimates are not awarded points.</p>`;
   const calendarTrigger = main.querySelector(".calendar-trigger");
   let calendarOffset = 0;
   calendarTrigger.onclick = event => {
@@ -313,6 +315,32 @@ function overview() {
   };
   calendarTrigger.onkeydown = event => { if (event.target.classList.contains("mini-calendar-open") && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openCalendar(); } };
   window.atoCelebrate.goal(user.id + ":" + (rules.semester?.name || "semester"), points.approved, points.goal);
+  loadLeaderHonor(main.querySelector('#leader-honor'));
+  window.atoCelebrate.checkpoint({ memberId: user.id, role: user.role, approved: points.approved, today: rules.today, checkpoints: rules.checkpoints, semesterKey: rules.semester?.startDate || rules.semester?.name || 'semester' });
+}
+function leaderboardPage() {
+  main.innerHTML = heading('', 'Leaderboard', '') + `<section class="panel leaderboard-panel"><h2>Chapter leaderboard</h2><p class="muted">Approved points this semester, highest first. Gold, silver and bronze mark the first three places; tied scores share a place. Pending submissions are excluded.</p><div id="leaderboard-content"></div></section>`;
+  loadLeaderboard(main.querySelector('#leaderboard-content'));
+}
+async function loadLeaderboard(container) {
+  const account = user;
+  const isCurrent = () => user === account && route() === 'leaderboard' && container.isConnected;
+  container.innerHTML = loading('Loading chapter points…', true);
+  try {
+    const { mountLeaderboard } = await import('/leaderboard-ui.mjs');
+    if (isCurrent()) await mountLeaderboard(container, { api, esc, loading, isCurrent });
+  } catch (error) {
+    if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p><button class="button ghost" type="button">Try again</button>`;
+    container.querySelector('button')?.addEventListener('click', () => loadLeaderboard(container));
+  }
+}
+async function loadLeaderHonor(container) {
+  const account = user;
+  const isCurrent = () => user === account && account.role === 'member' && route() === 'overview' && container.isConnected;
+  try {
+    const { mountLeaderHonor } = await import('/leaderboard-ui.mjs');
+    if (isCurrent()) await mountLeaderHonor(container, { api, esc, isCurrent });
+  } catch { /* The overview remains usable if optional recognition is unavailable. */ }
 }
 function filters() {
   return `<div class="filters" aria-label="Filter submissions">${["all", "pending", "approved", "denied"].map((f) => `<button class="filter ${f === filter ? "active" : ""}" data-action="filter" data-value="${f}" aria-pressed="${f === filter}">${f === "all" ? "All submissions" : f === "pending" ? "Pending review" : f[0].toUpperCase() + f.slice(1)} <span>(${submissions.filter((s) => f === "all" || s.status === f).length})</span></button>`).join("")}</div>`;
@@ -378,7 +406,7 @@ function membersPage() {
       "Member points",
       "Approved points and checkpoint targets for each member.",
     ) +
-    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending ? `<button class="table-link" data-action="review-member" data-id="${esc(m.id)}" aria-label="Review ${m.pending} pending submissions from ${esc(m.name)}">${m.pending} to review</button>` : "0"}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Account settings</button><br><button class="table-link" data-action="manage-credits" data-id="${esc(m.id)}">Manage credits</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
+    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.creditsManaged ? esc(m.credits) : 'N/A'} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending ? `<button class="table-link" data-action="review-member" data-id="${esc(m.id)}" aria-label="Review ${m.pending} pending submissions from ${esc(m.name)}">${m.pending} to review</button>` : "0"}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Account settings</button><br><button class="table-link" data-action="manage-credits" data-id="${esc(m.id)}">Manage credits</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
 }
 async function openPointAdjustments(memberId) {
   const owner = user.id, epoch = sessionEpoch;
@@ -478,7 +506,7 @@ async function manageMemberCredits(memberId) {
   const member = rosterAccounts.find(row => row.id === memberId) || roster.find(row => row.id === memberId);
   if (!member) return;
   const owner = user.id, epoch = sessionEpoch;
-  openModal('MANAGE CREDITS', esc(member.name), `<p class="notice info">Credit hours come from approved classes. Approve a pending class or correct an existing decision below.${member.creditsManaged ? '' : ' Until the first class is approved, the member keeps their starting credit hours.'}</p><div id="member-class-reviews">${loading('Loading classes…')}</div>`);
+  openModal('MANAGE CREDITS', esc(member.name), `<p class="notice info">Credit hours come from approved classes. Approve a pending class or correct an existing decision below.${member.creditsManaged ? '' : ' Starting hours show N/A until the first class is approved.'}</p><div id="member-class-reviews">${loading('Loading classes…')}</div>`);
   const container = $('#member-class-reviews');
   const isCurrent = () => user?.id === owner && sessionEpoch === epoch && modal.open && container.isConnected;
   try {
@@ -697,6 +725,7 @@ function render() {
       submissions: submissionPage,
       queue,
       members: membersPage,
+      leaderboard: leaderboardPage,
       earn: earnPage,
       canvas: canvasPage,
       faq: faqPage,
@@ -787,33 +816,25 @@ function formError(message) {
   e.scrollIntoView({ block: "nearest" });
 }
 function activityPicker() {
-  return `<div class="activity-picker"><input id="activity-search" type="search" aria-label="Filter activity types" aria-controls="activity" placeholder="Filter activity types (optional)" autocomplete="off"><select id="activity" name="activity" required aria-describedby="activity-help"></select></div><small id="activity-help">Choose an activity type. Search above to narrow the list.</small><small id="activity-results" role="status" aria-live="polite" hidden></small>`;
+  return `<div class="activity-picker"><input id="activity-search" type="text" list="activity-types" required aria-describedby="activity-help" placeholder="Choose or type an activity" autocomplete="off"><datalist id="activity-types"></datalist><input id="activity" name="activity" type="hidden" value=""></div><small id="activity-help">Type to narrow the options, then choose an activity from the list.</small>`;
 }
 function wireActivityPicker() {
-  const search = $("#activity-search"), selected = $("#activity"), feedback = $("#activity-results");
-  function renderOptions() {
-    const current = selected.value, categories = activeActivities();
-    const query = search.value.trim().toLowerCase();
-    const matches = categories.filter(item => item.name.toLowerCase().includes(query));
-    const retained = categories.find(item => item.id === current && !matches.some(match => match.id === current));
-    const option = item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`;
-    selected.innerHTML = '<option value="">Choose an activity type</option>' + matches.map(option).join('') +
-      (retained ? `<optgroup label="Current selection">${option(retained)}</optgroup>` : '');
-    selected.value = categories.some(item => item.id === current) ? current : '';
-    feedback.hidden = !query;
-    feedback.textContent = !query ? '' : `${matches.length ? `${matches.length} matching activity ${matches.length === 1 ? 'type' : 'types'}.` : 'No matching activity types. Clear the search to see all types.'}${retained ? ' Your current selection is unchanged.' : ''}`;
-  }
-  search.addEventListener('input', renderOptions);
-  search.addEventListener('keydown', event => {
-    if (event.key === 'Enter') { event.preventDefault(); selected.focus(); }
-  });
-  selected.addEventListener('change', () => {
-    search.value = '';
-    renderOptions();
+  const search = $("#activity-search"), selected = $("#activity");
+  let rendered = selected.value;
+  $('#activity-types').innerHTML = activeActivities().map(item => `<option value="${esc(item.name)}"></option>`).join('');
+  function chooseActivity() {
+    if (selected.value) rendered = selected.value;
+    const match = activeActivities().find(item => item.name.toLowerCase() === search.value.trim().toLowerCase());
+    selected.value = match?.id || '';
+    search.setCustomValidity(match || !search.value ? '' : 'Choose an activity type from the suggestions.');
     $('#claim-form').dataset.dirty = 'true';
-    updateForm();
-  });
-  renderOptions();
+    // Typing a partial search must not discard the previous activity's grade.
+    // Only an explicit different valid choice changes the requested fields.
+    if (match && match.id !== rendered) { rendered = match.id; updateForm(); }
+    else { estimate(); updateSubmissionButtons(); }
+  }
+  search.addEventListener('input', chooseActivity);
+  search.addEventListener('change', chooseActivity);
 }
 function currentSubmissionDraft() {
   return submissionDraft?.owner === user?.id && submissionDraft.epoch === sessionEpoch &&
@@ -885,14 +906,14 @@ async function newSubmission(prefill = {}) {
     isDemo()
       ? "Add a fictional activity for the Scholarship Chair to review."
       : "Add an activity and evidence for the Scholarship Chair to review.",
-    `<form id="claim-form" data-owner="${esc(user.id)}" data-epoch="${sessionEpoch}">${draft ? '<div class="notice info">Your unfinished submission was restored. <button class="text-btn" type="button" data-action="discard-submission-draft">Start over</button></div>' : ''}<p class="footnote">Choose an activity, add its details, then attach evidence. Drafts stay in this tab until you sign out or reload.</p><div class="form-grid"><div class="field span2"><label for="activity">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${minimumDate}" max="${maximumDate}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Keep draft & close</button><button class="button ghost" type="submit" name="afterSubmit" value="another">Submit & add another</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+    `<form id="claim-form" data-owner="${esc(user.id)}" data-epoch="${sessionEpoch}">${draft ? '<div class="notice info">Your unfinished submission was restored. <button class="text-btn" type="button" data-action="discard-submission-draft">Start over</button></div>' : ''}<p class="footnote">Choose an activity, add its details, then attach evidence. Drafts stay in this tab until you sign out or reload.</p><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${minimumDate}" max="${maximumDate}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Keep draft & close</button><button class="button ghost" type="submit" name="afterSubmit" value="another">Submit & add another</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
   wireActivityPicker();
   $("#evidence-file").addEventListener("change", uploadEvidence);
   const form = $('#claim-form');
   form.dataset.draftId = draft?.id || crypto.randomUUID();
   const initialCategory = activity(fields.activity);
-  if (initialCategory) $('#activity').value = initialCategory.id;
+  if (initialCategory) { $('#activity').value = initialCategory.id; $('#activity-search').value = initialCategory.name; }
   updateForm();
   restoreSubmissionFields(form, fields);
   if (draft) {
@@ -905,7 +926,7 @@ async function newSubmission(prefill = {}) {
   form.addEventListener('submit', submitClaim);
   updateSubmissionButtons(form);
   if (initialCategory) $('#title').focus();
-  else $('#activity').focus();
+  else $('#activity-search').focus();
 }
 function updateSubmissionPrompts(a) {
   if (!a) return;
@@ -980,7 +1001,7 @@ async function submitClaim(e) {
   if (busy) return;
   const form = e.target, owner = user?.id, epoch = sessionEpoch;
   const current = () => form.isConnected && modal.open && user?.id === owner && sessionEpoch === epoch;
-  if (!$('#activity').value) { formError('Choose an activity type.'); $('#activity').focus(); return; }
+  if (!$('#activity').value) { formError('Choose an activity type.'); $('#activity-search').focus(); return; }
   if (form.dataset.uploading) { formError('Wait for the evidence upload to finish.'); return; }
   if (activity($('#activity').value)?.grade && !$('#saved-course')?.value) {
     formError('Choose a class with an approved syllabus. Add or check it in My classes.'); return;
@@ -1878,7 +1899,7 @@ function reviewBulkInvitations(recipients, sourcePanel) {
       operation: item.canInviteFromRoster ? 'invite-roster' : 'resend-pending' }));
   if (!selected.length || user?.role !== 'chair') return;
   const resendCount = selected.filter(item => item.operation === 'resend-pending').length;
-  openModal('REVIEW INVITATION EMAILS', '', `<p><strong>${selected.length - resendCount} first invitations · ${resendCount} resends</strong></p><p>Each selected member receives a personal setup link valid for seven days. Members who have already accepted are skipped when their status is checked.</p>${resendCount ? '<p class="notice info">Resending can replace an earlier link. Recipients should use the newest email. A previous delivery marked uncertain may already be in their inbox.</p>' : ''}<p class="muted">Accounts are created automatically when needed. Existing account settings and imported tiers are kept; new accounts start with 15 credits and the imported tier, or Tier 1 if none is assigned. New members always use Tier 1.</p><div class="invitation-batch-list"><ul>${selected.map((item, index) => `<li><div><strong>${esc(item.name)}</strong><small>${esc(item.email)}</small><small>${item.operation === 'invite-roster' ? 'First invitation' : item.status === 'expired' ? 'Resend expired link' : item.status === 'delivery_unknown' ? 'Resend · previous delivery uncertain' : 'Resend · not yet accepted'}</small></div><span data-batch-result="${index}">Not sent</span></li>`).join('')}</ul></div><p class="muted">Keep this page open while sending. Closing this window stops the remaining emails; an email already being sent may still arrive. Sending pauses if the email service reaches its limit. There are no automatic retries.</p><form id="invitation-batch-form"><label class="checkbox-line"><input id="invitation-batch-confirm" type="checkbox" required><span>Send these ${selected.length} invitation emails now.</span></label><div class="invitation-feedback" role="status" aria-live="polite"></div><div class="modal-actions"><button class="button ghost" data-batch-stop type="button">Cancel</button><button class="button gold" type="submit">Send ${selected.length} emails</button></div></form>`);
+  openModal('REVIEW INVITATION EMAILS', '', `<p><strong>${selected.length - resendCount} first invitations · ${resendCount} resends</strong></p><p>Each selected member receives a personal setup link valid for seven days. Members who have already accepted are skipped when their status is checked.</p>${resendCount ? '<p class="notice info">Resending can replace an earlier link. Recipients should use the newest email. A previous delivery marked uncertain may already be in their inbox.</p>' : ''}<p class="muted">Accounts are created automatically when needed. Existing account settings and imported tiers are kept; new accounts show N/A credit hours until classes are approved and use the imported tier, or Tier 1 if none is assigned. New members always use Tier 1.</p><div class="invitation-batch-list"><ul>${selected.map((item, index) => `<li><div><strong>${esc(item.name)}</strong><small>${esc(item.email)}</small><small>${item.operation === 'invite-roster' ? 'First invitation' : item.status === 'expired' ? 'Resend expired link' : item.status === 'delivery_unknown' ? 'Resend · previous delivery uncertain' : 'Resend · not yet accepted'}</small></div><span data-batch-result="${index}">Not sent</span></li>`).join('')}</ul></div><p class="muted">Keep this page open while sending. Closing this window stops the remaining emails; an email already being sent may still arrive. Sending pauses if the email service reaches its limit. There are no automatic retries.</p><form id="invitation-batch-form"><label class="checkbox-line"><input id="invitation-batch-confirm" type="checkbox" required><span>Send these ${selected.length} invitation emails now.</span></label><div class="invitation-feedback" role="status" aria-live="polite"></div><div class="modal-actions"><button class="button ghost" data-batch-stop type="button">Cancel</button><button class="button gold" type="submit">Send ${selected.length} emails</button></div></form>`);
   const form = $('#invitation-batch-form'), feedback = form.querySelector('.invitation-feedback');
   const confirmation = form.querySelector('#invitation-batch-confirm'), submit = form.querySelector('[type="submit"]');
   const stop = form.querySelector('[data-batch-stop]');
@@ -2259,14 +2280,14 @@ async function updateSemesterState() {
 function addMember(prefill = {}) {
   if (appConfig.chapterAuth?.enabled) {
     openModal("PREPARE MEMBER ACCOUNT", "Save the account now. Send its setup link separately when ready.",
-      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32" value="${esc(prefill.badge || "")}"><small>Use a chapter badge number, not a university 900 number. New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier"${prefill.membership === "new_member" ? " disabled" : ""}>${[1, 2, 3, 4, 5].map((t) => `<option value="${t}"${Number(prefill.membership === "new_member" ? 1 : prefill.assignedTier) === t ? " selected" : ""}>${t}</option>`).join("")}</select><small>${prefill.membership === "new_member" ? "New members use Tier 1." : prefill.assignedTier ? "From the Chair's reviewed GPA import." : "Use the page-5 GPA ranges."}</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="${esc(prefill.credits ?? 15)}"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save without sending email</button></div></form>`);
+      `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="100" value="${esc(prefill.name || "")}"></div><div class="field"><label for="member-email">Email for account setup</label><input id="member-email" name="email" type="email" required value="${esc(prefill.email || "")}"></div><div class="field"><label for="member-badge">Badge number (optional)</label><input id="member-badge" name="badge" maxlength="32" value="${esc(prefill.badge || "")}"><small>Use a chapter badge number, not a university 900 number. New members receive a portal sign-in ID automatically.</small></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier"${prefill.membership === "new_member" ? " disabled" : ""}>${[1, 2, 3, 4, 5].map((t) => `<option value="${t}"${Number(prefill.membership === "new_member" ? 1 : prefill.assignedTier) === t ? " selected" : ""}>${t}</option>`).join("")}</select><small>${prefill.membership === "new_member" ? "New members use Tier 1." : prefill.assignedTier ? "From the Chair's reviewed GPA import." : "Use the page-5 GPA ranges."}</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="text" readonly value="N/A" aria-describedby="starting-hours-help"><small id="starting-hours-help">Hours appear after class approval.</small></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save without sending email</button></div></form>`);
     $("#roster-form").onsubmit = async (event) => {
       event.preventDefault();
       const form = event.target, owner = user?.id, epoch = sessionEpoch;
       if (form.dataset.pending) return;
       const body = Object.fromEntries(new FormData(form));
       body.tier = prefill.membership === "new_member" ? 1 : Number(body.tier);
-      body.credits = Number(body.credits);
+      body.credits = Number.isFinite(prefill.credits) ? prefill.credits : 15;
       form.dataset.pending = "true";
       const controls = [...form.querySelectorAll("input,select,button")];
       const disabled = controls.map(control => control.disabled);
@@ -2292,13 +2313,13 @@ function addMember(prefill = {}) {
   openModal(
     "ADD A CHAPTER MEMBER",
     "Use the stable identity ID verified by the university provider.",
-    `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="120"></div><div class="field"><label for="member-email">Contact email</label><input id="member-email" name="email" type="email" required></div><div class="field"><label for="member-provider">Identity provider</label><input id="member-provider" value="Microsoft" disabled><input type="hidden" name="provider" value="microsoft"></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field span2"><label for="member-subject">Verified identity ID</label><input id="member-subject" name="subject" required maxlength="300"><small>Use the verified Microsoft tenant ID and directory object ID: tenant:oid:object-id. An email address or badge number is not an identity ID.</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="number" min="0" max="30" required value="15"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Add member</button></div></form>`,
+    `<form id="roster-form"><div class="form-grid"><div class="field"><label for="member-name">Name</label><input id="member-name" name="name" required maxlength="120"></div><div class="field"><label for="member-email">Contact email</label><input id="member-email" name="email" type="email" required></div><div class="field"><label for="member-provider">Identity provider</label><input id="member-provider" value="Microsoft" disabled><input type="hidden" name="provider" value="microsoft"></div><div class="field"><label for="member-tier">Assigned tier</label><select id="member-tier" name="tier">${[1, 2, 3, 4, 5].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field span2"><label for="member-subject">Verified identity ID</label><input id="member-subject" name="subject" required maxlength="300"><small>Use the verified Microsoft tenant ID and directory object ID: tenant:oid:object-id. An email address or badge number is not an identity ID.</small></div><div class="field"><label for="member-credits">Enrolled credits</label><input id="member-credits" name="credits" type="text" readonly value="N/A"></div></div><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Add member</button></div></form>`,
   );
   $("#roster-form").onsubmit = async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
     body.tier = Number(body.tier);
-    body.credits = Number(body.credits);
+    body.credits = 15;
     try {
       await api("/api/roster", { method: "POST", body });
       modal.close();
@@ -2323,13 +2344,13 @@ async function editMemberAccount(member) {
     const saved = details.member;
     rosterAccounts = [...rosterAccounts.filter(entry => entry.id !== saved.id), saved];
     openModal("MANAGE MEMBER", "Save account changes without sending an email.",
-      `<form id="member-account-form"><div class="form-grid"><div class="field"><label for="account-member-name">Name</label><input id="account-member-name" name="name" required maxlength="100" value="${esc(saved.name)}"></div><div class="field"><label for="account-member-email">Account email</label><input id="account-member-email" type="email" readonly value="${esc(saved.email)}"><small>To fix a typo, use Roster → Invitations → Correct email, then send a fresh invitation.</small></div><div class="field"><label for="account-member-badge">Badge number (optional)</label><input id="account-member-badge" name="badge" maxlength="32" value="${esc(details.badge || "")}"><small>Chapter badge number, not the university 900 number. Portal ID: ${esc(details.loginId || "—")}.</small></div><div class="field"><label for="account-member-tier">Assigned tier</label><select id="account-member-tier" name="tier"${details.membership === "new_member" ? " disabled" : ""}>${[1, 2, 3, 4, 5].map(tier => `<option value="${tier}"${saved.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select>${details.membership === "new_member" ? "<small>New members use Tier 1.</small>" : ""}</div><div class="field"><label for="account-member-credits">Enrolled credits</label><input id="account-member-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(saved.credits)}"${details.creditsManaged ? " readonly" : ""}><small>${details.creditsManaged ? "Total from approved classes. Review their classes to change it." : "Replaced by approved class hours once classes are reviewed."}</small></div></div><p><button class="table-link" type="button" data-action="adjust-points" data-id="${esc(saved.id)}">Adjust approved points</button> · <button class="table-link" type="button" data-action="manage-credits" data-id="${esc(saved.id)}">Manage class credits</button></p><div id="form-error" role="alert"></div><div class="modal-actions"><button type="button" class="button ghost" data-action="close">Cancel</button><button type="submit" class="button gold">Save changes</button></div></form>`);
+      `<form id="member-account-form"><div class="form-grid"><div class="field"><label for="account-member-name">Name</label><input id="account-member-name" name="name" required maxlength="100" value="${esc(saved.name)}"></div><div class="field"><label for="account-member-email">Account email</label><input id="account-member-email" type="email" readonly value="${esc(saved.email)}"><small>To fix a typo, use Roster → Invitations → Correct email, then send a fresh invitation.</small></div><div class="field"><label for="account-member-badge">Badge number (optional)</label><input id="account-member-badge" name="badge" maxlength="32" value="${esc(details.badge || "")}"><small>Chapter badge number, not the university 900 number. Portal ID: ${esc(details.loginId || "—")}.</small></div><div class="field"><label for="account-member-tier">Assigned tier</label><select id="account-member-tier" name="tier"${details.membership === "new_member" ? " disabled" : ""}>${[1, 2, 3, 4, 5].map(tier => `<option value="${tier}"${saved.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select>${details.membership === "new_member" ? "<small>New members use Tier 1.</small>" : ""}</div><div class="field"><label for="account-member-credits">Enrolled credits</label><input id="account-member-credits" name="credits" type="text" readonly value="${details.creditsManaged ? esc(saved.credits) : "N/A"}"><small>${details.creditsManaged ? "Total from approved classes. Review their classes to change it." : "Hours appear after class approval. Use Manage class credits below."}</small></div></div><p><button class="table-link" type="button" data-action="adjust-points" data-id="${esc(saved.id)}">Adjust approved points</button> · <button class="table-link" type="button" data-action="manage-credits" data-id="${esc(saved.id)}">Manage class credits</button></p><div id="form-error" role="alert"></div><div class="modal-actions"><button type="button" class="button ghost" data-action="close">Cancel</button><button type="submit" class="button gold">Save changes</button></div></form>`);
     const form = $("#member-account-form");
     form.onsubmit = async event => {
       event.preventDefault();
       if (form.dataset.pending) return;
       const body = { name: $("#account-member-name").value, badge: $("#account-member-badge").value,
-        tier: Number($("#account-member-tier").value), credits: Number($("#account-member-credits").value), version: details.version };
+        tier: Number($("#account-member-tier").value), credits: saved.credits, version: details.version };
       const controls = [...form.querySelectorAll("input,select,button")];
       const disabled = controls.map(control => control.disabled);
       form.dataset.pending = "true";
@@ -2356,7 +2377,7 @@ function editAcademicSettings(member) {
   openModal(
     "MANAGE MEMBER",
     `Manage ${esc(member.name)}. Tier changes update point targets; previously awarded points stay unchanged.`,
-    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"${member.creditsManaged ? " readonly" : ""}>${member.creditsManaged ? '<small>Total from approved classes. Review class changes in the Classes tab.</small>' : '<small>Existing total is replaced by the sum of approved class hours when the first class is approved.</small>'}</div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="text" readonly value="${member.creditsManaged ? esc(member.credits) : "N/A"}">${member.creditsManaged ? '<small>Total from approved classes. Review class changes in the Classes tab.</small>' : '<small>Hours appear after class approval. Use Manage credits to review classes.</small>'}</div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
   );
   $("#academic-settings-form").onsubmit = async (event) => {
     event.preventDefault();
@@ -2364,7 +2385,7 @@ function editAcademicSettings(member) {
     try {
       await api("/api/roster/" + encodeURIComponent(member.id) + "/academic-settings", {
         method: "POST",
-        body: { tier: Number(values.tier), credits: Number(values.credits) },
+        body: { tier: Number(values.tier), credits: member.credits },
       });
       modal.close();
       await refresh();

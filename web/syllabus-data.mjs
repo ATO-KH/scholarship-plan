@@ -91,7 +91,7 @@ export function ownerClassReviews(state, owner, accountCredits, memberName) {
 export function removalView(state, course, accountCredits) {
   return { classId: course.id, className: course.name, owner: course.owner,
     version: course.pendingRemoval.version, credits: course.approvedCredits, status: "pending",
-    currentAccountCredits: accountCredits,
+    currentAccountCredits: creditsManaged(state, course.owner) ? accountCredits : null,
     projectedAccountCredits: approvedClassCredits(state, course.owner, { classId: course.id, credits: 0 }) };
 }
 export function syllabusView(state, item, accountCredits = null) {
@@ -100,7 +100,7 @@ export function syllabusView(state, item, accountCredits = null) {
   return { id: item.id, classId: item.classId, className: item.className, owner: item.owner,
     status: item.status, version: item.version, credits: item.credits ?? null,
     approvedCredits: course?.approvedCredits ?? null, removalPending: !!course?.pendingRemoval,
-    currentAccountCredits: accountCredits, approvedAccountCredits: approvedClassCredits(state, item.owner),
+    currentAccountCredits: creditsManaged(state, item.owner) ? accountCredits : null, approvedAccountCredits: approvedClassCredits(state, item.owner),
     projectedAccountCredits: item.credits == null ? null : approvedClassCredits(state, item.owner, { classId: item.classId, credits: item.credits }), fileName: item.fileName, mime: item.mime,
     reviewNote: item.reviewNote || "", createdAt: item.createdAt, reviewedAt: item.reviewedAt || null,
     reviewer: item.reviewer || null, history: item.history || [], archived: !!course?.archived,

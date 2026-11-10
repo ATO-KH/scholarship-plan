@@ -1,4 +1,5 @@
 import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
+import { leaderboardScenario } from './leaderboard-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -241,6 +242,7 @@ test("anonymous requests reveal configuration but no member data", async () => {
     "/api/submissions",
     "/api/points",
     "/api/members",
+    "/api/leaderboard",
     "/api/audit",
     "/api/uploads/unknown",
   ]) {
@@ -1216,4 +1218,12 @@ test('review corrections update points and class hours atomically while retainin
   const upload=await c.send('/api/uploads',{name:'correction-syllabus.pdf',mime:'application/pdf',base64:Buffer.from('%PDF-1.4\n%%EOF\n').toString('base64')});
   assert.equal(upload.status,201);
   await reviewCorrectionsScenario((path,body)=>c.send(path,body),{evidenceId:upload.upload.id});
+});
+
+test('authenticated chapter leaderboard reflects corrections and adjustments without exposing academic details', async () => {
+  const c = client();
+  await leaderboardScenario((path, body) => c.send(path, body));
+  await c.send('/api/demo/session', { persona: 'chair' });
+  assert.equal((await c.send('/api/roster/jordan/deactivate', {})).status, 200);
+  assert.ok(!(await c.send('/api/leaderboard')).members.some(row => row.name === 'Jordan Ellis'));
 });

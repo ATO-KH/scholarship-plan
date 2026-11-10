@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Window } from 'happy-dom';
-import { mountCoursePicker } from '../web/profile-ui.mjs';
+import { mountCoursePicker, mountProfile } from '../web/profile-ui.mjs';
 import { mountSyllabusQueue } from '../web/syllabus-ui.mjs';
 
 const source = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
@@ -91,40 +91,36 @@ test('class shortcut preserves the selected approved class but never invents an 
   assert.equal(f.w.$('#date').min, '2026-10-26');
 });
 
-test('activity selection uses the native dropdown and search never chooses an activity automatically', async t => {
+test('activity type is one searchable field and only a listed choice enables its requested fields', async t => {
   const f = fixture(t); await f.open();
-  const select = f.w.$('#activity');
-  assert.equal(select.tagName, 'SELECT');
-  assert.equal(select.required, true);
-  assert.equal(select.value, '');
-  f.fill('#activity-search', 'quiz');
-  assert.deepEqual(Array.from(select.options, option => option.value), ['', 'minor']);
-  assert.equal(select.value, '', 'a single search result still requires an explicit selection');
+  const search = f.w.$('#activity-search');
+  assert.equal(search.list.id, 'activity-types');
+  assert.equal(search.required, true);
+  assert.deepEqual(Array.from(search.list.options, option => option.value), ['Quiz', 'Study']);
+  f.fill('#activity-search', 'qu');
+  assert.equal(f.w.$('#activity').value, '');
+  assert.equal(search.checkValidity(), false);
   assert.equal(f.w.$('#grade'), null);
-  select.value = 'minor'; select.dispatchEvent(new f.w.Event('change', { bubbles: true }));
+  f.fill('#activity-search', 'Quiz');
+  assert.equal(f.w.$('#activity').value, 'minor');
+  assert.equal(search.checkValidity(), true);
   assert.ok(f.w.$('#grade'));
-  assert.equal(f.w.$('#activity-search').value, '');
-  assert.equal(select.options.length, 3);
-  assert.equal(select.value, 'minor');
   assert.equal(f.w.requests.filter(call => call.options?.method === 'POST').length, 0);
 });
 
-test('filtering activity types preserves the selected activity and its entered grade until a new choice', async t => {
+test('typing in the combined activity picker preserves the grade until a different valid activity is chosen', async t => {
   const f = fixture(t); await f.open(); f.complete();
   f.fill('#activity-search', 'missing type');
+  assert.equal(f.w.$('#activity').value, '');
+  assert.equal(f.w.$('#grade').value, '97');
+  assert.equal(f.w.$('#activity-search').checkValidity(), false);
+  f.fill('#activity-search', 'Quiz');
+  assert.equal(f.w.$('#grade').value, '97');
   assert.equal(f.w.$('#activity').value, 'minor');
-  assert.equal(f.w.$('#grade').value, '97');
-  assert.match(f.w.$('#activity-results').textContent, /No matching activity types/);
-  f.fill('#activity-search', 'study');
-  assert.deepEqual(Array.from(f.w.$('#activity').options, option => option.value), ['', 'independent', 'minor']);
-  assert.equal(f.w.$('#grade').value, '97');
-  const enter = new f.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
-  f.w.$('#activity-search').dispatchEvent(enter);
-  assert.equal(enter.defaultPrevented, true, 'Enter in the optional search must not submit the assignment');
-  assert.equal(f.w.document.activeElement, f.w.$('#activity'));
-  f.w.$('#activity').value = 'independent'; f.w.$('#activity').dispatchEvent(new f.w.Event('change', { bubbles: true }));
+  f.fill('#activity-search', 'Study');
   assert.equal(f.w.$('#grade'), null);
   assert.ok(f.w.$('#quantity'));
+  assert.equal(f.w.$('#activity').value, 'independent');
 });
 
 test('closing and reopening restores a draft, but a new session cannot inherit it', async t => {
@@ -472,4 +468,24 @@ test('saving a class continues within the same member’s group before moving to
   assert.equal(container.querySelector('[data-class-owner="first"] .syllabus-review-card').open, false);
   assert.equal(container.querySelector('[data-class-owner="second"] .syllabus-review-card').open, true);
   assert.match(container.querySelector('[data-class-owner="second"] summary').textContent, /c/);
+});
+
+test('starting class totals show N/A and approved zero hours remain a real zero', async t => {
+  const { w } = fixture(t), container = w.$('#main');
+  const options = { esc, loading: () => 'Loading', isCurrent: () => true };
+  await mountProfile(container, { ...options, api: async () => ({ classes: [], accountCredits: 15, approvedCredits: 0, creditsManaged: false }) });
+  assert.match(container.querySelector('.class-credit-total').textContent, /N\/A credit hours/);
+  assert.doesNotMatch(container.querySelector('.class-credit-total').textContent, /15/);
+  await mountProfile(container, { ...options, api: async () => ({ classes: [], accountCredits: 0, approvedCredits: 0, creditsManaged: true }) });
+  assert.match(container.querySelector('.class-credit-total').textContent, /^0 approved credit hours/);
+});
+
+test('reviewed submissions expose a direct correction action only in the Chair view', t => {
+  const { w } = fixture(t);
+  w.eval(extract('function rows(', '\nfunction overview('));
+  const entries = ['pending', 'approved', 'denied'].map((status, index) => ({ id: String(index), owner: 'member', memberName: 'Fictional Member', title: status, status, activity: 'minor', course: 'Math', date: '2026-11-09', awarded: status === 'approved' ? 5 : 0 }));
+  w.$('#main').innerHTML = w.rows(entries, true);
+  assert.deepEqual(Array.from(w.document.querySelectorAll('[data-action="correct-submission"]'), button => button.dataset.id), ['1', '2']);
+  w.$('#main').innerHTML = w.rows(entries, false);
+  assert.equal(w.document.querySelector('[data-action="correct-submission"]'), null);
 });

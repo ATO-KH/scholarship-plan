@@ -3,6 +3,7 @@ import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { creditSummary } from "../credit-data.mjs";
 import { profileView } from "../profile-data.mjs";
+import { leaderboardView } from "../leaderboard-data.mjs";
 import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
@@ -364,6 +365,9 @@ async function handleRequest(req, path) {
       if (user.role !== "member")
         fail(400, "Choose a member view for individual points.");
       return json({ member: user.id, ...totals(state, user) });
+    }
+    if (path === "/api/leaderboard" && req.method === "GET") {
+      return json(leaderboardView(state, sessionMembers.map(member => ({ ...member, active: true })), user.id));
     }
     if (path === "/api/members" && req.method === "GET") {
       chair();

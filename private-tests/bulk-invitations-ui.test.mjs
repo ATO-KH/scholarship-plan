@@ -53,7 +53,7 @@ test('one confirmation invites unprepared and prepared members together without 
   assert.doesNotMatch(f.context.body,/sent@example.test/);
   assert.match(f.context.body,/Accounts are created automatically/);
   assert.match(f.context.body,/Existing account settings and imported tiers are kept/);
-  assert.match(f.context.body,/15 credits/); assert.match(f.context.body,/Tier 1 if none is assigned/);
+  assert.match(f.context.body,/N\/A credit hours until classes are approved/); assert.match(f.context.body,/Tier 1 if none is assigned/);
   assert.match(f.context.body,/seven days/);
   assert.doesNotMatch(f.context.body,/name="(?:tier|credits|email|name)"/,'no per-person preparation form');
   await f.send(); assert.equal(f.requests.length,0,'explicit confirmation required');

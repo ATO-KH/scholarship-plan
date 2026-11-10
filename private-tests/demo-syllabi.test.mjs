@@ -1,3 +1,4 @@
+import { leaderboardScenario } from './leaderboard-scenario.mjs';
 import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
 import test from 'node:test';
@@ -170,4 +171,9 @@ test('sandbox class credit approvals match server totals, replacement and remova
 
 test('sandbox corrections match the live review and class-credit behavior', () => withSandbox(async call => {
   await reviewCorrectionsScenario(call,{file},'test1');
+}));
+
+test('sandbox leaderboard follows live award and privacy rules', () => withSandbox(async call => {
+  assert.equal((await call('/api/leaderboard')).status, 401);
+  await leaderboardScenario(call);
 }));

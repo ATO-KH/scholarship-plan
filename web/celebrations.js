@@ -22,5 +22,53 @@
       if(elapsed<3.2)frame=requestAnimationFrame(tick);else cleanup();
     }frame=requestAnimationFrame(tick);
   }
-  window.atoCelebrate={submission:()=>play('confetti'),goal:(key,approved,goal)=>{if(goal>0&&approved>=goal&&!seen.has(key)){seen.add(key);play('fireworks');}}};
+  function checkpoint({ memberId, role, approved, today, checkpoints = [], semesterKey = '' }) {
+    if (!memberId || role !== 'member' || approved !== 0 || !/^\d{4}-\d{2}-\d{2}$/.test(today || '') ||
+        matchMedia('(prefers-reduced-motion: reduce)').matches || document.hidden) return false;
+    const passed = checkpoints.map(item => item.date).filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date || '') && date < today).sort().at(-1);
+    if (!passed) return false;
+    const key = `ato-checkpoint-tomato:${memberId}:${semesterKey}:${passed}`;
+    if (seen.has(key)) return false;
+    try { if (localStorage.getItem(key)) return false; } catch { /* In-memory guard works when storage is unavailable. */ }
+    seen.add(key);
+    try { localStorage.setItem(key, 'seen'); } catch { /* Do not require browser storage for an animation. */ }
+    stopCurrent();
+    const layer = document.createElement('div');
+    layer.className = 'checkpoint-tomato';
+    layer.setAttribute('aria-hidden', 'true');
+    layer.innerHTML = `<svg class="tomato-flight" viewBox="0 0 120 120" focusable="false">
+      <path d="M60 27C37 15 13 34 13 62c0 30 20 47 47 47s47-17 47-47c0-28-24-47-47-35Z" fill="#d93425"/>
+      <path d="M60 31c-18-3-36 11-36 32 0 20 13 33 28 36-9-11-13-23-10-39 2-14 8-22 18-29Z" fill="#f35b39"/>
+      <path d="m60 38-22-4 16-9-4-13 13 12 18-9-7 16 18 10-24-2-9 13Z" fill="#35753b"/>
+      <path d="M62 28c-1-10 2-17 8-21" fill="none" stroke="#24582b" stroke-width="5" stroke-linecap="round"/>
+      <ellipse cx="34" cy="49" rx="5" ry="10" transform="rotate(32 34 49)" fill="#ffb58c"/>
+    </svg><svg class="tomato-splat" viewBox="0 0 240 240" focusable="false">
+      <g fill="#d93425"><path d="M111 64c-6-23-24-38-32-30-7 7 12 29 6 43-10 9-44-2-45 10-2 12 28 14 29 25-3 16-37 30-30 42 9 12 35-15 49-12 9 8-1 49 12 51 13 2 16-37 28-39 13 0 31 35 42 26 10-9-17-35-12-47 8-11 42-4 44-17 2-12-32-15-36-25-5-10 26-33 14-43-12-10-34 22-45 20-8-5-6-28-17-29-10 0 0 19-7 25Z"/>
+      <ellipse cx="25" cy="55" rx="7" ry="12" transform="rotate(-38 25 55)"/><ellipse cx="209" cy="62" rx="6" ry="10" transform="rotate(38 209 62)"/>
+      <ellipse cx="213" cy="169" rx="11" ry="6" transform="rotate(32 213 169)"/><ellipse cx="59" cy="204" rx="6" ry="10" transform="rotate(32 59 204)"/>
+      <circle cx="124" cy="214" r="6"/><circle cx="18" cy="127" r="5"/><circle cx="166" cy="20" r="5"/></g>
+      <path d="M87 94c6-22 42-23 54-1 12 18-2 39-20 45-23 3-43-22-34-44Z" fill="#f15332"/>
+      <g fill="#ffce8b"><ellipse cx="104" cy="96" rx="3" ry="6" transform="rotate(-28 104 96)"/><ellipse cx="131" cy="114" rx="3" ry="6" transform="rotate(35 131 114)"/><ellipse cx="104" cy="124" rx="3" ry="5"/></g>
+    </svg>`;
+    document.body.append(layer);
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer); layer.remove();
+      document.removeEventListener('visibilitychange', hide);
+      document.removeEventListener('pointerdown', cleanup);
+      document.removeEventListener('keydown', cleanup);
+      window.removeEventListener('hashchange', cleanup);
+      window.removeEventListener('pagehide', cleanup);
+    };
+    const hide = () => { if (document.hidden) cleanup(); };
+    stopCurrent = cleanup;
+    document.addEventListener('visibilitychange', hide);
+    document.addEventListener('pointerdown', cleanup, { once: true });
+    document.addEventListener('keydown', cleanup, { once: true });
+    window.addEventListener('hashchange', cleanup, { once: true });
+    window.addEventListener('pagehide', cleanup, { once: true });
+    timer = setTimeout(cleanup, 2400);
+    return true;
+  }
+  window.atoCelebrate={submission:()=>play('confetti'),goal:(key,approved,goal)=>{if(goal>0&&approved>=goal&&!seen.has(key)){seen.add(key);play('fireworks');}},checkpoint,stop:()=>stopCurrent()};
 })();

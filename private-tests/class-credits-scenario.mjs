@@ -44,7 +44,7 @@ export async function classCreditsScenario(call, evidence, persona = 'alex') {
   await signIn('chair');
   let queue = await call('/api/syllabi');
   const firstItem = queue.syllabi.find(row => row.id === first.class.syllabusId);
-  assert.equal(firstItem.currentAccountCredits, initial.credits);
+  assert.equal(firstItem.currentAccountCredits, null, 'Unapproved starting hours are displayed as N/A without changing the stored scoring baseline.');
   assert.equal(firstItem.projectedAccountCredits, 12.25);
   const approval = await call(`/api/syllabi/${firstItem.id}/review`, { decision: 'approved', note: '', version: firstItem.version });
   assert.equal(approval.status, 200);

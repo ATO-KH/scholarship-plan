@@ -9,6 +9,7 @@ import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustme
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { creditSummary } from "../web/credit-data.mjs";
 import { profileView } from "../web/profile-data.mjs";
+import { leaderboardView } from "../web/leaderboard-data.mjs";
 import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
@@ -2711,6 +2712,16 @@ const server = http.createServer(async (req, res) => {
           ...totals(await stateOf(session.workspace), user, policyDay()),
         });
       }
+      if (path === "/api/leaderboard" && req.method === "GET") {
+        const state = await stateOf(session.workspace);
+        const members = await listMembers(session.workspace, state);
+        const rosterConfig = rosterStatus(env);
+        const emailRoster = rosterConfig.mode === 'public_email_csv';
+        const allowed = new Set(emailRoster ? rosterEmails(state) : state.roster?.ids || []);
+        const eligible = production && rosterConfig.required
+          ? members.filter(member => allowed.has(emailRoster ? member.email?.trim().toLowerCase() : member.id)) : members;
+        return json(res, 200, leaderboardView(state, eligible, user.id));
+      }
       if (path === "/api/members" && req.method === "GET") {
         chair(user);
         const state = await stateOf(session.workspace);
@@ -3393,6 +3404,8 @@ const server = http.createServer(async (req, res) => {
       "/roster-ui.mjs": "roster-ui.mjs",
       "/file-preview-ui.mjs": "file-preview-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
+      "/leaderboard-ui.mjs": "leaderboard-ui.mjs",
+      "/leaderboard-data.mjs": "leaderboard-data.mjs",
       "/badge-ui.mjs": "badge-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",
       "/credit-ui.mjs": "credit-ui.mjs",

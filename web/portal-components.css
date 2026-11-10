@@ -160,6 +160,25 @@
 .calendar-submission.denied { border-left-color: #c66565; }
 .calendar-submission small { display: block; margin-top: 4px; text-transform: capitalize; color: var(--muted); }
 .celebration-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 2000; pointer-events: none; }
+.checkpoint-tomato { position: fixed; inset: 0; z-index: 2000; pointer-events: none; overflow: hidden; }
+.tomato-flight, .tomato-splat { position: absolute; top: 50%; left: 50%; pointer-events: none; }
+.tomato-flight { width: 112px; height: 112px; animation: tomato-throw 700ms ease-in both; }
+.tomato-splat { width: min(72vw, 70vh, 620px); height: auto; animation: tomato-splat 1650ms 680ms ease-out both; }
+@keyframes tomato-throw {
+  0% { opacity: 1; transform: translate(-40vw, 38vh) rotate(-80deg) scale(.18); }
+  65% { opacity: 1; transform: translate(-80%, -110%) rotate(10deg) scale(1); }
+  95% { opacity: 1; transform: translate(-50%, -50%) rotate(35deg) scale(3.3); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(40deg) scale(3.6); }
+}
+@keyframes tomato-splat {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.25); }
+  8% { opacity: .92; transform: translate(-50%, -50%) scale(1.08); }
+  18%, 55% { opacity: .92; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -42%) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .checkpoint-tomato { display: none; }
+}
 
 .mini-calendar-open { cursor: pointer; border: 1px solid var(--line); padding: 12px; }
 .mini-calendar-open:hover { border-color: var(--gold); }
@@ -325,3 +344,66 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 .class-member-heading h3 { margin:0; font-size:20px; }
 .class-member-heading p { margin:4px 0 0; font-size:13px; }
 @media (max-width:600px) { .class-member-heading { align-items:stretch; flex-direction:column; } .class-member-heading button { min-height:44px; } }
+
+.submission-correct { display: block; margin-top: 8px; min-height: 36px; }
+
+.leaderboard-panel { max-width: 960px; margin-inline: auto; }
+.leaderboard-panel > h2 { margin-top: 0; }
+.leaderboard-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
+.leaderboard-toolbar .field { flex: 1 1 220px; margin: 0; }
+.leaderboard-toolbar input { min-height: 44px; }
+.leaderboard-toolbar button { min-height: 44px; }
+.leaderboard-feedback { color: var(--muted); font-size: 14px; }
+.leaderboard-podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: "silver gold bronze"; align-items: end; gap: 12px; margin: 32px 0; }
+.podium-place { min-width: 0; text-align: center; }
+.podium-place-1 { grid-area: gold; --step-height: 160px; }
+.podium-place-2 { grid-area: silver; --step-height: 124px; }
+.podium-place-3 { grid-area: bronze; --step-height: 96px; }
+.podium-names { display: grid; gap: 8px; padding-bottom: 16px; }
+.podium-member { display: grid; justify-items: center; gap: 4px; padding: 8px 4px; overflow-wrap: anywhere; }
+.podium-member > strong { color: var(--medal-name); font-size: 18px; line-height: 1.3; }
+.podium-member.leaderboard-you { outline: 1px solid var(--medal-border); }
+.podium-step { min-height: var(--step-height); padding: 12px 8px; border: 1px solid var(--medal-border); background: var(--medal-bg); color: var(--medal-name); }
+.podium-step h3 { margin: 0; font: 500 40px/1.2 var(--display); color: inherit; }
+.podium-step p { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 4px 8px; margin: 8px 0 0; }
+.podium-step p strong { font: 700 20px/1.4 ui-monospace, monospace; }
+.podium-step p span { font-size: 13px; }
+.leaderboard-list-section h3 { font: 500 20px var(--display); margin: 32px 0 16px; }
+.leaderboard-list { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+.leaderboard-list li { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 16px; border-bottom: 1px solid var(--line); }
+.leaderboard-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+.leaderboard-identity strong { overflow-wrap: anywhere; }
+.leaderboard-points { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+.leaderboard-points strong { font: 600 20px/1.4 ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.leaderboard-points > span { color: var(--muted); font-size: 13px; }
+.medal-gold { --medal-name: #795000; --medal-bg: #fff0c6; --medal-border: #b88c25; }
+.medal-silver { --medal-name: #465166; --medal-bg: #e9edf3; --medal-border: #8791a2; }
+.medal-bronze { --medal-name: #84492a; --medal-bg: #f7e3d5; --medal-border: #b7805d; }
+:root[data-theme="dark"] .medal-gold { --medal-name: #f6d37d; --medal-bg: #392f1c; --medal-border: #b88c25; }
+:root[data-theme="dark"] .medal-silver { --medal-name: #dae1ec; --medal-bg: #303d50; --medal-border: #8791a2; }
+:root[data-theme="dark"] .medal-bronze { --medal-name: #efb88e; --medal-bg: #3e2c24; --medal-border: #b7805d; }
+.leaderboard-you { background: var(--paper); }
+.leaderboard-list .leaderboard-you { box-shadow: inset 3px 0 var(--gold); }
+.leaderboard-you-label { color: var(--muted); font-size: 13px; }
+.leader-honor { display: flex; align-items: center; gap: 24px; padding: 24px; margin: 0 0 24px; border: 1px solid #b88c25; background: #1b3050; color: #fff; }
+.leader-emblem { width: 144px; height: 144px; flex: none; color: #f6d37d; }
+.leader-honor-copy { min-width: 0; }
+.leader-honor .eyebrow { color: #f6d37d; margin: 0 0 8px; }
+.leader-honor h2 { color: #fff; font: 500 clamp(26px, 3vw, 36px)/1.15 var(--display); margin: 0; }
+.leader-honor p:not(.eyebrow) { margin: 12px 0; }
+.leader-honor a, :root[data-theme="dark"] .leader-honor a { display: inline-flex; align-items: center; gap: 12px; min-height: 44px; color: #f6d37d; text-underline-offset: 4px; }
+.leader-honor a:focus-visible { outline: 2px solid #f6d37d; outline-offset: 4px; }
+@media (max-width: 600px) {
+  .leaderboard-podium { gap: 8px; margin: 24px 0; }
+  .podium-member > strong { font-size: 14px; }
+  .podium-step h3 { font-size: 32px; }
+  .podium-step p { flex-direction: column; align-items: center; gap: 0; }
+  .leaderboard-list li { padding: 12px 8px; gap: 16px; }
+  .leaderboard-identity { gap: 8px; }
+  .leader-honor { gap: 16px; padding: 16px; align-items: flex-start; }
+  .leader-emblem { width: 80px; height: 80px; }
+  .leader-honor .eyebrow { font-size: 10px; }
+}
+@media (max-width: 380px) {
+  .leader-honor { flex-direction: column; }
+}

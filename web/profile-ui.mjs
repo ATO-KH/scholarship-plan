@@ -6,8 +6,8 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
   if (!isCurrent()) return;
   const formatHours = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
   const hasHours = value => value !== null && value !== undefined && Number.isFinite(Number(value));
-  const total = hasHours(accountCredits) ? accountCredits : approvedCredits;
-  container.innerHTML = `<h2>My classes</h2><p class="muted">Add each class’s credit hours and syllabus. The Chair approves both before the class’s hours count and assignments unlock.</p>${hasHours(total) ? `<p class="class-credit-total"><strong>${esc(formatHours(total))} approved credit hours</strong>${creditsManaged ? '<br><small>From your approved classes.</small>' : '<br><small>Your current account total stays in place until the Chair approves class credit hours.</small>'}</p>` : ''}<div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
+  const total = creditsManaged ? (hasHours(accountCredits) ? accountCredits : approvedCredits) : null;
+  container.innerHTML = `<h2>My classes</h2><p class="muted">Add each class’s credit hours and syllabus. The Chair approves both before the class’s hours count and assignments unlock.</p><p class="class-credit-total"><strong>${hasHours(total) ? `${esc(formatHours(total))} approved credit hours` : 'N/A credit hours'}</strong><br><small>${creditsManaged ? 'From your approved classes.' : 'Awaiting class approval.'}</small></p><div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
   const list = container.querySelector('.profile-class-list'), editor = container.querySelector('.class-editor'), feedback = container.querySelector('.profile-feedback');
   const reload = () => mountProfile(container, { api, esc, loading, isCurrent, sandbox, config, onSubmitAssignment });
   const disableControls = () => {
