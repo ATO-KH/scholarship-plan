@@ -28,6 +28,7 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
       activityPicker: () => '', wireActivityPicker() {}, loadCoursePicker() {}, updateForm() {},
       uploadEvidence() {}, estimate() {}, submitClaim() {},
     };
+    context.loadSubmissionList = () => context.api('/api/submissions');
     const resolve = () => {
       const values = {
         '/api/me': { user: { id: 'fictional-member', role: 'member', credits: 3 } },

@@ -261,3 +261,6 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
   .calendar-checkpoint-prefix { display: none; }
   .calendar-submission { max-height: 100px; overflow: hidden; }
 }
+
+.submission-pagination { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:16px 0; }
+#current-semester-settings { margin-bottom:32px; }

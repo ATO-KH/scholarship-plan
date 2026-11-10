@@ -7,8 +7,8 @@
     <h1 style="font-size:24px;line-height:1.25">Set up your Scholarship Portal account</h1>
     <p>The Scholarship Chair has invited you to the chapter’s portal. Use it to submit activities, check review decisions, and track your points.</p>
     <p><strong>Username:</strong> {{ .Email }}</p>
-    <p>Click below to choose your password. There is no temporary password.</p>
-    <p style="margin:28px 0"><a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#FDB144;color:#142136;font-weight:bold;text-decoration:none">Set up my account</a></p>
+    <p>Open the portal below, choose your password, and select Save password. Opening this email link does not use it up. There is no temporary password.</p>
+    <p style="margin:28px 0"><a href="{{ .SiteURL }}/account/setup#token_hash={{ .TokenHash }}&amp;type=invite" style="display:inline-block;padding:12px 20px;background:#FDB144;color:#142136;font-weight:bold;text-decoration:none">Set up my account</a></p>
     <p>After you save your password, sign in with it. On that first sign-in, the site will show your <strong>16-word recovery key</strong>. Save it somewhere private and confirm that you saved it. You can use it to reset a forgotten password. Do not share the key or your password.</p>
     <p>For future visits, sign in at <a href="https://scholarship-ato-kh.vercel.app/" style="color:#FDB144">scholarship-ato-kh.vercel.app</a> using your email and the password you chose. A badge number or portal ID assigned by the Chair also works.</p>
     <p style="font-size:14px;color:#c3cbd6">This setup link is personal to you. If it expires or you need help, contact the Scholarship Chair for a new link.</p>

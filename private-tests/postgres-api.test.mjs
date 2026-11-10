@@ -126,9 +126,10 @@ test(
       const id = duplicates.find((r) => r.status === 201).submission.id;
       await request(a, "/api/demo/session", { persona: "chair" });
       const path = `/api/submissions/${id}/review`;
+      const version = (await request(a, path.replace(/\/review$/, ""))).submission.reviewVersion;
       const approvals = await Promise.all([
-        request(a, path, { decision: "approved", points: 5, note: "" }),
-        request(b, path, { decision: "approved", points: 5, note: "" }),
+        request(a, path, { decision: "approved", points: 5, note: "", version }),
+        request(b, path, { decision: "approved", points: 5, note: "", version }),
       ]);
       assert.deepEqual(approvals.map((r) => r.status).sort(), [200, 409]);
       const events = (await request(b, "/api/audit")).events.filter(

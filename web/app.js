@@ -3,7 +3,8 @@ let appConfig = { mode: "demo", providers: [], canvasConfigured: false },
   sessionEpoch = 0,
   csrfToken = null,
   canvasConnected = false,
-  accountToken = null;
+  accountToken = null,
+  accountLink = null;
 const isDemo = () => appConfig.mode === "demo";
 const redact = (value) =>
   JSON.parse(
@@ -39,7 +40,9 @@ let user,
   rosterCandidates = [],
   filter = "all",
   logs = [],
-  busy = false;
+  busy = false,
+  modalRevision = 0,
+  submissionPageIndex = 0;
 const modal = $("#modal"),
   main = $("#main"),
   person = $("#persona");
@@ -231,10 +234,32 @@ function route() {
     p = "overview";
   return p;
 }
+async function loadSubmissionList() {
+  const owner = user?.id, epoch = sessionEpoch;
+  const current = () => user?.id === owner && sessionEpoch === epoch;
+  // A refresh must contain one consistent snapshot, including the calendar and
+  // summary counts. Each transfer is bounded; a concurrent change restarts once.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const items = [];
+    let cursor = null;
+    try {
+      do {
+        if (!current()) throw Error("Account changed. Refresh this view.");
+        const page = await api('/api/submissions' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
+        if (!current()) throw Error("Account changed. Refresh this view.");
+        items.push(...page.submissions);
+        cursor = page.nextCursor;
+      } while (cursor);
+      return { submissions: items };
+    } catch (error) {
+      if (error.status !== 409 || attempt || !current()) throw error;
+    }
+  }
+}
 async function refresh() {
   const account = user, epoch = sessionEpoch;
   const [s, p, me] = await Promise.all([
-    api("/api/submissions"),
+    loadSubmissionList(),
     api(account.role === "chair" ? "/api/members" : "/api/points"),
     api("/api/me"),
   ]);
@@ -248,7 +273,11 @@ async function refresh() {
 function rows(items, chair = false) {
   if (!items.length)
     return `<div class="empty"><h3>${filter === "pending" ? "YOU’RE ALL CAUGHT UP." : "NO SUBMISSIONS HERE YET."}</h3><p>${chair ? "Try another status to see previous decisions." : "Submit an activity to start building your points."}</p>${chair ? "" : newButton()}</div>`;
-  return `<div class="table-wrap"><table class="submission-table"><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${items.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td class="submission-member"><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td class="submission-main"><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>`;
+  const pages = Math.max(1, Math.ceil(items.length / 50));
+  submissionPageIndex = Math.min(submissionPageIndex, pages - 1);
+  const page = items.slice(submissionPageIndex * 50, (submissionPageIndex + 1) * 50);
+  const pagination = pages > 1 ? `<nav class="submission-pagination" aria-label="Submission pages"><button class="button ghost small" data-action="submissions-page" data-page="${submissionPageIndex - 1}" ${submissionPageIndex === 0 ? 'disabled' : ''}>Previous</button><span role="status">${submissionPageIndex * 50 + 1}–${Math.min(items.length, (submissionPageIndex + 1) * 50)} of ${items.length}</span><button class="button ghost small" data-action="submissions-page" data-page="${submissionPageIndex + 1}" ${submissionPageIndex === pages - 1 ? 'disabled' : ''}>Next</button></nav>` : '';
+  return `<div class="table-wrap"><table class="submission-table"><thead><tr>${chair ? "<th>Member</th>" : ""}<th>Activity</th><th>Date</th><th>Status</th><th class="right">Points</th></tr></thead><tbody>${page.map((s) => `<tr class="submission-row" data-action="detail" data-id="${esc(s.id)}">${chair ? `<td class="submission-member"><strong>${esc(s.memberName)}</strong><small>${s.memberTier ? "Tier " + s.memberTier : "Member submission"}</small></td>` : ""}<td class="submission-main"><button class="submission-title" type="button" data-action="detail" data-id="${esc(s.id)}" aria-label="${chair && s.status === "pending" ? "Review" : "Open"} submission: ${esc(s.title)}${chair ? ` by ${esc(s.memberName)}` : ""}">${esc(s.title)}</button><small>${esc(submissionActivity(s).name)} · ${esc(s.course)}</small></td><td>${date(s.date)}</td><td>${status(s.status)}</td><td class="right"><strong>${s.status === "approved" ? "+" + s.awarded : s.status === "denied" ? "—" : money(s.estimate) + "*"}</strong></td></tr>`).join("")}</tbody></table></div>${pagination}`;
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
@@ -585,6 +614,7 @@ function render() {
   )();
 }
 function openModal(title, subtitle, body) {
+  modalRevision++;
   $("#modal-content").innerHTML =
     `<div class="modal-heading"><div><h2>${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ""}</div><button class="close" data-action="close" aria-label="Close dialog">×</button></div>${body}`;
   if (!modal.open) modal.showModal();
@@ -853,6 +883,8 @@ async function submitClaim(e) {
   }
   if (busy) return;
   busy = true;
+  const form = e.target, owner = user?.id, epoch = sessionEpoch;
+  const current = () => form.isConnected && modal.open && user?.id === owner && sessionEpoch === epoch;
   const button = e.submitter || e.target.querySelector('button[type="submit"]');
   button.disabled = true;
   const data = Object.fromEntries(new FormData(e.target));
@@ -865,6 +897,7 @@ async function submitClaim(e) {
   if (data.quantity) data.quantity = Number(data.quantity);
   try {
     await api("/api/submissions", { method: "POST", body: data });
+    if (!current()) return;
     window.atoCelebrate.submission();
     modal.close();
     filter = "pending";
@@ -872,29 +905,32 @@ async function submitClaim(e) {
     await refresh();
     toast("Submission sent. Points will count after chair approval.");
   } catch (err) {
-    formError(err.message);
+    if (current()) formError(err.message);
   } finally {
     busy = false;
     button.disabled = false;
   }
 }
 async function detail(id) {
+  const revision = ++modalRevision, owner = user?.id, epoch = sessionEpoch;
+  const current = () => revision === modalRevision && user?.id === owner && sessionEpoch === epoch;
   try {
     const { submission: s } = await api(
       "/api/submissions/" + encodeURIComponent(id),
     );
+    if (!current()) return;
     const a = submissionActivity(s),
       canReview = user.role === "chair" && s.status === "pending";
     openModal(
       canReview ? "REVIEW SUBMISSION" : "SUBMISSION DETAILS",
       `${esc(s.id)} · ${esc(s.memberName)}`,
-      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}${a.grade || s.syllabus ? `<section id="submission-syllabus">${loading("Loading syllabus reference…", true)}</section>` : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Private preview · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
+      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}${a.grade || s.syllabus ? `<section id="submission-syllabus">${loading("Loading syllabus reference…", true)}</section>` : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Private preview · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${esc(s.id)}" data-version="${esc(s.reviewVersion)}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
     );
     if (canReview) $("#review-form").addEventListener("submit", review);
     evidence(id);
     if (a.grade || s.syllabus) loadSubmissionSyllabus($("#submission-syllabus"), s);
   } catch (e) {
-    toast(e.message);
+    if (current()) toast(e.message);
   }
 }
 async function review(e) {
@@ -903,6 +939,8 @@ async function review(e) {
   const decision = e.submitter.value,
     form = e.target,
     data = Object.fromEntries(new FormData(form));
+  const owner = user?.id, epoch = sessionEpoch;
+  const current = () => form.isConnected && modal.open && user?.id === owner && sessionEpoch === epoch;
   busy = true;
   form.querySelectorAll("button").forEach((b) => (b.disabled = true));
   try {
@@ -912,11 +950,13 @@ async function review(e) {
         method: "POST",
         body: {
           decision,
+          version: form.dataset.version,
           points: data.points === "" ? null : Number(data.points),
           note: data.note,
         },
       },
     );
+    if (!current()) return;
     modal.close();
     await refresh();
     toast(
@@ -925,7 +965,7 @@ async function review(e) {
         : "Denied. The member can see your reason.",
     );
   } catch (err) {
-    formError(err.message);
+    if (current()) formError(err.message);
   } finally {
     busy = false;
     form.querySelectorAll("button").forEach((b) => (b.disabled = false));
@@ -1017,7 +1057,12 @@ async function handleAction(e) {
     else if (action === "close") modal.close();
     else if (action === "detail") await detail(b.dataset.id);
     else if (action === "evidence") await evidence(b.dataset.id);
-    else if (action === "filter") {
+    else if (action === "submissions-page") {
+      submissionPageIndex = Math.max(0, Number(b.dataset.page) || 0);
+      render();
+      main.querySelector('.submission-table')?.scrollIntoView({ block: 'start' });
+    } else if (action === "filter") {
+      submissionPageIndex = 0;
       filter = b.dataset.value;
       render();
     } else if (action === "sample") {
@@ -1090,6 +1135,7 @@ for (const [button, direction] of [["#nav-prev", -1], ["#nav-next", 1]]) {
     });
   });
 }
+modal.addEventListener("close", () => { modalRevision++; });
 modal.addEventListener("click", (e) => {
   if (e.target === modal && !modal.dataset.recoveryLocked) { const box = modal.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) modal.close(); }
 });
@@ -1109,6 +1155,7 @@ async function init(sessionFromLogin = null) {
     if (appConfig.chapterAuth?.enabled && location.pathname.startsWith("/account/")) {
       const fragment = new URLSearchParams(location.hash.slice(1));
       accountToken = fragment.get("access_token");
+      accountLink = fragment.get('token_hash') ? { tokenHash: fragment.get('token_hash'), type: fragment.get('type') } : null;
       history.replaceState(null, "", location.pathname);
       accountSetupPage();
       return;
@@ -1174,7 +1221,7 @@ async function init(sessionFromLogin = null) {
     main.innerHTML = `<div class="workspace-loading" role="status" aria-live="polite">${cross}<p>Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…</p></div>`;
     const [nextRules, nextSubmissions, nextSummary, categoryData, categoryUI] = await Promise.all([
       api("/api/rules"),
-      api("/api/submissions"),
+      loadSubmissionList(),
       api(user.role === "chair" ? "/api/members" : "/api/points"),
       import("/category-data.mjs"),
       import("/category-ui.mjs"),
@@ -1324,8 +1371,8 @@ function accountSetupPage() {
   document.querySelector(".sidebar-bottom").style.display = "none";
   document.querySelector('[data-action="reset"]').hidden = true;
   main.innerHTML = heading("", "Set your password", "This link can be used only for account setup or recovery.") +
-    `<section class="panel login-panel">${accountToken ? '<form id="account-setup"><div class="field"><label for="new-password">New password</label><input id="new-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Save password</button></form>' : '<p>That account link is missing or has expired. Ask the chair for a new invitation or request a password reset.</p><a class="button ghost" href="/">Go to sign in</a>'}</section>`;
-  if (!accountToken) return;
+    `<section class="panel login-panel">${accountToken || accountLink ? '<form id="account-setup"><div class="field"><label for="new-password">New password</label><input id="new-password" name="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirm" type="password" autocomplete="new-password" minlength="12" required></div><div id="form-error" role="alert"></div><button class="button gold" type="submit">Save password</button></form>' : '<p>This link is incomplete, expired, or already used. Open your latest email, or go to Sign in → Forgot password to request a new link.</p><a class="button ghost" href="/">Go to sign in</a>'}</section>`;
+  if (!accountToken && !accountLink) return;
   let setupPending = false;
   $("#account-setup").onsubmit = async (event) => {
     event.preventDefault();
@@ -1338,9 +1385,10 @@ function accountSetupPage() {
     setupPending = true;
     setAuthLoading(true, "Saving your password…");
     try {
-      await api("/api/auth/complete", { method: "POST", body: { accessToken: accountToken, password: values.password } });
+      await api("/api/auth/complete", { method: "POST", body: { ...(accountLink || { accessToken: accountToken }), password: values.password } });
       setAuthLoading(false);
       accountToken = null;
+      accountLink = null;
       history.replaceState(null, "", "/");
       const continueToLogin = () => {
         loginPage();
@@ -1807,13 +1855,41 @@ async function loadRosterSync() {
   }
 }
 
+function mountCurrentSemesterSettings(container, view) {
+  const owner = user.id, epoch = sessionEpoch;
+  const fields = [['startDate', 'Semester start'], ['checkpoint1', 'First checkpoint'], ['checkpoint2', 'Second checkpoint'], ['checkpoint3', 'Third checkpoint'], ['targetDate', 'Final point target'], ['endDate', 'Submissions close']];
+  const values = { ...view.semester, ...Object.fromEntries(view.semester.checkpointDates.map((date, i) => ['checkpoint' + (i + 1), date])) };
+  container.innerHTML = `<h2>EDIT CURRENT SEMESTER</h2><p>Update dates or the semester name. Existing points, classes, evidence and accounts stay in place.</p><form><div class="form-grid"><div class="field span2"><label for="current-semester-name">Semester name</label><input id="current-semester-name" name="name" maxlength="80" required value="${esc(values.name)}"></div>${fields.map(([id, label]) => `<div class="field"><label for="current-semester-${id}">${label}</label><input id="current-semester-${id}" name="${id}" type="date" required value="${esc(values[id] || '')}"></div>`).join('')}</div><p class="semester-settings-feedback" role="status"></p><button class="button gold" type="submit">Save semester settings</button></form><hr class="subtle-rule">`;
+  const form = container.querySelector('form'), feedback = container.querySelector('.semester-settings-feedback');
+  const current = () => container.isConnected && user?.id === owner && sessionEpoch === epoch;
+  let pending = false;
+  form.onsubmit = async event => {
+    event.preventDefault();
+    if (pending) return;
+    pending = true;
+    const values = Object.fromEntries(new FormData(form));
+    const semester = { name: values.name, startDate: values.startDate, targetDate: values.targetDate, endDate: values.endDate, checkpointDates: [values.checkpoint1, values.checkpoint2, values.checkpoint3] };
+    const controls = [...form.querySelectorAll('input,button')];
+    controls.forEach(control => control.disabled = true);
+    feedback.innerHTML = loading('Saving semester settings…', true);
+    try {
+      const saved = await api('/api/semester', { method: 'POST', body: { semester, version: view.version } });
+      if (!current()) return;
+      view = saved;
+      await updateSemesterState();
+      toast('Semester settings saved. Existing records were kept.');
+    } catch (error) { if (current()) feedback.textContent = error.message; }
+    finally { pending = false; controls.forEach(control => control.disabled = false); }
+  };
+}
+
 async function semesterPage() {
   const owner = user.id;
   main.innerHTML =
     heading(
       "",
-      "Semester reset",
-      "Clear the old semester’s academic records while keeping member accounts.",
+      "Semester settings",
+      "Edit the semester calendar, or review a reset before starting the next semester.",
     ) +
     `<div class="page-actions"><button class="button ghost" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button></div><section class="panel" id="semester-panel">${loading("Loading semester…")}</section>`;
   const panel = $("#semester-panel");
@@ -1849,7 +1925,7 @@ async function semesterPage() {
       };
       return;
     }
-    panel.innerHTML = `${reset.status === "completed" ? '<div class="notice info">Cleanup completed. The new semester is active.</div>' : ""}<h2>${esc(active?.name || "Current semester")}</h2><p>Starting a new semester permanently removes submissions, point awards, uploaded evidence, and academic review history from the live portal. Accounts, university identity links, and roster settings stay in place.</p><p class="muted">Separately retained backups expire under the hosting provider’s retention policy. This action cannot be undone in the portal.</p><form id="semester-form"><div class="form-grid"><div class="field span2"><label for="semester-name">New semester name</label><input id="semester-name" name="name" required maxlength="80" placeholder="Spring 2027"></div>${[
+    panel.innerHTML = `<section id="current-semester-settings"></section>${reset.status === "completed" ? '<div class="notice info">Cleanup completed. The new semester is active.</div>' : ""}<h2>${esc(active?.name || "Current semester")}</h2><p>Starting a new semester permanently removes submissions, point awards, uploaded evidence, and academic review history from the live portal. Accounts, university identity links, and roster settings stay in place.</p><p class="muted">Separately retained backups expire under the hosting provider’s retention policy. This action cannot be undone in the portal.</p><form id="semester-form"><div class="form-grid"><div class="field span2"><label for="semester-name">New semester name</label><input id="semester-name" name="name" required maxlength="80" placeholder="Spring 2027"></div>${[
       ["startDate", "Semester start"],
       ["checkpoint1", "First checkpoint"],
       ["checkpoint2", "Second checkpoint"],
@@ -1864,6 +1940,7 @@ async function semesterPage() {
       .join(
         "",
       )}</div><p class="muted">Member tier assignments stay the same. Checkpoint quotas return to the standard plan values; edit them for the new semester under Point rules. Enter the chapter’s approved dates below.</p><button class="button danger" type="submit">Review semester reset</button><p id="semester-error" role="alert"></p></form>`;
+    mountCurrentSemesterSettings(panel.querySelector("#current-semester-settings"), result);
     $("#semester-form").onsubmit = async (event) => {
       event.preventDefault();
       const button = event.target.querySelector('button[type="submit"]');

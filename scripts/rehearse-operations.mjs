@@ -121,9 +121,9 @@ export async function runOperationsRehearsal({ fault = null } = {}) {
             await rm(join(databaseDirectory, 'objects', object.path), { force: true });
             return new Response('{}', { status: 200 });
           }
-          assert.equal(request.method, 'HEAD');
-          assert.equal(route, `/storage/v1/object/fictional-evidence/${object.path}`);
-          return new Response(null, { status: await exists(join(databaseDirectory, 'objects', object.path)) ? 200 : 404 });
+          assert.equal(request.method, 'GET');
+          assert.equal(route, `/storage/v1/object/info/fictional-evidence/${object.path}`);
+          return await exists(join(databaseDirectory, 'objects', object.path)) ? new Response('{}') : new Response(JSON.stringify({code:'NoSuchKey',statusCode:'404'}), {status:400});
         },
       });
     };

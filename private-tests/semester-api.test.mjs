@@ -119,6 +119,90 @@ async function portal(t, extra = {}) {
   return { api, switchTo, editState, directory, env };
 }
 
+test('editing the current semester preserves records and quotas and rejects stale, invalid or unauthorized saves', async t => {
+  const app = await portal(t);
+  await app.switchTo('alex');
+  const initial = (await app.api('/api/semester')).value;
+  assert.equal((await app.api('/api/semester', { semester, version: initial.version })).status, 403);
+  await app.switchTo('chair');
+  const before = {};
+  app.editState(state => { Object.assign(before, structuredClone(state)); });
+  const quotas = (await app.api('/api/checkpoint-quotas')).value;
+  const preview = (await app.api('/api/semester/preview')).value;
+  assert.equal((await app.api('/api/semester', { semester, version: initial.version }, { headers: { 'x-csrf-token': 'wrong' } })).status, 403);
+  assert.equal((await app.api('/api/semester', { semester: { ...semester, endDate: '2026-08-01' }, version: initial.version })).status, 422);
+  const saves = await Promise.all([
+    app.api('/api/semester', { semester, version: initial.version }),
+    app.api('/api/semester', { semester: { ...semester, name: 'Competing edit' }, version: initial.version }),
+  ]);
+  assert.deepEqual(saves.map(result => result.status).sort(), [200, 409]);
+  const saved = saves.find(result => result.status === 200).value;
+  assert.notEqual(saved.version, initial.version);
+  assert.deepEqual((await app.api('/api/semester')).value.semester, saved.semester);
+  const after = {};
+  app.editState(state => { Object.assign(after, structuredClone(state)); });
+  delete before.semester;
+  delete after.semester;
+  delete before.semesterPreview;
+  delete after.semesterPreview;
+  assert.deepEqual(after, before, 'a date edit must not remove or rewrite academic or account records');
+  assert.deepEqual((await app.api('/api/checkpoint-quotas')).value.checkpoints.map(item => item.targets), quotas.checkpoints.map(item => item.targets));
+  assert.equal((await app.api('/api/semester/reset', { confirm: 'DELETE SEMESTER', semester, previewToken: preview.previewToken })).status, 409);
+  const events = (await app.api('/api/audit')).value.events;
+  assert.equal(events.filter(event => event.action === 'semester.settings').length, 1);
+  app.editState(state => { state.semesterReset = { status: 'purging', objects: [], count: 0 }; });
+  assert.equal((await app.api('/api/semester', { semester, version: saved.version })).status, 423);
+});
+
+test('a review must use the latest credit-load estimate shown to the chair', async t => {
+  const app = await portal(t);
+  await app.switchTo('chair');
+  const list = (await app.api('/api/submissions')).value.submissions;
+  const item = list.find(item => item.owner === 'alex' && item.status === 'pending' && item.estimate > 0);
+  assert.ok(item);
+  const path = '/api/submissions/' + item.id;
+  const old = (await app.api(path)).value.submission;
+  const decision = { decision: 'approved', points: Math.floor(old.estimate), note: 'Reviewed against evidence.' };
+  assert.equal((await app.api(path + '/review', decision)).status, 409, 'old clients must reopen the current review');
+  assert.equal((await app.api('/api/roster/alex/academic-settings', { tier: 2, credits: 3 })).status, 200);
+  const current = (await app.api(path)).value.submission;
+  assert.notEqual(current.estimate, old.estimate);
+  assert.notEqual(current.reviewVersion, old.reviewVersion);
+  assert.equal((await app.api(path + '/review', { ...decision, version: old.reviewVersion })).status, 409);
+  assert.equal((await app.api(path)).value.submission.status, 'pending');
+  const awarded = Math.ceil(current.estimate);
+  assert.equal((await app.api(path + '/review', { ...decision, version: current.reviewVersion, points: awarded })).status, 200);
+  assert.equal((await app.api(path)).value.submission.awarded, awarded);
+});
+
+test('a 4,800-submission semester remains readable in bounded pages with member isolation', async t => {
+  const app = await portal(t);
+  await app.switchTo('chair');
+  app.editState(state => {
+    const example = state.submissions[0];
+    state.submissions = Array.from({ length: 4800 }, (_, index) => ({ ...example,
+      id: 'volume-' + String(index).padStart(5, '0'), owner: index % 100 ? 'another-member' : 'alex',
+      title: 'Fictional assignment ' + index, note: 'private member comment '.repeat(40),
+      history: Array.from({ length: 8 }, () => ({ event: 'private academic history '.repeat(30) })),
+    }));
+  });
+  let cursor, seen = new Set();
+  do {
+    const response = await app.api('/api/submissions' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
+    assert.equal(response.status, 200);
+    assert.ok(Buffer.byteLength(JSON.stringify(response.value)) < 500_000);
+    assert.equal(response.value.total, 4800);
+    assert.ok(response.value.submissions.length <= 200);
+    for (const item of response.value.submissions) { assert.ok(!seen.has(item.id)); seen.add(item.id); }
+    cursor = response.value.nextCursor;
+  } while (cursor);
+  assert.equal(seen.size, 4800);
+  await app.switchTo('alex');
+  const member = (await app.api('/api/submissions')).value;
+  assert.equal(member.total, 48);
+  assert.ok(member.submissions.every(item => item.owner === 'alex'));
+});
+
 test("semester reset requires chair, CSRF and a current concrete preview", async (t) => {
   const app = await portal(t);
   await app.switchTo("alex");

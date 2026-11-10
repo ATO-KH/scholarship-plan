@@ -87,13 +87,13 @@ async function providerRequest(ctx, route, { method = 'GET', json, bytes, mime, 
         redirect: 'error', signal: controller.signal,
       }), deadline,
     ]);
-    if (!response.ok) {
-      if (response.status === 404 && missingReturnsNull) return null;
+    const checkMissing = missingReturnsNull && [400, 404].includes(response.status);
+    if (!response.ok && !checkMissing) {
       if (response.status === 404 && missingStatus !== 502) fail('STORAGE_NOT_FOUND', missingStatus, 'Uploaded evidence was not found.');
       if (response.status === 409) fail('STORAGE_CONFLICT', 409, 'The evidence destination already exists.');
       fail('STORAGE_UPSTREAM', 502, 'Private evidence storage could not complete the request.');
     }
-    if (discardSuccess) return Buffer.alloc(0);
+    if (discardSuccess && response.ok) return Buffer.alloc(0);
     const declared = response.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) {
       fail('STORAGE_SIZE', maxBytes === MAX_EVIDENCE_BYTES ? 413 : 502, 'The storage response exceeds the allowed size.');
@@ -109,7 +109,16 @@ async function providerRequest(ctx, route, { method = 'GET', json, bytes, mime, 
       if (length > maxBytes) fail('STORAGE_SIZE', maxBytes === MAX_EVIDENCE_BYTES ? 413 : 502, 'The storage response exceeds the allowed size.');
       chunks.push(Buffer.from(value));
     }
-    return Buffer.concat(chunks, length);
+    const result = Buffer.concat(chunks, length);
+    if (checkMissing) {
+      // Storage can use HTTP 400 for NoSuchKey. A missing bucket, invalid JWT,
+      // generic 400/404, or unreadable error must never prove object deletion.
+      let error;
+      try { error = JSON.parse(result.toString('utf8')); } catch {}
+      if (error?.code === 'NoSuchKey' && String(error.statusCode) === '404') return null;
+      fail('STORAGE_UPSTREAM', 502, 'Private evidence storage could not verify object deletion.');
+    }
+    return result;
   } catch (error) {
     if (error instanceof StorageError) throw error;
     if (expired) fail('STORAGE_TIMEOUT', 504, 'Private evidence storage timed out.');
@@ -254,8 +263,8 @@ export async function deleteStoredEvidenceAndVerify(options) {
   const ctx = context(options);
   const path = objectPath(options.path);
   await removeWithContext(ctx, path);
-  const remaining = await providerRequest(ctx, `/object/${ctx.config.bucket}/${path}`, {
-    method: 'HEAD', missingReturnsNull: true, discardSuccess: true,
+  const remaining = await providerRequest(ctx, `/object/info/${ctx.config.bucket}/${path}`, {
+    method: 'GET', missingReturnsNull: true, discardSuccess: true,
   });
   if (remaining !== null) fail('STORAGE_DELETE_PENDING', 502, 'Evidence deletion could not yet be verified.');
   return { deleted: true };

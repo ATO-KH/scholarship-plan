@@ -3,6 +3,7 @@ const originalFetch = globalThis.fetch;
 const chairId = "aab93409-383f-4d8a-b443-3d940a277153";
 const memberId = "d4dc3984-9c89-4ff7-8075-cbe5b2cd18c4";
 const invitationUsers = new Map();
+const usedSetupLinks = new Set();
 const passwords = new Map([
   [chairId, "correct-test-password"],
   [memberId, "correct-test-password"],
@@ -54,6 +55,15 @@ globalThis.fetch = async (input, options = {}) => {
   if (url.pathname === "/auth/v1/invite")
     return respond(invitationUsers.get(JSON.parse(options.body).email) || { error: "not prepared" });
   if (url.pathname === "/auth/v1/recover") return respond({});
+  if (url.pathname === '/auth/v1/verify') {
+    const body = JSON.parse(options.body);
+    const token = body.token_hash;
+    if (options.method !== 'POST' || !['invite','recovery'].includes(body.type) || token !== 'fictional-member-invitation-hash' || usedSetupLinks.has(token))
+      return respond({code:'otp_expired', message:'Token expired'}, 403);
+    usedSetupLinks.add(token);
+    return respond({access_token:'test-account-token',refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,
+      user:{id:memberId,email:'member@example.edu',email_confirmed_at:'2026-09-29T00:00:00Z'}});
+  }
   if (url.pathname === "/auth/v1/user") {
     const accessToken = new Headers(options.headers).get('authorization')?.replace(/^Bearer /, '');
     const chair = ['test-chair-account-token', 'test-chair-password-token'].includes(accessToken);

@@ -1,4 +1,6 @@
 import { authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./auth-mutation.mjs";
+import { cleanupExpiredAuth } from "./auth-cleanup.mjs";
+import { submissionPage, submissionReviewVersion } from "./submission-list.mjs";
 import { pilotEligible } from "./pilot-access.mjs";
 import { invitationView, invitationList, runInvitation, ROSTER_INVITATION_DEFAULTS } from "./invitations.mjs";
 import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
@@ -28,6 +30,7 @@ import {
   deleteNewPilotAccount,
   sendPasswordReset,
   userForAccountToken,
+  exchangeAccountLink,
   setPasswordWithToken,
   setPasswordByAdmin,
 } from "./chapter-auth.mjs";
@@ -54,6 +57,7 @@ import {
 } from "./storage.mjs";
 import {
   assertAcademicWritesAllowed,
+  validateSemesterSettings,
   semesterResetStatus,
   previewSemesterReset,
   startSemesterReset,
@@ -167,6 +171,9 @@ function semesterSettings(state = {}) {
 function semesterCheckpoints(state) {
   const semester = semesterSettings(state);
   return checkpointQuotaView(state, [...semester.checkpointDates, semester.targetDate]).checkpoints;
+}
+function semesterVersion(state) {
+  return sha(JSON.stringify([state.semesterGeneration || null, semesterSettings(state)]));
 }
 function academicGuard(state, generation) {
   assertAcademicWritesAllowed(state);
@@ -585,9 +592,12 @@ async function issueSession(workspace, userId, previousId = null) {
     .run(session.id, workspace, userId, session.csrf, session.expires);
   return { session, cookie: cookie(sessionCookie, raw) };
 }
+let cleanupTask = null, cleanupNext = 0;
 async function cleanup() {
-  await db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
-  await db.prepare("DELETE FROM transactions WHERE expires<=?").run(Date.now());
+  if (Date.now() < cleanupNext) return;
+  if (!cleanupTask) cleanupTask = cleanupExpiredAuth(db).then(() => { cleanupNext = Date.now() + 30_000; })
+    .finally(() => { cleanupTask = null; });
+  await cleanupTask;
 }
 async function mutate(session, user, fn) {
   return await atomic(async () => {
@@ -1100,6 +1110,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, origin);
     const path = url.pathname;
     if (!["GET", "POST"].includes(req.method)) fail(405, "Method not allowed.");
+    if (path.startsWith('/api/')) await cleanup();
     if (path === "/api/config" && req.method === "GET") {
       const current = await currentSession(req);
       const state = production
@@ -1281,10 +1292,19 @@ const server = http.createServer(async (req, res) => {
       requireOrigin(req);
       if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
       const input = await readBody(req);
-      if (typeof input.accessToken !== "string" || input.accessToken.length > 8192 ||
-          typeof input.password !== "string" || input.password.length < 12 || input.password.length > 1024)
+      if (typeof input.password !== "string" || input.password.length < 12 || input.password.length > 1024)
         fail(422, "Choose a password of at least 12 characters.");
-      const account = await userForAccountToken(env, input.accessToken);
+      let accessToken = input.accessToken;
+      if (input.tokenHash !== undefined) {
+        if (accessToken !== undefined || !['invite', 'recovery'].includes(input.type) ||
+            typeof input.tokenHash !== 'string' || !/^[A-Za-z0-9_-]{16,1024}$/.test(input.tokenHash))
+          fail(422, 'Open the complete account link from your latest email.');
+        await authAttempt('account_link', sha(input.tokenHash), 5);
+        accessToken = await exchangeAccountLink(env, input.tokenHash, input.type);
+      }
+      if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 8192)
+        fail(401, 'This account link has expired or was already used. Request a new one from Sign in → Forgot password.');
+      const account = await userForAccountToken(env, accessToken);
       if (!account) fail(401, "This account link has expired. Request a new one.");
       const binding = await identityMember("chapter", "supabase", account.id);
       const user = binding && await member("chapter", binding.member_id);
@@ -1318,7 +1338,7 @@ const server = http.createServer(async (req, res) => {
         // have already been verified above; update only that identity without
         // changing its provider factors or granting a portal session.
         if (account.hasVerifiedFactors) await setPasswordByAdmin(env, account.id, input.password);
-        else if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id))) throw Error('Unconfirmed password update');
+        else if (!(await setPasswordWithToken(env, accessToken, input.password, account.id))) throw Error('Unconfirmed password update');
       } catch {
         fail(503, "Password update could not be confirmed. Wait two minutes, then try signing in with your new password or request a new reset link.");
       }
@@ -1618,8 +1638,26 @@ const server = http.createServer(async (req, res) => {
         const state = await stateOf(session.workspace);
         return json(res, 200, {
           semester: semesterSettings(state),
+          version: semesterVersion(state),
           reset: semesterResetStatus(state),
         });
+      }
+      if (path === '/api/semester' && req.method === 'POST') {
+        chair(user);
+        if (Object.keys(input).sort().join(',') !== 'semester,version' || typeof input.version !== 'string')
+          fail(422, 'Submit the current semester version and its settings.');
+        const settings = validateSemesterSettings(input.semester);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          if (input.version !== semesterVersion(state)) fail(409, 'Semester settings changed. Reload before saving.');
+          const previous = semesterSettings(state);
+          state.semester = settings;
+          delete state.semesterPreview;
+          await audit(session.workspace, user.name, 'semester.settings', settings.name,
+            JSON.stringify({ previous, current: settings }));
+          return { semester: semesterSettings(state), version: semesterVersion(state) };
+        });
+        return json(res, 200, result);
       }
       if (path === "/api/semester/preview" && req.method === "GET") {
         chair(user);
@@ -2976,20 +3014,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === "/api/submissions" && req.method === "GET") {
         const state = await stateOf(session.workspace);
-        return json(res, 200, {
-          submissions: await Promise.all(
-            state.submissions
-              .filter((s) => user.role === "chair" || s.owner === user.id)
-              .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
-              .map(async (s) => ({
-                ...s,
-                syllabus: submissionSyllabus(state, s),
-                memberName:
-                  (await member(session.workspace, s.owner))?.name ||
-                  "Former member",
-              })),
-          ),
-        });
+        const names = new Map((await db.prepare('SELECT id,name FROM members WHERE workspace=?')
+          .all(session.workspace)).map(member => [member.id, member.name]));
+        return json(res, 200, submissionPage(state, user, names, url.searchParams));
       }
       if (path === "/api/submissions" && req.method === "POST") {
         individual(user);
@@ -3040,6 +3067,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, {
             submission: {
               ...item,
+              reviewVersion: submissionReviewVersion(state, item),
               syllabus: submissionSyllabus(state, item),
               memberName:
                 (await member(session.workspace, item.owner))?.name ||
@@ -3108,6 +3136,8 @@ const server = http.createServer(async (req, res) => {
             const item = ownSubmission(state, user, submissionRoute[1]);
             if (item.status !== "pending")
               fail(409, "This submission has already been reviewed.");
+            if (input.version !== submissionReviewVersion(state, item))
+              fail(409, 'This submission or its point estimate changed. Reopen it and review the current details before deciding.');
             if (!["approved", "denied"].includes(input.decision))
               fail(422, "Choose approve or deny.");
             const note =

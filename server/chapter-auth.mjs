@@ -169,6 +169,17 @@ export async function userForAccountToken(env, accessToken) {
   };
 }
 
+// Called only when the member submits their chosen password, never on a GET
+// or page load. Email security scanners cannot consume a link by previewing it.
+export async function exchangeAccountLink(env, tokenHash, type) {
+  if (!['invite', 'recovery'].includes(type) || typeof tokenHash !== 'string' ||
+      !/^[A-Za-z0-9_-]{16,1024}$/.test(tokenHash)) return null;
+  const { publicClient } = clients(env);
+  const { data, error } = await publicClient.auth.verifyOtp({ token_hash: tokenHash, type });
+  if (error || !data?.session?.access_token || !data.user?.id) return null;
+  return data.session.access_token;
+}
+
 export async function setPasswordWithToken(env, accessToken, password, expectedUserId) {
   if (!expectedUserId) return null;
   const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {

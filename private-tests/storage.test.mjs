@@ -268,17 +268,22 @@ test('provider JSON responses are bounded and delete requests are limited to one
   assert.equal(p.calls.length, 1);
 });
 
-test('permanent deletion requires a follow-up absent-object check; authorization errors cannot prove deletion', async () => {
-  for (const status of [200, 401, 403, 500]) {
-    const p = provider((url, options) => options.method === 'DELETE' ? json([]) :
-      new Response(null, { status }));
-    await assert.rejects(deleteStoredEvidenceAndVerify({ path: finalPath, env, fetchImpl: p.fetchImpl }), StorageError);
+test('permanent deletion recognizes only bounded, explicit NoSuchKey errors', async () => {
+  for (const [status, body] of [[200, {}], [400, {code:'InvalidJWT',statusCode:'401'}], [400, {code:'NoSuchBucket',statusCode:'404'}], [404, {}], [401, {code:'NoSuchKey',statusCode:'404'}], [403, {}], [500, {}]]) {
+    const p = provider((url, options) => options.method === 'DELETE' ? json([]) : json(body, {status}));
+    await assert.rejects(deleteStoredEvidenceAndVerify({path:finalPath, env, fetchImpl:p.fetchImpl}), StorageError);
   }
-  const absent = provider((url, options) => {
-    if (options.method === 'DELETE') return json([]);
-    assert.equal(options.method, 'HEAD');
-    assert.equal(route(url), `/object/${bucket.id}/${finalPath}`);
-    return new Response(null, { status: 404 });
-  });
-  assert.deepEqual(await deleteStoredEvidenceAndVerify({ path: finalPath, env, fetchImpl: absent.fetchImpl }), { deleted: true });
+  for (const status of [400, 404]) {
+    const absent = provider((url, options) => {
+      if (options.method === 'DELETE') return json([]);
+      assert.equal(options.method, 'GET');
+      assert.equal(route(url), `/object/info/${bucket.id}/${finalPath}`);
+      return json({code:'NoSuchKey',statusCode:'404',message:'Object not found'}, {status});
+    });
+    assert.deepEqual(await deleteStoredEvidenceAndVerify({path:finalPath,env,fetchImpl:absent.fetchImpl}), {deleted:true});
+  }
+  for (const body of ['not JSON', 'x'.repeat(32 * 1024 + 1)]) {
+    const p = provider((url, options) => options.method === 'DELETE' ? json([]) : new Response(body,{status:400}));
+    await assert.rejects(deleteStoredEvidenceAndVerify({path:finalPath,env,fetchImpl:p.fetchImpl}), StorageError);
+  }
 });

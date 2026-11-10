@@ -197,7 +197,8 @@ export async function startSemesterReset({ db, workspace, actor, confirm, semest
     // The deletion manifest is stored in the same transaction that withdraws access.
     await save(db, workspace, state);
     await db.prepare('DELETE FROM uploads WHERE workspace=?').run(workspace);
-    await db.prepare("DELETE FROM audit WHERE workspace=? AND (action LIKE 'submission.%' OR action LIKE 'evidence.%' OR action LIKE 'class.%' OR action LIKE 'syllabus.%' OR action='canvas.import' OR action='points.adjustment')").run(workspace);
+    await db.prepare("DELETE FROM audit WHERE workspace=? AND (action LIKE 'submission.%' OR action LIKE 'evidence.%' OR action LIKE 'class.%' OR action LIKE 'syllabus.%' OR action='canvas.import' OR action='points.adjustment' OR action='roster.academic_settings' OR action='roster.tier_import' OR action='roster.tier_staged')").run(workspace);
+    await db.prepare("UPDATE audit SET detail='Account details updated; academic details removed at semester reset.' WHERE workspace=? AND action='roster.account_settings'").run(workspace);
     await db.prepare('INSERT INTO audit(workspace,at,actor,action,subject,detail) VALUES (?,?,?,?,?,?)').run(
       workspace, iso(time), String(actor || 'Scholarship Chair').slice(0, 160), 'semester.reset.start', job.id,
       JSON.stringify({ counts, nextSemester: nextSemester.name }),

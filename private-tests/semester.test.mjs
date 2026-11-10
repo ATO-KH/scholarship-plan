@@ -54,7 +54,7 @@ async function fixture(t, files = [local]) {
       file.created_at ?? new Date(epoch).toISOString(), file.status, file.backend, file.final_path,
     );
   }
-  for (const [action, detail] of [['points.adjustment', 'private academic comment'], ['submission.approved', 'private academic comment'], ['roster.invite', 'retained identity event']]) {
+  for (const [action, detail] of [['points.adjustment', 'private academic comment'], ['submission.approved', 'private academic comment'], ['roster.academic_settings', 'private academic comment'], ['roster.tier_import', 'private academic comment'], ['roster.tier_staged', 'private academic comment'], ['roster.account_settings', 'private academic comment'], ['roster.invite', 'retained identity event']]) {
     await f.db.prepare('INSERT INTO audit(workspace,at,actor,action,subject,detail) VALUES (?,?,?,?,?,?)').run(
       'chapter', new Date(epoch).toISOString(), 'Chair', action, 'member', detail,
     );
@@ -135,6 +135,7 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.equal((await f.db.prepare('SELECT subject FROM identities').all())[0].subject, 'retained-stable-subject');
   const audit = await f.db.prepare('SELECT action,detail FROM audit').all();
   assert.ok(audit.some(item => item.action === 'roster.invite'));
+  assert.ok(audit.some(item => item.action === 'roster.account_settings' && /removed/.test(item.detail)));
   assert.ok(audit.some(item => item.action === 'semester.reset.start'));
   assert.ok(!JSON.stringify(audit).includes('private academic comment'));
   assert.equal((await f.state()).pointAdjustments, undefined);

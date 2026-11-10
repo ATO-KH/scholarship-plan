@@ -147,6 +147,10 @@ function client(server = demo) {
       return csrfToken;
     },
     async send(path, body, extraHeaders = {}) {
+      if (body && /^\/api\/submissions\/[^/]+\/review$/.test(path) && !('version' in body)) {
+        const current = await this.send(path.replace(/\/review$/, ''));
+        body = { ...body, version: current.submission?.reviewVersion };
+      }
       if (this.approvedClassId && body && path === "/api/submissions" && body.classId === undefined)
         body = { ...body, classId: this.approvedClassId };
       if (this.approvedClassId && body?.items && path === "/api/integrations/canvas/import")
