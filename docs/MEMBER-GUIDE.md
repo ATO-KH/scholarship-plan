@@ -72,4 +72,8 @@ Open **Leaderboard** to see active chapter members by approved points, highest f
 
 Tied scores share the same place and medal. For example, two members tied for first share gold, and the next member receives third-place bronze. Zero points does not earn a medal. A first-place member also sees an ATO trophy graphic on their own Overview; joint leaders get a shared-lead message. The leaderboard exposes no email addresses, GPA, tiers, credits, evidence or individual submissions.
 
-The sign-in screen has a short ATO-branded entrance without an added waiting period. A member with exactly zero approved points after a checkpoint date gets a brief tomato throw and splat on Overview, once per passed checkpoint in that browser. It clears automatically or on a click/key press/navigation and never intercepts controls. Browser reduced-motion settings disable these animations. Clearing browser storage allows the tomato effect to play again.
+The portal opens with one ATO-branded loading animation, shown for at least 2.5 seconds while your dashboard loads. It stays on the same screen if loading takes longer. Reduced-motion settings skip the extra animation time.
+
+A member with exactly zero approved points after the first checkpoint gets a tomato barrage on Overview. It starts small and grows each week, increases after the second checkpoint, and doubles weekly after the third, up to 96 tomatoes. Refreshing replays it; ordinary dashboard redraws do not. Splats slowly slide down and fade over roughly 15–16 seconds without blocking clicks or typing. Press **Escape** to clear them early. Navigation and hiding the tab also clear the effect. Reduced-motion settings disable it.
+
+To preview the first-place trophy using fictional data, open the [first-place member demo](https://scholarship-ato-kh.vercel.app/demo/?account=test2#overview).

@@ -4,7 +4,8 @@ let appConfig = { mode: "demo", providers: [], canvasConfigured: false },
   csrfToken = null,
   canvasConnected = false,
   accountToken = null,
-  accountLink = null;
+  accountLink = null,
+  authLoadingStartedAt = null;
 const isDemo = () => appConfig.mode === "demo";
 const redact = (value) =>
   JSON.parse(
@@ -52,6 +53,8 @@ const modal = $("#modal"),
   main = $("#main"),
   person = $("#persona");
 function setAuthLoading(active, message) {
+  if (active && authLoadingStartedAt === null) authLoadingStartedAt = performance.now();
+  if (!active) authLoadingStartedAt = null;
   if (message) $("#auth-loading-message").textContent = message;
   document.body.classList.toggle("signing-in", active);
   document.querySelector(".workspace").inert = active;
@@ -1322,6 +1325,7 @@ modal.addEventListener("cancel", (event) => {
 async function init(sessionFromLogin = null) {
   const initEpoch = sessionEpoch;
   setAuthLoading(true, sessionFromLogin ? "Signing in…" : "Checking sign-in…");
+  const startupReady = window.atoLoading.minimumStartup(authLoadingStartedAt);
   try {
     const accountPath = location.pathname.startsWith("/account/");
     const sessionTask = !sessionFromLogin && !accountPath
@@ -1334,6 +1338,8 @@ async function init(sessionFromLogin = null) {
       accountToken = fragment.get("access_token");
       accountLink = fragment.get('token_hash') ? { tokenHash: fragment.get('token_hash'), type: fragment.get('type') } : null;
       history.replaceState(null, "", location.pathname);
+      await startupReady;
+      if (initEpoch !== sessionEpoch) return;
       accountSetupPage();
       return;
     }
@@ -1346,6 +1352,8 @@ async function init(sessionFromLogin = null) {
       const e = sessionOutcome.error;
       if (e.status !== 401) throw e;
       if (!isDemo()) {
+        await startupReady;
+        if (initEpoch !== sessionEpoch) return;
         loginPage();
         return;
       }
@@ -1366,6 +1374,8 @@ async function init(sessionFromLogin = null) {
     user = result.user;
     if (!isDemo() && user.role === 'member' && (result.recoveryKey || result.recoveryKeyPending)) {
       const key = result.recoveryKey || (await api('/api/account/recovery-key', {method:'POST', body:{}})).recoveryKey;
+      await startupReady;
+      if (initEpoch !== sessionEpoch) return;
       document.body.classList.remove('portal-loading');
       setAuthLoading(false);
       showRecoveryKeyModal(key, () => init({...result, recoveryKey:null, recoveryKeyPending:false}));
@@ -1392,11 +1402,8 @@ async function init(sessionFromLogin = null) {
       ? ""
       : "none";
     document.querySelector('[data-action="reset"]').hidden = !isDemo();
-    document.body.classList.remove("portal-loading");
-    setAuthLoading(false);
-    navigation();
-    const cross = $("#auth-loading .auth-cross").outerHTML;
-    main.innerHTML = `<div class="workspace-loading" role="status" aria-live="polite">${cross}<p>Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…</p></div>`;
+    setAuthLoading(true, `Loading your ${user.role === "chair" ? "Chair workspace" : "member dashboard"}…`);
+    main.replaceChildren();
     const [nextRules, nextSubmissions, nextSummary, categoryData, categoryUI] = await Promise.all([
       api("/api/rules"),
       loadSubmissionList(),
@@ -1404,6 +1411,7 @@ async function init(sessionFromLogin = null) {
       import("/category-data.mjs"),
       import("/category-ui.mjs"),
     ]);
+    await startupReady;
     if (initEpoch !== sessionEpoch) return;
     scoreCategory = categoryData.scoreCategory;
     categoryHint = categoryUI.categoryHint;
@@ -1411,8 +1419,11 @@ async function init(sessionFromLogin = null) {
     submissions = nextSubmissions.submissions;
     if (user.role === "chair") roster = nextSummary.members;
     else points = nextSummary;
+    document.body.classList.remove("portal-loading");
+    setAuthLoading(false);
     render();
   } catch (e) {
+    await startupReady;
     if (initEpoch !== sessionEpoch) return;
     document.body.classList.remove("portal-loading");
     setAuthLoading(false);
@@ -1628,14 +1639,14 @@ if (new URLSearchParams(location.search).get("preview") === "spinner") {
     const cross = $("#auth-loading .auth-cross");
     const controls = document.createElement("div");
     controls.className = "spinner-preview-controls";
-    controls.innerHTML = '<select aria-label="Loading animation"><option value="random">Random selection</option><option value="spin">Spin</option><option value="sequence">Clockwise arm sequence</option></select><button type="button" class="button ghost">Pause animation</button><input type="range" min="0" max="2600" step="1" value="0" aria-label="Animation position">';
+    controls.innerHTML = '<select aria-label="Loading animation"><option value="sequence">Clockwise arm sequence</option><option value="spin">Spin (preview only)</option></select><button type="button" class="button ghost">Pause animation</button><input type="range" min="0" max="2600" step="1" value="0" aria-label="Animation position">';
     const selector = controls.querySelector("select");
     const button = controls.querySelector("button");
     const slider = controls.querySelector("input");
     const updateDuration = () => { slider.max = String(cross.duration); };
     cross.addEventListener("animationchange", updateDuration);
     updateDuration();
-    selector.value = cross.getAttribute("animation") || "random";
+    selector.value = cross.getAttribute("animation") || "sequence";
     selector.onchange = () => {
       cross.setAnimation(selector.value);
       slider.value = "0";

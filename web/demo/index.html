@@ -23,7 +23,28 @@
     <link rel="stylesheet" href="/theme.css" />
     <link rel="stylesheet" href="/portal-components.css" />
   </head>
-  <body>
+  <body class="portal-loading">
+    <div id="auth-loading" class="auth-loading" role="status" aria-live="polite" aria-atomic="true">
+      <div class="auth-loading-content">
+        <span class="startup-chapter" aria-hidden="true">KAPPA ETA · FLORIDA TECH</span>
+        <ato-loading-cross class="auth-cross" animation="sequence" aria-hidden="true">
+          <svg viewBox="-84 -84 168 168" width="152" height="152" focusable="false">
+            <!-- Four identical arms and a fixed ring share the SVG origin. -->
+            <g class="auth-cross-rotor" fill="currentColor">
+              <g><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+              <g transform="rotate(90)"><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+              <g transform="rotate(180)"><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+              <g transform="rotate(270)"><path class="auth-cross-arm" d="M-50.5-75.5H50.5L20.849-31.17A37.5 37.5 0 0 0-20.849-31.17Z" /></g>
+            </g>
+            <circle class="auth-cross-center" cx="0" cy="0" r="26.5" fill="none" stroke="currentColor" stroke-width="10" />
+          </svg>
+        </ato-loading-cross>
+        <div class="startup-wordmark" aria-hidden="true"><strong>ALPHA TAU OMEGA</strong><span>SCHOLARSHIP PORTAL</span></div>
+        <span class="startup-rule" aria-hidden="true"><span></span></span>
+        <p id="auth-loading-message">Opening the demo…</p>
+      </div>
+    </div>
+
     <header class="masthead">
       <div class="brand-interactive">
       <a class="brand" href="#overview" aria-label="ATO Scholarship home"

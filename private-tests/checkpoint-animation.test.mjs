@@ -14,18 +14,50 @@ function fixture(t, reduced = false) {
   return w;
 }
 
-test('tomato plays for zero approved points after a checkpoint, once per member/semester/checkpoint even across reloads', t => {
+test('tomatoes do not repeat on dashboard redraws but replay on refresh, ignoring old browser storage', t => {
   const w = fixture(t);
+  w.localStorage.setItem('ato-checkpoint-tomato:fictional:fall-2026:2026-10-10', 'seen');
   assert.equal(w.atoCelebrate.checkpoint(input), true);
-  assert.equal(w.document.querySelectorAll('.checkpoint-tomato svg').length, 2);
+  assert.ok(w.document.querySelectorAll('.tomato-impact').length > 3);
   assert.equal(w.document.querySelector('.checkpoint-tomato').getAttribute('aria-hidden'), 'true');
   w.document.dispatchEvent(new w.Event('pointerdown'));
+  assert.ok(w.document.querySelector('.checkpoint-tomato'), 'ordinary clicks do not clear lingering splats');
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a' }));
+  assert.ok(w.document.querySelector('.checkpoint-tomato'), 'typing keeps the slow fade playing');
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(w.document.querySelector('.checkpoint-tomato'), null);
   assert.equal(w.atoCelebrate.checkpoint(input), false);
   w.eval(source);
-  assert.equal(w.atoCelebrate.checkpoint(input), false, 'reload must not repeat the same checkpoint');
+  assert.equal(w.atoCelebrate.checkpoint(input), true, 'refresh starts a new barrage');
   assert.equal(w.atoCelebrate.checkpoint({ ...input, today: '2026-11-11' }), true, 'a later missed checkpoint may play once');
   w.dispatchEvent(new w.Event('hashchange'));
+  assert.equal(w.document.querySelector('.checkpoint-tomato'), null);
+});
+
+test('tomatoes grow weekly, jump at checkpoints two and three, then double weekly with a bounded maximum', t => {
+  const checkpoints = ['2026-09-12', '2026-10-10', '2026-11-06', '2026-12-04'].map(date => ({ date }));
+  const examples = [
+    ['2026-09-12', 0], ['2026-09-13', 3], ['2026-09-19', 5],
+    ['2026-10-10', 11], ['2026-10-11', 14], ['2026-10-17', 18],
+    ['2026-11-06', 26], ['2026-11-07', 32], ['2026-11-13', 64],
+    ['2026-11-20', 96], ['2026-12-05', 96],
+  ];
+  for (const [today, count] of examples) {
+    const w = fixture(t);
+    w.atoCelebrate.checkpoint({ ...input, checkpoints, today });
+    assert.equal(w.document.querySelectorAll('.tomato-impact').length, count, today);
+  }
+});
+
+test('the full barrage lingers for its final splat and removes itself without a long-running timer per tomato', t => {
+  const w = fixture(t), timers = [];
+  w.setTimeout = (callback, delay) => { timers.push({ callback, delay }); return 1; };
+  w.clearTimeout = () => {};
+  w.atoCelebrate.checkpoint(input);
+  assert.equal(timers.length, 1);
+  assert.ok(timers[0].delay > 14000 && timers[0].delay < 17000);
+  assert.ok(new Set(Array.from(w.document.querySelectorAll('.tomato-impact'), impact => impact.style.getPropertyValue('--impact-x'))).size > 1);
+  timers[0].callback();
   assert.equal(w.document.querySelector('.checkpoint-tomato'), null);
 });
 

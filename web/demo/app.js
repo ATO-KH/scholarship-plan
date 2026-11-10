@@ -154,13 +154,14 @@ function route() {
     p = "overview";
   return p;
 }
-async function refresh() {
+async function refresh(beforeRender = async () => {}) {
   const account = user;
   const [s, p, me] = await Promise.all([
     api("/api/submissions"),
     api(account.role === "chair" ? "/api/members" : "/api/points"),
     api("/api/me"),
   ]);
+  await beforeRender();
   if (user !== account || me.user?.id !== account.id || me.user.role !== account.role) return;
   user = me.user;
   submissions = s.submissions;
@@ -938,6 +939,17 @@ modal.addEventListener("click", (e) => {
   if (e.target === modal) { const box = modal.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) modal.close(); }
 });
 async function init() {
+  document.body.classList.add('portal-loading');
+  const workspace = document.querySelector('.workspace');
+  workspace.inert = true;
+  workspace.setAttribute('aria-busy', 'true');
+  const startupReady = window.atoLoading.minimumStartup();
+  const reveal = async () => {
+    await startupReady;
+    document.body.classList.remove('portal-loading');
+    workspace.inert = false;
+    workspace.setAttribute('aria-busy', 'false');
+  };
   try {
     const requested = location.pathname.startsWith("/demo/")
       ? demoLogin
@@ -967,9 +979,10 @@ async function init() {
     categoryHint = categoryUI.categoryHint;
     rules = nextRules;
     filter = user.role === "chair" ? "pending" : "all";
-    await refresh();
+    await refresh(reveal);
     registerTools();
   } catch (err) {
+    await reveal();
     main.innerHTML =
       heading(
         "DEMO SERVICE",

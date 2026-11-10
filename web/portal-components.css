@@ -161,20 +161,23 @@
 .calendar-submission small { display: block; margin-top: 4px; text-transform: capitalize; color: var(--muted); }
 .celebration-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 2000; pointer-events: none; }
 .checkpoint-tomato { position: fixed; inset: 0; z-index: 2000; pointer-events: none; overflow: hidden; }
-.tomato-flight, .tomato-splat { position: absolute; top: 50%; left: 50%; pointer-events: none; }
-.tomato-flight { width: 112px; height: 112px; animation: tomato-throw 700ms ease-in both; }
-.tomato-splat { width: min(72vw, 70vh, 620px); height: auto; animation: tomato-splat 1650ms 680ms ease-out both; }
+.tomato-impact { position: absolute; inset: 0; pointer-events: none; }
+.tomato-flight, .tomato-splat { position: absolute; top: var(--impact-y); left: var(--impact-x); pointer-events: none; }
+.tomato-flight { width: var(--tomato-size); height: auto; animation: tomato-throw var(--throw-duration) var(--throw-delay) ease-in both; }
+.tomato-splat { width: clamp(140px, var(--splat-size), 360px); height: auto; animation: tomato-splat var(--splat-duration) var(--impact-delay) linear both; }
 @keyframes tomato-throw {
-  0% { opacity: 1; transform: translate(-40vw, 38vh) rotate(-80deg) scale(.18); }
+  0% { opacity: 1; transform: translate(var(--throw-x), var(--throw-y)) rotate(-80deg) scale(.18); }
   65% { opacity: 1; transform: translate(-80%, -110%) rotate(10deg) scale(1); }
   95% { opacity: 1; transform: translate(-50%, -50%) rotate(35deg) scale(3.3); }
   100% { opacity: 0; transform: translate(-50%, -50%) rotate(40deg) scale(3.6); }
 }
 @keyframes tomato-splat {
-  0% { opacity: 0; transform: translate(-50%, -50%) scale(.25); }
-  8% { opacity: .92; transform: translate(-50%, -50%) scale(1.08); }
-  18%, 55% { opacity: .92; transform: translate(-50%, -50%) scale(1); }
-  100% { opacity: 0; transform: translate(-50%, -42%) scale(1); }
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--splat-angle)) scale(.25); }
+  1% { opacity: .9; transform: translate(-50%, -50%) rotate(var(--splat-angle)) scale(1.08); }
+  3% { opacity: .86; transform: translate(-50%, -50%) rotate(var(--splat-angle)) scale(1); }
+  25% { opacity: .82; transform: translate(-50%, calc(-50% + 3vh)) rotate(var(--splat-angle)) scale(1); }
+  55% { opacity: .62; transform: translate(-50%, calc(-50% + 12vh)) rotate(var(--splat-angle)) scale(1, 1.08); }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--splat-drift)), calc(-50% + var(--splat-drop))) rotate(var(--splat-angle)) scale(1, 1.2); }
 }
 @media (prefers-reduced-motion: reduce) {
   .checkpoint-tomato { display: none; }
@@ -406,4 +409,83 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 }
 @media (max-width: 380px) {
   .leader-honor { flex-direction: column; }
+}
+
+/* One branded startup screen shared by the live portal and fictional demo. */
+.portal-loading .workspace,
+.signed-out .workspace {
+  display: block;
+}
+.portal-loading .sidebar,
+.signed-out .sidebar {
+  display: none;
+}
+.portal-loading main,
+.signed-out main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding-top: clamp(48px, 10vh, 110px);
+}
+.portal-loading .page-heading,
+.signed-out .page-heading {
+  justify-content: center;
+  text-align: center;
+}
+.portal-loading,
+.signing-in {
+  overflow: hidden;
+}
+.auth-loading {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.portal-loading .auth-loading,
+.signing-in .auth-loading {
+  display: flex;
+}
+.auth-loading-content {
+  display: grid;
+  justify-items: center;
+  gap: 22px;
+  text-align: center;
+  animation: portal-arrive 420ms ease-out both;
+}
+.startup-chapter { font: 12px/1.4 ui-monospace, monospace; letter-spacing: .12em; color: var(--muted); }
+.startup-wordmark { display: grid; gap: 6px; }
+.startup-wordmark strong { font: 500 clamp(24px, 5vw, 32px)/1.15 var(--display); letter-spacing: .06em; }
+.startup-wordmark span { font: 11px/1.4 ui-monospace, monospace; letter-spacing: .22em; color: var(--muted); }
+.startup-rule { width: min(220px, 65vw); height: 2px; background: var(--line); overflow: hidden; }
+.startup-rule > span { display: block; width: 40%; height: 100%; background: var(--gold); animation: startup-sweep 1400ms ease-in-out infinite; }
+body:not(.portal-loading):not(.signing-in) > .masthead,
+body:not(.portal-loading):not(.signing-in) > .workspace { animation: portal-arrive 320ms ease-out; }
+@keyframes portal-arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes startup-sweep { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) {
+  .auth-loading-content, .startup-rule > span,
+  body:not(.portal-loading):not(.signing-in) > .masthead,
+  body:not(.portal-loading):not(.signing-in) > .workspace { animation: none; }
+}
+.auth-cross {
+  display: block;
+  width: clamp(104px, 22vw, 152px);
+  aspect-ratio: 1;
+  color: #ff9b26;
+}
+.auth-cross > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.auth-loading p {
+  margin: 0;
+  font: 500 20px var(--display);
+  letter-spacing: .03em;
 }
