@@ -1,5 +1,6 @@
 import { readImage, uploadImage } from './credit-ui.mjs';
 import { mountSyllabusPreview } from './syllabus-ui.mjs';
+import { SYLLABUS_ACCEPT, SYLLABUS_TYPES_LABEL, syllabusMime } from './syllabus-files.mjs';
 
 export async function mountProfile(container, { api, esc, loading, isCurrent, sandbox = false, config = {}, onSubmitAssignment }) {
   const { classes, accountCredits, approvedCredits, creditsManaged } = await api('/api/classes');
@@ -67,7 +68,7 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
     feedback.textContent = '';
     editor.hidden = false;
     const initialHours = hasHours(course?.credits) ? course.credits : hasHours(course?.approvedCredits) ? course.approvedCredits : '';
-    editor.innerHTML = `<h3>${course ? 'Update class' : 'Add class'}</h3>${course?.syllabusId ? '<p class="muted">Upload the syllabus for a new review. Previously approved hours stay in your total until the Chair approves the change.</p>' : ''}<form id="profile-form"><div class="field"><label for="class-name">Class name or code</label><input id="class-name" name="name" required maxlength="80" placeholder="e.g. MTH 2002 · Calculus II" value="${esc(course?.name || '')}"${course ? ' readonly' : ''}></div><div class="field"><label for="class-credits">Credit hours</label><input id="class-credits" name="credits" type="number" inputmode="decimal" min="0" max="30" step="0.01" required placeholder="e.g. 3" value="${esc(String(initialHours))}" aria-describedby="class-credits-help"><small id="class-credits-help">Use the credit hours listed for this class. The Chair will verify them with your syllabus.</small></div><div class="field"><label for="class-syllabus">Syllabus</label><input id="class-syllabus" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" required aria-describedby="class-syllabus-help"><small id="class-syllabus-help">PDF, PNG, or JPEG, up to ${sandbox ? 1 : 5} MB.${sandbox ? ' Use a fictional syllabus in the sandbox.' : ''}</small></div><div class="profile-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" type="button" data-cancel>Cancel</button><button class="button gold" type="submit">Submit class for review</button></div></form>`;
+    editor.innerHTML = `<h3>${course ? 'Update class' : 'Add class'}</h3>${course?.syllabusId ? '<p class="muted">Upload the syllabus for a new review. Previously approved hours stay in your total until the Chair approves the change.</p>' : ''}<form id="profile-form"><div class="field"><label for="class-name">Class name or code</label><input id="class-name" name="name" required maxlength="80" placeholder="e.g. MTH 2002 · Calculus II" value="${esc(course?.name || '')}"${course ? ' readonly' : ''}></div><div class="field"><label for="class-credits">Credit hours</label><input id="class-credits" name="credits" type="number" inputmode="decimal" min="0" max="30" step="0.01" required placeholder="e.g. 3" value="${esc(String(initialHours))}" aria-describedby="class-credits-help"><small id="class-credits-help">Use the credit hours listed for this class. The Chair will verify them with your syllabus.</small></div><div class="field"><label for="class-syllabus">Syllabus</label><input id="class-syllabus" type="file" accept="${SYLLABUS_ACCEPT}" required aria-describedby="class-syllabus-help"><small id="class-syllabus-help">${SYLLABUS_TYPES_LABEL}, up to ${sandbox ? 1 : 5} MB.${sandbox ? ' Use a fictional syllabus in the sandbox.' : ''}</small></div><div class="profile-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" type="button" data-cancel>Cancel</button><button class="button gold" type="submit">Submit class for review</button></div></form>`;
     const form = editor.querySelector('form'), status = form.querySelector('.profile-feedback');
     form.querySelector('[data-cancel]').onclick = () => { editor.hidden = true; editor.replaceChildren(); opener.focus(); };
     form.onsubmit = async event => {
@@ -75,9 +76,9 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
       const creditsInput = form.querySelector('#class-credits'), credits = creditsInput.valueAsNumber;
       if (!Number.isFinite(credits) || credits < 0 || credits > 30 || Math.abs(credits * 100 - Math.round(credits * 100)) > 0.000001) { status.textContent = 'Enter credit hours from 0 to 30, with up to two decimal places.'; creditsInput.focus(); return; }
       let file = form.querySelector('#class-syllabus').files[0];
-      const mime = file?.type || (/\.pdf$/i.test(file?.name || '') ? 'application/pdf' : /\.png$/i.test(file?.name || '') ? 'image/png' : /\.jpe?g$/i.test(file?.name || '') ? 'image/jpeg' : '');
-      if (!file || !['application/pdf', 'image/png', 'image/jpeg'].includes(mime) || file.size > (sandbox ? 1 : 5) * 1024 * 1024) { status.textContent = `Choose a PDF, PNG, or JPEG up to ${sandbox ? 1 : 5} MB.`; return; }
-      if (!file.type) file = new File([file], file.name, { type: mime });
+      const mime = syllabusMime(file);
+      if (!file || !mime || !file.size || file.size > (sandbox ? 1 : 5) * 1024 * 1024) { status.textContent = `Choose ${SYLLABUS_TYPES_LABEL} up to ${sandbox ? 1 : 5} MB.`; return; }
+      if (file.type !== mime) file = new File([file], file.name, { type: mime });
       const name = form.querySelector('#class-name').value.trim();
       const restoreControls = disableControls();
       status.innerHTML = loading('Uploading syllabus…', true);

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { syllabusFixtures } from './syllabus-fixtures.mjs';
 import {
-  MAX_EVIDENCE_BYTES, EVIDENCE_MIME_TYPES, StorageError, storageStatus, verifyStorageConfiguration,
+  MAX_EVIDENCE_BYTES, EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, StorageError, storageStatus, verifyStorageConfiguration,
   createUploadGrant, verifyStoredEvidence, finalizeStoredEvidence, createDownloadGrant, removeStoredEvidence, deleteStoredEvidenceAndVerify,
 } from '../server/storage.mjs';
 
@@ -101,6 +102,36 @@ test('browser upload grant is restricted to one quarantine path and denies overw
   assert.equal(grant.expiresIn, 7200);
   assert.ok(!JSON.stringify(grant).includes(env.SUPABASE_SECRET_KEY));
   await rejects(createUploadGrant({ path: finalPath, env, fetchImpl: p.fetchImpl }), 'STORAGE_PATH', 422);
+});
+
+test('syllabus formats can be enabled without interrupting existing private storage', async () => {
+  const expanded = { ...bucket, allowed_mime_types: [...SYLLABUS_MIME_TYPES] };
+  const p = provider(() => json({ url: `${uploadRoute}?token=temporary-upload-token` }), expanded);
+  assert.deepEqual((await verifyStorageConfiguration({ env, fetchImpl: p.fetchImpl })).mimeTypes, SYLLABUS_MIME_TYPES);
+  await createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: p.fetchImpl });
+  const old = provider(() => assert.fail('unsupported format cannot receive a grant'));
+  await rejects(createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: old.fetchImpl }), 'STORAGE_FILE_TYPE', 503);
+});
+
+test('direct syllabus finalization verifies document bytes and preserves their exact format', async () => {
+  const expanded = { ...bucket, allowed_mime_types: [...SYLLABUS_MIME_TYPES] };
+  for (const file of syllabusFixtures) {
+    let written = false;
+    const p = provider((url, options) => {
+      if (options.method === 'GET') return new Response(file.bytes);
+      if (options.method === 'POST') {
+        assert.equal(route(url), finalRoute);
+        assert.equal(options.headers['Content-Type'], file.mime);
+        assert.deepEqual(options.body, file.bytes); written = true;
+      }
+      return json({});
+    }, expanded);
+    const result = await finalizeStoredEvidence({ path, finalPath, env, expectedMime: file.mime, expectedSize: file.bytes.length, fetchImpl: p.fetchImpl });
+    assert.equal(result.mime, file.mime); assert.equal(written, true);
+    const invalid = provider(() => new Response('Not a Word file'), expanded);
+    await rejects(finalizeStoredEvidence({ path, finalPath, env, expectedMime: syllabusFixtures[0].mime, expectedSize: 15, fetchImpl: invalid.fetchImpl }), 'STORAGE_FILE_TYPE', 422);
+    assert.equal(invalid.calls.some(call => call.method === 'POST'), false);
+  }
 });
 
 test('object references reject traversal, foreign URLs, malformed IDs and unsafe segments before network access', async () => {

@@ -56,7 +56,10 @@
         <button class="brand-spin" type="button" aria-label="Spin the Maltese cross" title="Click to spin; keep clicking to add speed"><span class="brand-spin-art" aria-hidden="true"></span></button>
       </div>
       <div class="header-right">
-        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to light mode" aria-pressed="true">Light mode</button>
+        <div id="theme-toggle" class="theme-switch" role="group" aria-label="Color theme">
+          <label title="Light mode"><input type="radio" name="portal-theme" value="light" aria-label="Light mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></label>
+          <label title="Dark mode"><input type="radio" name="portal-theme" value="dark" aria-label="Dark mode" checked><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14A8.7 8.7 0 0 1 10 3.5 8.8 8.8 0 1 0 20.5 14Z"/></svg></label>
+        </div>
         <span class="term">FALL 2026</span
         ><button class="account-button" data-action="account" hidden>
           <span class="avatar"></span

@@ -25,13 +25,15 @@ Use the email on your chapter account, your assigned portal ID, or a badge numbe
 
 Add the class, its credit hours and its syllabus in **My classes**. The Scholarship Chair must approve the syllabus before you can submit a major, minor, lab or other graded assignment for that class. Replacing a syllabus starts a new review.
 
+Syllabi can be PDF, Word (.docx or .doc), ODT, RTF, TXT, PNG, or JPEG files, up to 5 MB. PDFs and images open inside the portal. For other documents, select **Download syllabus** to open the file in your document app. The syllabus is available only to you and the Chair.
+
 **Can I finish a submission later?**
 
 **Keep draft & close** retains one unfinished submission in the current tab. Opening **New submission** restores it, including verified evidence. **Start over** clears the draft. Reloading, closing the tab, signing out or changing semesters clears it; drafts are not saved to your account or browser storage. A failed submission keeps your entries available to correct and retry.
 
 **What should my evidence show?**
 
-Follow the instructions shown for your selected activity. Make the relevant assignment, date, result or attendance easy to read. Upload only the information needed for the Chair to review that claim. Live uploads accept PDF, PNG and JPEG files up to 5 MB; profile pictures use images.
+Follow the instructions shown for your selected activity. Make the relevant assignment, date, result or attendance easy to read. Upload only the information needed for the Chair to review that claim. Assignment evidence accepts PDF, PNG and JPEG files up to 5 MB; profile pictures use images.
 
 **How do my credit hours change?**
 

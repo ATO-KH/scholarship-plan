@@ -1,6 +1,7 @@
 import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { leaderboardScenario } from './leaderboard-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
+import { syllabusFixtures } from './syllabus-fixtures.mjs';
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -801,6 +802,32 @@ test("independent demo browsers cannot observe one another's mutations or upload
     (await b.send(`/api/submissions/${created.submission.id}`)).status,
     404,
   );
+});
+
+test('document syllabi upload, attach to classes and download privately without broadening assignment evidence', async () => {
+  const c = client();
+  await c.send('/api/demo/session', { persona: 'alex' });
+  for (const file of syllabusFixtures) {
+    const uploaded = await c.send('/api/uploads', { name: file.name, mime: file.mime, base64: file.bytes.toString('base64') });
+    assert.equal(uploaded.status, 201, JSON.stringify(uploaded));
+    const created = await c.send('/api/classes', { name: `Syllabus ${file.name}`, credits: 3, evidenceId: uploaded.upload.id });
+    assert.equal(created.status, 201, JSON.stringify(created));
+    const path = `/api/uploads/${uploaded.upload.id}/preview`;
+    const download = await c.send(path);
+    assert.equal(download.headers.get('content-type'), file.mime);
+    assert.match(download.headers.get('content-disposition'), /^attachment;/);
+    assert.deepEqual(download.bytes, file.bytes);
+    const submission = await c.send('/api/submissions', { ...claim, activity: 'office', evidenceId: uploaded.upload.id });
+    assert.equal(submission.status, 422);
+    assert.match(submission.error, /Assignment evidence/);
+    await c.send('/api/demo/session', { persona: 'jordan' });
+    assert.equal((await c.send(path)).status, 404);
+    await c.send('/api/demo/session', { persona: 'chair' });
+    const evidence = await c.send(`/api/syllabi/${created.class.syllabusId}/evidence`);
+    assert.equal(evidence.status, 200); assert.equal(evidence.mime, file.mime);
+    assert.equal((await c.send(path)).status, 200);
+    await c.send('/api/demo/session', { persona: 'alex' });
+  }
 });
 
 test("uploaded proof is an attachment visible only to its owner and their chair", async () => {

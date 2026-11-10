@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
+import { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, mediaMime, validFileBytes } from '../web/syllabus-files.mjs';
+export { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES } from '../web/syllabus-files.mjs';
 
 export const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
-export const EVIDENCE_MIME_TYPES = Object.freeze(['application/pdf', 'image/png', 'image/jpeg']);
 const JSON_LIMIT = 32 * 1024;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
@@ -142,10 +143,11 @@ async function assertPrivateBucket(ctx) {
   const types = bucket?.allowed_mime_types;
   if (bucket?.id !== ctx.config.bucket || bucket.public !== false ||
       Number(bucket.file_size_limit) !== MAX_EVIDENCE_BYTES || !Array.isArray(types) ||
-      types.length !== EVIDENCE_MIME_TYPES.length || !EVIDENCE_MIME_TYPES.every(type => types.includes(type))) {
-    fail('STORAGE_BUCKET', 503, 'Evidence storage must use a private bucket limited to PDF, PNG and JPEG files of at most 5 MiB.');
+      !EVIDENCE_MIME_TYPES.every(type => types.includes(type)) ||
+      types.some(type => !SYLLABUS_MIME_TYPES.includes(type)) || new Set(types).size !== types.length) {
+    fail('STORAGE_BUCKET', 503, 'File storage must be private, limited to supported syllabus formats and at most 5 MiB.');
   }
-  return { private: true, maxBytes: MAX_EVIDENCE_BYTES, mimeTypes: [...EVIDENCE_MIME_TYPES] };
+  return { private: true, maxBytes: MAX_EVIDENCE_BYTES, mimeTypes: [...types] };
 }
 
 export async function verifyStorageConfiguration(options = {}) {
@@ -169,7 +171,9 @@ function signedURL(ctx, raw, route) {
 export async function createUploadGrant(options) {
   const ctx = context(options);
   const path = objectPath(options.path, 'quarantine');
-  await assertPrivateBucket(ctx);
+  const bucket = await assertPrivateBucket(ctx);
+  if (options.mime && !bucket.mimeTypes.includes(options.mime))
+    fail('STORAGE_FILE_TYPE', 503, 'This file format is not enabled in storage yet. Please try again shortly.');
   const route = `/object/upload/sign/${ctx.config.bucket}/${path}`;
   const result = await providerJSON(ctx, route, { method: 'POST', json: {} });
   const url = signedURL(ctx, result?.url, route);
@@ -177,17 +181,17 @@ export async function createUploadGrant(options) {
     headers: { 'x-upsert': 'false' }, expiresIn: 7200 };
 }
 
-function detectedMime(bytes) {
-  if (bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) return 'application/pdf';
-  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  fail('STORAGE_FILE_TYPE', 422, 'Evidence must contain a PDF, PNG or JPEG file.');
+async function detectedMime(bytes, expectedMime) {
+  const media = mediaMime(bytes);
+  if (media) return media;
+  if (await validFileBytes(bytes, expectedMime)) return expectedMime;
+  fail('STORAGE_FILE_TYPE', 422, 'The file contents do not match a supported file format. Export the document as PDF and try again.');
 }
 
 async function readEvidence(ctx, options) {
   const path = objectPath(options.path);
-  if (options.expectedMime !== undefined && !EVIDENCE_MIME_TYPES.includes(options.expectedMime)) {
-    fail('STORAGE_FILE_TYPE', 422, 'Choose a PDF, PNG or JPEG evidence file.');
+  if (options.expectedMime !== undefined && !SYLLABUS_MIME_TYPES.includes(options.expectedMime)) {
+    fail('STORAGE_FILE_TYPE', 422, 'Choose a supported evidence or syllabus file.');
   }
   if (options.expectedSize !== undefined && (!Number.isInteger(options.expectedSize) || options.expectedSize < 1 || options.expectedSize > MAX_EVIDENCE_BYTES)) {
     fail('STORAGE_SIZE', 422, 'Evidence must be between 1 byte and 5 MiB.');
@@ -195,7 +199,7 @@ async function readEvidence(ctx, options) {
   const bytes = await providerRequest(ctx, `/object/authenticated/${ctx.config.bucket}/${path}`, {
     maxBytes: MAX_EVIDENCE_BYTES, missingStatus: 404,
   });
-  const mime = detectedMime(bytes);
+  const mime = await detectedMime(bytes, options.expectedMime);
   if ((options.expectedSize !== undefined && bytes.length !== options.expectedSize) ||
       (options.expectedMime !== undefined && mime !== options.expectedMime)) {
     fail('STORAGE_METADATA', 422, 'The uploaded evidence does not match the selected file.');

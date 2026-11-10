@@ -1,4 +1,5 @@
 import { correctInvitationEmail, emailCorrectionVersion } from './roster-emails.mjs';
+import { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../web/syllabus-files.mjs';
 import { rosterDirectory, rosterEmails } from './roster-directory.mjs';
 import { authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./auth-mutation.mjs";
 import { cleanupExpiredAuth } from "./auth-cleanup.mjs";
@@ -777,7 +778,7 @@ async function getUpload(id, session, user, ownerOnly = false) {
     fail(404, "Evidence file not found.");
   return upload;
 }
-function validUpload(input) {
+async function validUpload(input) {
   const name =
     typeof input.name === "string"
       ? basename(input.name.replaceAll("\\", "/"))
@@ -786,8 +787,8 @@ function validUpload(input) {
       : "";
   if (!name || name.length > 150)
     fail(422, "Choose a file name of at most 150 characters.");
-  if (!["application/pdf", "image/png", "image/jpeg"].includes(input.mime))
-    fail(422, "Only PDF, PNG and JPEG evidence files are accepted.");
+  if (!SYLLABUS_MIME_TYPES.includes(input.mime))
+    fail(422, `Choose ${SYLLABUS_TYPES_LABEL}.`);
   if (typeof input.base64 !== "string" || input.base64.length % 4 !== 0)
     fail(422, "The file encoding is invalid.");
   if (input.base64.length > Math.ceil((5 * 1024 * 1024) / 3) * 4)
@@ -798,16 +799,8 @@ function validUpload(input) {
   if (!bytes.length) fail(422, "Choose a nonempty evidence file.");
   if (bytes.length > 5 * 1024 * 1024)
     fail(413, "Evidence must be no larger than 5 MiB.");
-  const matches =
-    input.mime === "application/pdf"
-      ? bytes.subarray(0, 5).toString() === "%PDF-"
-      : input.mime === "image/png"
-        ? bytes
-            .subarray(0, 8)
-            .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-        : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
-  if (!matches)
-    fail(422, "The file contents do not match its declared PDF or image type.");
+  if (!await validFileBytes(bytes, input.mime))
+    fail(422, "The file contents do not match a supported file format. Export the document as PDF and try again.");
   return { name, bytes, mime: input.mime };
 }
 function validateRoster(input) {
@@ -1937,7 +1930,7 @@ const server = http.createServer(async (req, res) => {
         const updated = await mutate(session, user, async state => {
           academicGuard(state, generation);
           const upload = await getUpload(input.evidenceId, session, user, true);
-          if (!["application/pdf", "image/png", "image/jpeg"].includes(upload.mime)) fail(422, "Upload a PDF, PNG or JPEG syllabus.");
+          if (!SYLLABUS_MIME_TYPES.includes(upload.mime)) fail(422, `Upload ${SYLLABUS_TYPES_LABEL} as your syllabus.`);
           state.classRecords ||= [];
           state.syllabi ||= [];
           let course = input.classId && state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived);
@@ -2419,7 +2412,7 @@ const server = http.createServer(async (req, res) => {
         if (
           !name ||
           name.length > 150 ||
-          !["application/pdf", "image/png", "image/jpeg"].includes(
+          !SYLLABUS_MIME_TYPES.includes(
             input.mime,
           ) ||
           !Number.isInteger(input.size) ||
@@ -2428,7 +2421,7 @@ const server = http.createServer(async (req, res) => {
         )
           fail(
             422,
-            "Choose a PDF, PNG or JPEG evidence file of at most 5 MiB.",
+            `Choose ${SYLLABUS_TYPES_LABEL} of at most 5 MiB.`,
           );
         const id = randomUUID();
         const path = `quarantine/${session.workspace}/${user.id}/${id}`;
@@ -2456,7 +2449,7 @@ const server = http.createServer(async (req, res) => {
             );
         });
         try {
-          const grant = await createUploadGrant({ path, env });
+          const grant = await createUploadGrant({ path, mime: input.mime, env });
           await assertActiveSession(session, user);
           academicGuard(await stateOf(session.workspace), generation);
           return json(res, 201, {
@@ -2578,7 +2571,7 @@ const server = http.createServer(async (req, res) => {
         const generation = await academicSnapshot(session, requestGeneration);
         if (directUploads)
           fail(422, "Use the direct evidence upload workflow.");
-        const file = validUpload(input);
+        const file = await validUpload(input);
         const id = randomUUID();
         const filename = `${id}.bin`;
         await writeFile(resolve(filesDir, filename), file.bytes, {
@@ -2629,7 +2622,7 @@ const server = http.createServer(async (req, res) => {
       const uploadRoute = path.match(/^\/api\/uploads\/([a-f0-9-]{36})(\/preview)?$/);
       if (uploadRoute && req.method === "GET") {
         const upload = await getUpload(uploadRoute[1], session, user);
-        const inline = uploadRoute[2] === "/preview";
+        const inline = uploadRoute[2] === "/preview" && EVIDENCE_MIME_TYPES.includes(upload.mime);
         if (upload.backend === "supabase") {
           const grant = await createDownloadGrant({
             path: upload.final_path,
@@ -3151,8 +3144,10 @@ const server = http.createServer(async (req, res) => {
         else evidence = (await getUpload(evidenceId, session, user, true)).id;
         const result = await mutate(session, user, async (state, user) => {
           academicGuard(state, generation);
-          if (evidence !== "sample")
-            await getUpload(evidence, session, user, true);
+          if (evidence !== "sample") {
+            const upload = await getUpload(evidence, session, user, true);
+            if (!EVIDENCE_MIME_TYPES.includes(upload.mime)) fail(422, "Assignment evidence must be a PDF, PNG or JPEG file.");
+          }
           const item = newSubmission(
             claim(input, state, user, evidence),
             user,
@@ -3401,6 +3396,7 @@ const server = http.createServer(async (req, res) => {
       "/profile-data.mjs": "profile-data.mjs",
       "/syllabus-data.mjs": "syllabus-data.mjs",
       "/syllabus-ui.mjs": "syllabus-ui.mjs",
+      "/syllabus-files.mjs": "syllabus-files.mjs",
       "/roster-ui.mjs": "roster-ui.mjs",
       "/file-preview-ui.mjs": "file-preview-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",

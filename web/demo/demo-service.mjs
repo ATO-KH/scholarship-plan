@@ -4,6 +4,7 @@ import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-dat
 import { creditSummary } from "../credit-data.mjs";
 import { profileView } from "../profile-data.mjs";
 import { leaderboardView } from "../leaderboard-data.mjs";
+import { SYLLABUS_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../syllabus-files.mjs';
 import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
@@ -38,23 +39,18 @@ const json = (data, status = 200) =>
 const fail = (status, message) => {
   throw Object.assign(Error(message), { status });
 };
-function sandboxSyllabusFile(file) {
-  const message = "Choose a PDF, PNG, or JPEG syllabus under 1 MB for the sandbox.";
+async function sandboxSyllabusFile(file) {
+  const message = `Choose ${SYLLABUS_TYPES_LABEL} up to 1 MB for the sandbox.`;
   if (!file || typeof file.name !== "string" || !file.name.trim() || file.name.length > 200 ||
       typeof file.dataUrl !== "string" || file.dataUrl.length > 1400000 ||
-      !["application/pdf", "image/png", "image/jpeg"].includes(file.mime) ||
+      !SYLLABUS_MIME_TYPES.includes(file.mime) ||
       !Number.isInteger(file.size) || file.size <= 0 || file.size > 1048576) fail(422, message);
-  const match = file.dataUrl.match(/^data:(application\/pdf|image\/png|image\/jpeg);base64,([A-Za-z0-9+/]+={0,2})$/);
+  const match = file.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/);
   if (!match || match[1] !== file.mime) fail(422, message);
   let bytes;
   try { bytes = atob(match[2]); } catch { fail(422, message); }
   if (bytes.length !== file.size || btoa(bytes) !== match[2]) fail(422, message);
-  const signatures = {
-    "application/pdf": [37, 80, 68, 70, 45],
-    "image/png": [137, 80, 78, 71, 13, 10, 26, 10],
-    "image/jpeg": [255, 216, 255],
-  };
-  if (!signatures[file.mime].every((byte, index) => bytes.charCodeAt(index) === byte)) fail(422, message);
+  if (!await validFileBytes(Uint8Array.from(bytes, char => char.charCodeAt(0)), file.mime)) fail(422, message);
   return { name: file.name.trim(), mime: file.mime, size: file.size, dataUrl: file.dataUrl };
 }
 function quotaMember(state, member) {
@@ -196,7 +192,7 @@ async function handleRequest(req, path) {
     }
     if (path === "/api/classes" && req.method === "POST") {
       memberClasses();
-      const name = classInput(input), credits = classCredits(input), file = sandboxSyllabusFile(input.file);
+      const name = classInput(input), credits = classCredits(input), file = await sandboxSyllabusFile(input.file);
       state.classRecords ||= [];
       state.syllabi ||= [];
       let course = input.classId ? state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived) : null;
