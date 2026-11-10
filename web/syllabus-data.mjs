@@ -30,6 +30,44 @@ export function refreshPendingCreditEstimates(state, owner, factor) {
   for (const item of state.submissions || []) if (item.owner === owner && item.status === "pending" && Number.isFinite(item.base))
     item.estimate = Math.round(item.base * factor * 100) / 100;
 }
+// One decision path for the live portal and its fictional demonstration.
+// Corrections replace the current award; they never add a second set of hours.
+export function applySyllabusDecision(state, syllabus, course, input, { correction = false, reviewer, at, newVersion }) {
+  if (!syllabus || !course || course.archived || course.syllabusId !== syllabus.id || course.pendingRemoval ||
+      syllabus.version !== input.version || (correction ? !['approved', 'denied'].includes(syllabus.status) : syllabus.status !== 'pending'))
+    fail('This class changed or was already reviewed. Reload its current details.', 409);
+  if (!['approved', 'denied'].includes(input.decision)) fail('Choose approve or deny.');
+  const note = typeof input.note === 'string' ? input.note.trim() : '';
+  const credits = input.credits === undefined ? syllabus.credits : classCredits(input);
+  const changedHours = credits !== syllabus.credits;
+  if (note.length > 1000 || ((correction || changedHours || input.decision === 'denied') && note.length < 5))
+    fail('Explain the correction, changed hours, or denial in a note of 5–1,000 characters.');
+  if (input.decision === 'denied' && changedHours) fail('Approve the class to change its credit hours.');
+  const before = { status: syllabus.status, credits: syllabus.credits ?? null, approvedCredits: course.approvedCredits ?? null,
+    note: syllabus.reviewNote || '', reviewer: syllabus.reviewer || null, at: syllabus.reviewedAt || null };
+  let total = null;
+  if (input.decision === 'approved') total = approveClassCredits(state, course, credits);
+  else if (correction && syllabus.status === 'approved') {
+    course.approvedCredits = null;
+    state.classCreditsManaged ||= {};
+    state.classCreditsManaged[course.owner] = true;
+    total = approvedClassCredits(state, course.owner);
+  }
+  if (changedHours) syllabus.submittedCredits ??= syllabus.credits;
+  Object.assign(syllabus, { status: input.decision, credits, reviewNote: note, reviewer, reviewedAt: at, version: newVersion() });
+  syllabus.history ||= [];
+  syllabus.history.push({ correction, before, status: syllabus.status, credits, approvedCredits: course.approvedCredits ?? null, note, reviewer, at });
+  course.version = newVersion();
+  state.memberProfiles ||= {};
+  (state.memberProfiles[course.owner] ||= { courses: [] }).version = newVersion();
+  return { total };
+}
+export function ownerClassReviews(state, owner, accountCredits, memberName) {
+  return { owner,
+    syllabi: (state.syllabi || []).filter(row => row.owner === owner).map(row => ({ ...syllabusView(state, row, accountCredits), memberName })).filter(row => row.current),
+    removals: (state.classRecords || []).filter(row => row.owner === owner && !row.archived && row.pendingRemoval)
+      .map(row => ({ ...removalView(state, row, accountCredits), memberName })) };
+}
 export function removalView(state, course, accountCredits) {
   return { classId: course.id, className: course.name, owner: course.owner,
     version: course.pendingRemoval.version, credits: course.approvedCredits, status: "pending",
@@ -42,10 +80,10 @@ export function syllabusView(state, item, accountCredits = null) {
   return { id: item.id, classId: item.classId, className: item.className, owner: item.owner,
     status: item.status, version: item.version, credits: item.credits ?? null,
     approvedCredits: course?.approvedCredits ?? null, removalPending: !!course?.pendingRemoval,
-    currentAccountCredits: accountCredits,
+    currentAccountCredits: accountCredits, approvedAccountCredits: approvedClassCredits(state, item.owner),
     projectedAccountCredits: item.credits == null ? null : approvedClassCredits(state, item.owner, { classId: item.classId, credits: item.credits }), fileName: item.fileName, mime: item.mime,
     reviewNote: item.reviewNote || "", createdAt: item.createdAt, reviewedAt: item.reviewedAt || null,
-    reviewer: item.reviewer || null, archived: !!course?.archived,
+    reviewer: item.reviewer || null, history: item.history || [], archived: !!course?.archived,
     current: !!course && course.syllabusId === item.id && !course.archived };
 }
 export function classView(state, owner, accountCredits = null) {

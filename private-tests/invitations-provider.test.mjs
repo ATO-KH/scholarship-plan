@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { invitationAccountByEmail, prepareInvitationAccount, sendInvitationAccount, verifyPassword, setPasswordByAdmin } from "../server/chapter-auth.mjs";
+import { invitationAccountByEmail, invitationAccountsById, prepareInvitationAccount, sendInvitationAccount, verifyPassword, setPasswordByAdmin } from "../server/chapter-auth.mjs";
 
 const env = {
   SUPABASE_URL: "https://invitation-test.supabase.co",
@@ -30,7 +30,7 @@ test("provider lookup filters server-side and requires one exact email match", a
       { id, email: email.toUpperCase(), email_confirmed_at: "2026-10-01" },
     ] });
   };
-  assert.deepEqual(await invitationAccountByEmail(env, email), { id, email, confirmed: true, invitationProof: null });
+  assert.deepEqual(await invitationAccountByEmail(env, email), { id, email, confirmed: true, invitationProof: null, confirmedAt: "2026-10-01T00:00:00.000Z", linkSentAt: null });
   assert.equal(calls, 1);
   globalThis.fetch = async () => reply({ users: [{ id, email }, { id, email }] });
   await assert.rejects(invitationAccountByEmail(env, email), /matched safely/);
@@ -117,4 +117,36 @@ test("ordinary password verification and updates also receive a bounded provider
   assert.equal(await setPasswordByAdmin(env, id, "new-fictional-password"), id);
   assert.equal(signals.length, 2);
   assert.notEqual(signals[0], signals[1]);
+});
+
+test('acceptance lookup paginates once for bound members and returns no unrelated account data', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  const secondId = 'aadf192d-7b32-42d1-ab6f-a63ce8f0a1b4', calls = [];
+  globalThis.fetch = async (input, options) => {
+    const url = new URL(input); calls.push(Number(url.searchParams.get('page')));
+    assert.equal(url.searchParams.get('per_page'), '1000'); assert.ok(options.signal); assert.equal(options.redirect, 'error');
+    return reply({ users: calls.length === 1 ? [
+      ...Array.from({length:999}, (_, index) => ({ id: `unrelated-${index}`, email:'private@example.test', private:'must not return' })),
+      { id, email, email_confirmed_at:'2026-10-01', access_token:'must not return', user_metadata:{private:true} },
+    ] : [{ id: secondId, email:'second@example.edu', invited_at:'2026-10-01', confirmation_sent_at:'2026-10-03' }] });
+  };
+  const accounts = await invitationAccountsById(env, [{id,email}, {id:secondId,email:'second@example.edu'}]);
+  assert.deepEqual(calls, [1,2]); assert.equal(accounts.size, 2);
+  assert.equal(accounts.get(id).confirmedAt, '2026-10-01T00:00:00.000Z');
+  assert.equal(accounts.get(secondId).linkSentAt, '2026-10-03T00:00:00.000Z');
+  assert.doesNotMatch(JSON.stringify([...accounts.values()]), /must not return|access_token|user_metadata|unrelated/);
+  const before = calls.length; assert.equal((await invitationAccountsById(env, [])).size,0); assert.equal(calls.length,before);
+});
+
+test('acceptance lookup fails closed on incomplete pages and never matches a changed email or deleted account', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => reply({users:[{id,email:'different@example.edu'}]});
+  assert.equal((await invitationAccountsById(env,[{id,email}])).size,0);
+  globalThis.fetch = async () => reply({users:[{id,email,deleted_at:'2026-10-01'}]});
+  assert.equal((await invitationAccountsById(env,[{id,email}])).size,0);
+  let calls=0;
+  globalThis.fetch = async () => ++calls === 1 ? reply({users:Array.from({length:1000},(_,index)=>({id:`other-${index}`}))}) : reply({},503);
+  await assert.rejects(invitationAccountsById(env,[{id,email}]), /could not be checked/);
+  globalThis.fetch = async () => reply({users:[{id,email},{id,email}]});
+  await assert.rejects(invitationAccountsById(env,[{id,email}]), /changed while checking/);
 });

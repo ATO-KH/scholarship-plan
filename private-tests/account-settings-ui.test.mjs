@@ -24,7 +24,7 @@ function fixture({ newMember = false } = {}) {
   const submit = { disabled: false }, controls = [...Object.values(fields), submit];
   const form = { dataset: {}, isConnected: true, querySelectorAll: () => controls, querySelector: () => feedback };
   const context = {
-    user: { id: "chair", role: "chair" }, sessionEpoch: 1,
+    rosterAccounts: [], user: { id: "chair", role: "chair" }, sessionEpoch: 1,
     appConfig: { chapterAuth: { enabled: true } }, isDemo: () => false,
     esc: value => String(value ?? ""), loading: () => "loading", rules: { checkpoints: [{ targets: [30, 50, 70, 90, 110] }] },
     modal: { open: true, addEventListener: (event, callback) => closeListeners.push(callback), close() {

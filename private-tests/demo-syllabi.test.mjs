@@ -1,3 +1,4 @@
+import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -164,4 +165,9 @@ test('sandbox invalid or oversized syllabus cannot create a partial class', () =
 
 test('sandbox class credit approvals match server totals, replacement and removal rules', () => withSandbox(async call => {
   await classCreditsScenario(call, { file }, 'test1');
+}));
+
+
+test('sandbox corrections match the live review and class-credit behavior', () => withSandbox(async call => {
+  await reviewCorrectionsScenario(call,{file},'test1');
 }));

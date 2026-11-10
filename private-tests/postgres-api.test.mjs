@@ -137,8 +137,16 @@ test(
           event.subject === id && event.action === "submission.approved",
       );
       assert.equal(events.length, 1);
+      const reviewed = (await request(a, `/api/submissions/${id}`)).submission;
+      const corrections = await Promise.all([
+        request(a, `/api/submissions/${id}/revise`, {decision:'approved',points:7,note:'Corrected calculation',version:reviewed.reviewVersion}),
+        request(b, `/api/submissions/${id}/revise`, {decision:'approved',points:7,note:'Corrected calculation',version:reviewed.reviewVersion}),
+      ]);
+      assert.deepEqual(corrections.map(result=>result.status).sort(),[200,409]);
+      const corrected=(await request(a, `/api/submissions/${id}`)).submission;
+      assert.equal(corrected.awarded,7); assert.equal(corrected.history.filter(event=>event.correction).length,1);
       await request(a, "/api/demo/session", { persona: "alex" });
-      assert.equal((await request(b, "/api/points")).approved, 23);
+      assert.equal((await request(b, "/api/points")).approved, 25);
       await request(a, "/api/logout", {});
       assert.equal((await request(b, "/api/session")).status, 401);
       // A private schema must not be available through Supabase's public API roles.

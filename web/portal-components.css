@@ -290,3 +290,23 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
   .review-workflow .heading-actions, .review-workflow .heading-actions .button { width: 100%; }
   #claim-form .modal-actions .button { flex: 1 1 100%; }
 }
+.roster-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 20px; }
+.roster-tabs [aria-pressed="true"] { background: var(--navy, #162a42); color: #fff; border-color: var(--navy, #162a42); }
+.roster-member-table td { vertical-align: top; }
+.roster-row-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.roster-access-menu summary, .roster-office-note summary { cursor: pointer; font-size: 13px; }
+.roster-access-menu .table-link { display: block; margin-top: 12px; }
+.roster-office-note { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 20px; }
+.invitation-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); margin: 18px 0; }
+.invitation-summary > span { padding: 16px; font-size: 12px; }
+.invitation-summary strong { display: block; font-size: 24px; line-height: 1.4; }
+.invitation-table td { vertical-align: top; }
+.invitation-table td:last-child .table-link { display: block; margin-bottom: 10px; }
+.invitation-table td:nth-child(3) { max-width: 260px; }
+.class-review-history { padding: 12px 0; border-top: 1px solid var(--line); margin-bottom: 16px; }
+.class-review-history summary { cursor: pointer; }
+.class-review-history small { display: block; margin: 4px 0; }
+.class-review-result:not(:empty) { padding: 12px; border-left: 3px solid var(--navy, #162a42); background: var(--paper); }
+@media (max-width: 640px) { .invitation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .roster-tabs .button { flex: 1; } }
+
+:root[data-theme="dark"] .roster-tabs [aria-pressed="true"] { border-color: var(--gold); background: var(--navy); color: #fff; }

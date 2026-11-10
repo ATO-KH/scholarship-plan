@@ -1,3 +1,4 @@
+import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -1206,4 +1207,13 @@ test("custom grade categories require a syllabus while non-grade activities rema
   const upload = await c.send("/api/uploads", { name: "class-credits.pdf", mime: "application/pdf", base64: Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64") });
   assert.equal(upload.status, 201);
   await classCreditsScenario((path, body) => c.send(path, body), { evidenceId: upload.upload.id });
+});
+
+
+test('review corrections update points and class hours atomically while retaining history and rejecting stale decisions', async () => {
+  const c=client();
+  await c.send('/api/demo/session',{persona:'alex'});
+  const upload=await c.send('/api/uploads',{name:'correction-syllabus.pdf',mime:'application/pdf',base64:Buffer.from('%PDF-1.4\n%%EOF\n').toString('base64')});
+  assert.equal(upload.status,201);
+  await reviewCorrectionsScenario((path,body)=>c.send(path,body),{evidenceId:upload.upload.id});
 });

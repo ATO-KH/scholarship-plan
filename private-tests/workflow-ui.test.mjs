@@ -288,3 +288,65 @@ test('class decisions preserve the search and open the next pending class after 
   assert.equal(container.querySelector('details').open, true);
   assert.match(container.querySelector('summary').textContent, /History/);
 });
+
+test('class approval advances immediately from its saved response without reloading the queue or awaiting other panels', async t => {
+  const { w }=fixture(t), container=w.document.createElement('section'); w.document.body.append(container);
+  const rows=[
+    {id:'a',classId:'a',owner:'member',className:'Calculus',memberName:'Member One',credits:3,approvedCredits:null,approvedAccountCredits:0,currentAccountCredits:15,projectedAccountCredits:3,status:'pending',version:'a1'},
+    {id:'b',classId:'b',owner:'member',className:'History',memberName:'Member One',credits:3,approvedCredits:null,approvedAccountCredits:0,currentAccountCredits:15,projectedAccountCredits:3,status:'pending',version:'b1'},
+  ];
+  let reads=0, saves=0, refreshed=false; const unrelated=deferred();
+  await mountSyllabusQueue(container,{api:async(path,options)=>{
+    if(!options) { if(path !== '/api/syllabi') return {}; reads++; return {syllabi:rows}; }
+    saves++; assert.equal(options.body.credits,3); assert.equal(options.body.version,'a1');
+    return {member:{id:'member',credits:3},classReviews:{owner:'member',removals:[],syllabi:[
+      {...rows[0],status:'approved',version:'a2',approvedCredits:3,approvedAccountCredits:3,currentAccountCredits:3},
+      {...rows[1],approvedAccountCredits:3,currentAccountCredits:3,projectedAccountCredits:6},
+    ]}};
+  },esc,loading:()=>'',isCurrent:()=>container.isConnected,onReviewed:()=>{refreshed=true;return unrelated.promise;}});
+  await container.querySelector('form').onsubmit({preventDefault(){},submitter:{value:'approved'}});
+  assert.equal(reads,1); assert.equal(saves,1); assert.equal(refreshed,true);
+  assert.equal(container.querySelectorAll('.syllabus-review-card').length,1);
+  assert.equal(container.querySelector('.syllabus-review-card').open,true);
+  assert.match(container.querySelector('.class-credit-change').textContent,/3 → 6/);
+  assert.equal(container.querySelector('[value="approved"]').disabled,false);
+  unrelated.resolve();
+});
+
+test('class corrections are explicit, require a reason, and submit the reviewed hours and version once', async t => {
+  const {w}=fixture(t), container=w.document.createElement('section'); w.document.body.append(container);
+  const item={id:'a',classId:'a',owner:'member',className:'Calculus',memberName:'Member One',credits:3,approvedCredits:3,approvedAccountCredits:15,currentAccountCredits:15,projectedAccountCredits:15,status:'approved',version:'a2'};
+  const calls=[]; const saving=deferred();
+  await mountSyllabusQueue(container,{api:async(path,options)=>{
+    if(!options) return {syllabi:[item]}; calls.push({path,body:options.body}); return saving.promise;
+  },esc,loading:()=>'',isCurrent:()=>container.isConnected,selectedFilter:'all',ownerFilter:'member'});
+  const form=container.querySelector('form'); assert.equal(form.hidden,true);
+  container.querySelector('[data-correct-class]').click(); assert.equal(form.hidden,false);
+  form.querySelector('[name="credits"]').value='4'; form.querySelector('[name="credits"]').dispatchEvent(new w.Event('input'));
+  assert.match(form.querySelector('.class-credit-change').textContent,/15 → 16/);
+  const event={preventDefault(){},submitter:{value:'approved'}};
+  await form.onsubmit(event); assert.equal(calls.length,0);
+  form.querySelector('textarea').value='Corrected syllabus hours';
+  const work=form.onsubmit(event); await form.onsubmit(event); assert.equal(calls.length,1);
+  assert.equal(calls[0].path,'/api/syllabi/a/revise'); assert.equal(calls[0].body.version,'a2'); assert.equal(calls[0].body.credits,4);
+  saving.resolve({classReviews:{owner:'member',syllabi:[{...item,credits:4,version:'a3'}],removals:[]},member:{credits:16}}); await work;
+  assert.match(container.querySelector('.class-review-result').textContent,/correction saved/);
+  await form.onsubmit(event); assert.equal(calls.length,1,'saved form cannot replay');
+});
+
+test('approved submission offers an explicit correction and saves replacement points without advancing the pending queue', async t => {
+  const {w}=fixture(t); w.user={id:'chair',role:'chair'};
+  const item={id:'done',owner:'member',activity:'minor',title:'Reviewed quiz',course:'History',date:'2026-11-09',status:'approved',awarded:4,estimate:5,base:5,grade:95,history:[{event:'Approved · 4 points',at:'2026-11-09',note:'First decision'}],reviewVersion:'fresh-version'};
+  w.api=async(path,options)=>{w.requests.push({path,options});return options ? {submission:{...item,awarded:6},points:{approved:6}} : {submission:item};};
+  await w.detail('done'); assert.ok(w.$('[data-action="correct-submission"]')); assert.equal(w.$('#review-form'),null);
+  assert.match(w.$('.history').textContent,/First decision/);
+  await w.detail('done',true);
+  const form=w.$('#review-form'); assert.equal(form.dataset.correction,'true'); assert.equal(form.querySelector('[name="points"]').value,'4');
+  assert.equal(form.querySelector('[name="reviewNext"]'),null);
+  form.querySelector('[name="points"]').value='6'; form.querySelector('textarea').value='Corrected arithmetic';
+  w.submissions=[item]; w.roster=[{id:'member',approved:4}];
+  await w.review({preventDefault(){},target:form,submitter:{value:'approved'}});
+  const sent=w.requests.find(row=>row.options);
+  assert.equal(sent.path,'/api/submissions/done/revise'); assert.equal(sent.options.body.version,'fresh-version');
+  assert.equal(sent.options.body.points,6); assert.equal(w.roster[0].approved,6); assert.equal(w.modal.open,false);
+});

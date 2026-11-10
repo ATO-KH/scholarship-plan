@@ -3,7 +3,7 @@ import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { creditSummary } from "../credit-data.mjs";
 import { profileView } from "../profile-data.mjs";
-import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, approveClassCredits, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
 import {
@@ -65,6 +65,13 @@ function quotaMember(state, member) {
     goal: checkpoints.at(-1).targets[member.tier - 1],
     checkpoint: checkpoint.targets[member.tier - 1], checkpointDate: checkpoint.date };
 }
+function classReviewResult(state, target) {
+  const member = quotaMember(state, target);
+  return { classReviews: ownerClassReviews(state, target.id, member.credits, target.name),
+    member: { ...member, ...totals(state, member) },
+    pendingEstimates: state.submissions.filter(row => row.owner === target.id && row.status === 'pending').map(row => ({ id: row.id, estimate: row.estimate })) };
+}
+const reviewVersion = item => JSON.stringify(item);
 // Keep the tab's read/validate/write operations ordered so two stale reviews
 // cannot overwrite each other between sessionStorage reads.
 let requests = Promise.resolve();
@@ -264,7 +271,7 @@ async function handleRequest(req, path) {
       Object.assign(course, { version: crypto.randomUUID(), updatedAt: new Date().toISOString(), removalReview: { decision: input.decision, note, reviewer: user.name, reviewedAt: new Date().toISOString() } });
       bumpProfile(course.owner);
       await save(session);
-      return json({ classId: course.id, decision: input.decision, ...classView(state, course.owner, quotaMember(state, target).credits) });
+      return json({ classId: course.id, decision: input.decision, ...classView(state, course.owner, quotaMember(state, target).credits), ...classReviewResult(state, target) });
     }
     if (path === "/api/syllabi" && req.method === "GET") {
       chair();
@@ -272,35 +279,27 @@ async function handleRequest(req, path) {
       return json({ syllabi: (state.syllabi || []).map(item => ({ ...syllabusView(state, item, owners.get(item.owner)?.credits ?? null), memberName: owners.get(item.owner)?.name || "Member" })).filter(item => item.current).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         removals: (state.classRecords || []).filter(row => !row.archived && row.pendingRemoval).map(row => ({ ...removalView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Member" })) });
     }
-    const syllabusRoute = path.match(/^\/api\/syllabi\/([a-f0-9-]{36})\/(evidence|review)$/);
+    const syllabusRoute = path.match(/^\/api\/syllabi\/([a-f0-9-]{36})\/(evidence|review|revise)$/);
     if (syllabusRoute) {
       const item = state.syllabi?.find(row => row.id === syllabusRoute[1]);
       if (!item || (user.role !== "chair" && item.owner !== user.id)) fail(404, "Syllabus not found.");
       if (syllabusRoute[2] === "evidence" && req.method === "GET")
         return json({ name: item.fileName, mime: item.mime, previewUrl: item.file.dataUrl, downloadUrl: item.file.dataUrl });
-      if (syllabusRoute[2] === "review" && req.method === "POST") {
+      if (["review", "revise"].includes(syllabusRoute[2]) && req.method === "POST") {
         chair();
-        if (item.version !== input.version || item.status !== "pending" || !syllabusView(state, item).current || syllabusView(state, item).removalPending)
-          fail(409, "This syllabus changed or has already been reviewed. Reload the list.");
-        if (!["approved", "denied"].includes(input.decision)) fail(422, "Choose approve or deny.");
-        const note = typeof input.note === "string" ? input.note.trim() : "";
-        if (note.length > 1000 || (input.decision === "denied" && note.length < 5))
-          fail(422, "Add a reason for a denial (5–1,000 characters).");
         const course = state.classRecords.find(row => row.id === item.classId && row.owner === item.owner);
-        if (input.decision === "approved") {
-          const total = approveClassCredits(state, course, item.credits);
+        const { total } = applySyllabusDecision(state, item, course, input, { correction: syllabusRoute[2] === 'revise', reviewer: user.name, at: new Date().toISOString(), newVersion: () => crypto.randomUUID() });
+        if (total !== null) {
           state.creditOverrides ||= {};
           state.creditOverrides[item.owner] = total;
           refreshPendingCreditEstimates(state, item.owner, multiplier({ credits: total }));
         }
-        const now = new Date().toISOString();
-        Object.assign(item, { status: input.decision, reviewNote: note, reviewer: user.name, reviewedAt: now, version: crypto.randomUUID() });
-        Object.assign(course, { version: crypto.randomUUID(), updatedAt: now });
-        bumpProfile(item.owner);
         await save(session);
-        return json({ syllabus: syllabusView(state, item, quotaMember(state, sessionMembers.find(row => row.id === item.owner)).credits) });
+        const target = sessionMembers.find(row => row.id === item.owner);
+        return json({ syllabus: syllabusView(state, item, quotaMember(state, target).credits), ...classReviewResult(state, target) });
       }
     }
+
     if (path === "/api/faq" && req.method === "GET") return json(faqView(state));
     if (path === "/api/faq" && req.method === "POST") {
       chair();
@@ -479,7 +478,7 @@ async function handleRequest(req, path) {
       );
     }
     const route = path.match(
-      /^\/api\/submissions\/([^/]+)(?:\/(review|evidence))?$/,
+      /^\/api\/submissions\/([^/]+)(?:\/(review|revise|evidence))?$/,
     );
     if (route) {
       const item = own(route[1]);
@@ -487,6 +486,7 @@ async function handleRequest(req, path) {
         return json({
           submission: {
             ...item,
+            reviewVersion: reviewVersion(item),
             syllabus: submissionSyllabus(state, item),
             memberName: members.find((m) => m.id === item.owner).name,
           },
@@ -508,10 +508,13 @@ async function handleRequest(req, path) {
               "Fictional sample record; no real academic documentation was uploaded.",
           },
         });
-      if (route[2] === "review" && req.method === "POST") {
+      if (["review", "revise"].includes(route[2]) && req.method === "POST") {
         chair();
-        if (item.status !== "pending")
-          fail(409, "This submission has already been reviewed.");
+        const correction = route[2] === 'revise';
+        if (correction ? !['approved', 'denied'].includes(item.status) : item.status !== 'pending')
+          fail(409, 'This submission changed. Reopen its current details.');
+        if ((correction || input.version !== undefined) && input.version !== reviewVersion(item))
+          fail(409, 'This submission changed. Reopen its current details.');
         if (!["approved", "denied"].includes(input.decision))
           fail(422, "Choose approve or deny.");
         const note = String(input.note || "").trim(),
@@ -524,17 +527,20 @@ async function handleRequest(req, path) {
         )
           fail(422, "Award a whole number from 0 to 10,000.");
         if (
-          (input.decision === "denied" || points !== item.estimate) &&
+          (correction || input.decision === "denied" || points !== item.estimate) &&
           note.length < 5
         )
           fail(422, "Explain the denial or point adjustment.");
+        const before = { status: item.status, awarded: item.awarded, note: item.reviewNote || "", reviewer: item.reviewer || null, at: item.reviewedAt || null };
         item.status = input.decision;
         item.awarded = input.decision === "approved" ? points : 0;
         item.reviewNote = note;
         item.reviewer = user.name;
         item.reviewedAt = new Date().toISOString();
+        item.history ||= [];
         item.history.push({
-          event:
+          ...(correction ? { before, correction: true } : {}),
+          event: correction ? `Corrected ${before.status} (${before.awarded} points) → ${item.status} (${item.awarded} points)` :
             input.decision === "approved"
               ? `Approved · ${points} points`
               : "Denied",
@@ -547,7 +553,7 @@ async function handleRequest(req, path) {
           submission: item,
           points: totals(
             state,
-            members.find((m) => m.id === item.owner),
+            quotaMember(state, members.find((m) => m.id === item.owner)),
           ),
         });
       }

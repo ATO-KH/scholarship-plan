@@ -50,10 +50,16 @@ globalThis.fetch = async (input, options = {}) => {
     invitationUsers.set(email, user);
     return respond(user);
   }
-  if (url.pathname === "/auth/v1/admin/users")
-    return respond({ users: [...invitationUsers.values()].filter(user => user.email.includes(url.searchParams.get("filter"))) });
-  if (url.pathname === "/auth/v1/invite")
-    return respond(invitationUsers.get(JSON.parse(options.body).email) || { error: "not prepared" });
+  if (url.pathname === "/auth/v1/admin/users") {
+    const filter = url.searchParams.get('filter'), page = Number(url.searchParams.get('page') || 1), size = Number(url.searchParams.get('per_page') || 100);
+    const users = [...invitationUsers.values()].filter(user => !filter || user.email.includes(filter));
+    return respond({ users: users.slice((page - 1) * size, page * size) });
+  }
+  if (url.pathname === "/auth/v1/invite") {
+    const user = invitationUsers.get(JSON.parse(options.body).email);
+    if (user) user.invited_at = user.confirmation_sent_at = new Date().toISOString();
+    return respond(user || { error: "not prepared" });
+  }
   if (url.pathname === "/auth/v1/recover") return respond({});
   if (url.pathname === '/auth/v1/verify') {
     const body = JSON.parse(options.body);
@@ -61,6 +67,8 @@ globalThis.fetch = async (input, options = {}) => {
     if (options.method !== 'POST' || !['invite','recovery'].includes(body.type) || token !== 'fictional-member-invitation-hash' || usedSetupLinks.has(token))
       return respond({code:'otp_expired', message:'Token expired'}, 403);
     usedSetupLinks.add(token);
+    const account = invitationUsers.get('member@example.edu');
+    if (account) account.email_confirmed_at = new Date().toISOString();
     return respond({access_token:'test-account-token',refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,
       user:{id:memberId,email:'member@example.edu',email_confirmed_at:'2026-09-29T00:00:00Z'}});
   }

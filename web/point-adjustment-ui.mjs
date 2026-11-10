@@ -32,7 +32,7 @@ export async function mountPointAdjustments(container, { api, esc, loading, memb
         view = await api(path, { method: "POST", body });
         saved = true;
         if (!isCurrent()) return;
-        await onSaved();
+        await onSaved(view);
         if (isCurrent()) render("Point adjustment saved.");
       } catch (error) {
         if (isCurrent()) feedback.innerHTML = `<p class="error">${esc(saved ? "Adjustment saved. Close this window and reload to see the latest totals." : error.message)}</p>`;

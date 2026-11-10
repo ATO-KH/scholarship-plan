@@ -15,7 +15,7 @@ const recipients = [
   {name:'Already Sent Member', email:'sent@example.test', status:'sent', canSendInitial:false, canInviteFromRoster:false},
 ];
 
-function fixture() {
+function fixture(selected = recipients) {
   const requests = [], pending = [], delays = [], outcomes = [{textContent:''}, {textContent:''}];
   const feedback = {textContent:'', innerHTML:''}, confirmation = {checked:false, disabled:false};
   const submit = {disabled:false}, stop = {disabled:false, textContent:''};
@@ -30,7 +30,7 @@ function fixture() {
     api: (path, options) => { const d = deferred(); pending.push(d); requests.push({path,options}); return d.promise; },
     setTimeout: callback => { delays.push(callback); }, rosterPage: async () => { context.refreshes++; }, refreshes:0,
   };
-  runInNewContext(`(${reviewSource})`,context)(recipients,panel);
+  runInNewContext(`(${reviewSource})`,context)(selected,panel);
   return {context, form, panel, feedback, confirmation, submit, stop, requests, pending, delays, outcomes,
     send: () => form.onsubmit({preventDefault(){}})};
 }
@@ -54,7 +54,7 @@ test('one confirmation invites unprepared and prepared members together without 
   assert.match(f.context.body,/Accounts are created automatically/);
   assert.match(f.context.body,/Existing account settings and imported tiers are kept/);
   assert.match(f.context.body,/15 credits/); assert.match(f.context.body,/Tier 1 if none is assigned/);
-  assert.match(f.context.body,/adjust details afterward through Manage member/);
+  assert.match(f.context.body,/seven days/);
   assert.doesNotMatch(f.context.body,/name="(?:tier|credits|email|name)"/,'no per-person preparation form');
   await f.send(); assert.equal(f.requests.length,0,'explicit confirmation required');
   f.confirmation.checked = true;
@@ -139,7 +139,7 @@ test('select-all respects visible unsent rows, preserves explicit hidden selecti
 async function renderStatus(emailReady) {
   const refresh = {}, panel = {isConnected:true, innerHTML:'', querySelector:key=>key==='[data-refresh-invitations]'?refresh:null, querySelectorAll:()=>[]};
   const selections = [];
-  const context = {$:()=>panel, invitationStatusLoad:0, esc:value=>String(value),
+  const context = {$:()=>panel, invitationStatusLoad:0, sessionEpoch:1, esc:value=>String(value),
     api:async path=>{assert.equal(path,'/api/admin/invitations'); return {invitations:recipients,emailReady};},
     mountInvitationSelection:(destination,items)=>{selections.push(items);return ()=>{};}};
   await runInNewContext(`(${statusSource})`,context)();
@@ -148,13 +148,13 @@ async function renderStatus(emailReady) {
 
 test('recipient list includes selectable unprepared members without needing a tier assignment first', async () => {
   const f=await renderStatus(true);
-  assert.match(f.html,/2 can be invited/);
-  assert.match(f.html,/Account created when sent/);
+  assert.match(f.html,/>2<\/strong> Ready for first invite/);
+  assert.match(f.html,/Not invited/);
   assert.match(f.html,/data-select-invitation="0"/);
   assert.match(f.html,/data-select-invitation="1"/);
   assert.doesNotMatch(f.html,/data-select-invitation="2"/);
   assert.match(f.html,/Select all unsent/);
-  assert.match(f.html,/No individual account preparation is required/);
+  assert.match(f.html,/Select all not accepted/);
   assert.equal(f.selections[0].length,3);
 });
 
@@ -163,4 +163,33 @@ test('loading the list only reads status and leaves email actions unavailable wh
   assert.match(f.html,/Email sending is not enabled/);
   assert.doesNotMatch(f.html,/data-select-invitation="/);
   assert.match(f.html,/data-select-ready type="button" disabled/);
+});
+
+test('mixed resend batch snapshots versions, skips newly accepted members and excludes accepted rows', async () => {
+  const f=fixture([
+    {...recipients[0],canInviteFromRoster:false,canResendPending:true,status:'expired',version:'a'.repeat(64)},
+    {...recipients[1],canInviteFromRoster:false,canResendPending:true,status:'sent',version:'b'.repeat(64)},
+    {...recipients[2],canResendPending:true,status:'accepted'},
+  ]);
+  assert.match(f.context.body,/0 first invitations · 2 resends/); assert.doesNotMatch(f.context.body,/sent@example.test/);
+  f.confirmation.checked=true; const batch=f.send();
+  assert.match(f.requests[0].path,/resend-pending$/); assert.equal(f.requests[0].options.body.version,'a'.repeat(64));
+  f.pending[0].resolve({skipped:true,invitation:{status:'accepted'}}); await tick();
+  assert.equal(f.outcomes[0].textContent,'Already accepted · skipped');
+  f.delays.shift()(); await tick();
+  assert.equal(f.requests[1].options.body.version,'b'.repeat(64));
+  f.pending[1].resolve({invitation:{status:'sent'}}); await batch;
+  assert.match(f.feedback.textContent,/1 already accepted and skipped/);
+});
+
+test('select expired and select not accepted honor the active recipient filter', () => {
+  const entries=[{status:'expired'},{status:'sent'},{status:'expired'}];
+  const rows=entries.map((_,i)=>({hidden:i===2}));
+  const boxes=entries.map((_,i)=>({dataset:{selectInvitation:String(i)},closest:()=>rows[i],checked:false}));
+  const fields=Object.fromEntries(['[data-select-ready]','[data-select-pending]','[data-select-expired]','[data-clear-ready]','[data-review-invitations]','[data-selected-count]'].map(key=>[key,{}]));
+  fields['#prepared-search']={value:''}; fields['#prepared-status']={value:'all'};
+  const panel={querySelector:key=>fields[key],querySelectorAll:()=>boxes};
+  runInNewContext(`(${selectionSource})`,{reviewBulkInvitations(){}})(panel,entries);
+  fields['[data-select-expired]'].onclick(); assert.deepEqual(boxes.map(box=>box.checked),[true,false,false]);
+  fields['[data-select-pending]'].onclick(); assert.deepEqual(boxes.map(box=>box.checked),[true,true,false]);
 });

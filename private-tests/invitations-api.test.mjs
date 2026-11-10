@@ -130,5 +130,22 @@ test("Chair invitation API repairs interrupted setup without mail, protects rese
     assert.equal(firstSend.payload.invitation.canSendInitial, false);
     assert.equal((await chairRequest(initialRoute, {})).status, 409);
     assert.equal(storage.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='roster.invitation_send_started'").get().n, 2, "replayed initial sends never send again");
+    const pendingState = JSON.parse(storage.prepare("SELECT data FROM chapters WHERE workspace='chapter'").get().data);
+    pendingState.invitations[input.email].retryAt = 0;
+    storage.prepare("UPDATE chapters SET data=? WHERE workspace='chapter'").run(JSON.stringify(pendingState));
+    const selected = (await chairRequest('/api/admin/invitations')).payload.invitations.find(entry => entry.email === input.email);
+    assert.equal(selected.canResendPending, true);
+    assert.equal((await request(`${routes}/resend-pending`, {version:selected.version}, chair.cookie)).status, 403);
+    assert.equal((await request(`${routes}/resend-pending`, {version:selected.version}, member.cookie, member.payload.csrfToken)).status, 403);
+    assert.equal((await chairRequest(`${routes}/resend-pending`, {})).status, 422);
+    const completed = await request('/api/auth/complete', {tokenHash:'fictional-member-invitation-hash',type:'invite',password:'a-long-fictional-password'});
+    assert.equal(completed.status,200,JSON.stringify(completed.payload));
+    const skipped = await chairRequest(`${routes}/resend-pending`, {version:selected.version});
+    assert.equal(skipped.status,200,JSON.stringify(skipped.payload));
+    assert.equal(skipped.payload.skipped,true);
+    assert.equal(skipped.payload.invitation.status,'accepted');
+    const accepted = (await chairRequest('/api/admin/invitations')).payload.invitations.find(entry => entry.email === input.email);
+    assert.equal(accepted.status,'accepted'); assert.ok(accepted.acceptedAt); assert.equal(accepted.canResendPending,false);
+    assert.equal(storage.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='roster.invitation_send_started'").get().n, 2, 'acceptance between selection and sending never sends another email');
   } finally { storage.close(); }
 });
