@@ -2,6 +2,16 @@
 
 This is a working acceptance checklist, not a claim that version 1.0 is approved. Keep member emails, grades, passwords, recovery keys and private backup paths out of this public repository. Record the Chair's real decisions and test-recipient addresses in a chapter-controlled location.
 
+## Podium leaderboard and dashboard update — November 10, 2026
+
+- Released commit `e2c0fd16f6b404c649bd9fcc09bc718272ab8a7a` to [the live portal](https://scholarship-ato-kh.vercel.app/) through staged production deployment `dpl_fidqXYcNSwNwxLVFgHbXrSFti9v8` (`scholarship-ato-oe0v5d7fx-ato-kh.vercel.app`). Vercel independently confirmed the intended project, commit, production target and `pdx1` region. Previous deployment `dpl_86AkYoinFmBjUW9Cthn7EvwKWEWb` is available for rollback.
+- Added an authenticated chapter leaderboard: gold/silver/bronze podium for the first three places, names/points only below, shared places for ties and no medals at zero. Approved awards and manual adjustments count; corrections appear on refresh. Responses exclude contact and academic details, inactive accounts, non-roster production members and pilot identities. Positive first-place members get a personal ATO trophy panel, including shared-lead wording.
+- Starting hours now display N/A until class approval, preserving stored scoring baselines and historical awards; approved zero remains 0. Activity search and selection share one browser-native suggestion field. Reviewed submission rows expose Edit decision / points directly.
+- Added an ATO startup entrance with no forced delay. Members with exactly zero approved points strictly after a checkpoint date get a brief SVG tomato throw/splat on Overview, once per browser/member/semester/checkpoint. It clears on input/navigation or within 2.4 seconds, does not intercept clicks, and honors reduced motion.
+- Validation: **330 tests passed, 0 failed, 0 skipped**, including SQLite, isolated two-process PostgreSQL 17, authorization, corrected/adjusted leaderboard totals, private response fields, podium ties, empty/error states, starting-hours behavior and animation triggers. GitHub's test check passed for the exact released commit. Source checks passed. **27 staged and 27 public HTTP checks** verified 15 matching assets, production configuration and private API/file protection, including unauthenticated leaderboard rejection.
+- Initial runtime error/fatal query returned no records. No schema migration, Auth-setting change, real emails, live member/academic writes or paid upgrades were required. Seven-day invitation expiry remains unchanged.
+- Browser inventory remained empty. Rendered desktop/mobile layout, actual datalist scrollbar interaction, animation appearance and real-member/Chair acceptance remain unverified. DOM tests and HTTP checks do not establish those outcomes.
+
 ## Grouped reviews, email corrections and activity picker — November 10, 2026
 
 - Released commit `f800cf4522cc09be698506567cea85c1c5a2adc7` to [the live portal](https://scholarship-ato-kh.vercel.app/) through staged production deployment `dpl_86AkYoinFmBjUW9Cthn7EvwKWEWb` (`scholarship-ato-nqaaxbzlq-ato-kh.vercel.app`). The immediately preceding deployment, `dpl_7YXKU3y93dwVgBb6xu1KTMbXpp3u`, contains the grouped-review/email changes with the earlier activity picker and remains available for rollback.
