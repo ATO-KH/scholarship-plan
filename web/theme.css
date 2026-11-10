@@ -101,18 +101,13 @@
 :root[data-theme="dark"] .field input,
 :root[data-theme="dark"] .field select,
 :root[data-theme="dark"] .field textarea,
-:root[data-theme="dark"] .sidebar-bottom select,
-:root[data-theme="dark"] .activity-picker button,
-:root[data-theme="dark"] .activity-options {
+:root[data-theme="dark"] .sidebar-bottom select {
   background: #111d2d;
   border-color: #586b85;
   color: var(--ink);
 }
 :root[data-theme="dark"] .field input::placeholder,
 :root[data-theme="dark"] .field textarea::placeholder { color: #93a5be; }
-:root[data-theme="dark"] .activity-options [role="option"] { border-bottom-color: var(--line); }
-:root[data-theme="dark"] .activity-options [role="option"].active,
-:root[data-theme="dark"] .activity-options [role="option"]:hover { background: #2b4261; }
 :root[data-theme="dark"] .preview-points,
 :root[data-theme="dark"] .attachment,
 :root[data-theme="dark"] .sample-file,

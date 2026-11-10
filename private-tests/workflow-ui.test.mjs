@@ -91,6 +91,42 @@ test('class shortcut preserves the selected approved class but never invents an 
   assert.equal(f.w.$('#date').min, '2026-10-26');
 });
 
+test('activity selection uses the native dropdown and search never chooses an activity automatically', async t => {
+  const f = fixture(t); await f.open();
+  const select = f.w.$('#activity');
+  assert.equal(select.tagName, 'SELECT');
+  assert.equal(select.required, true);
+  assert.equal(select.value, '');
+  f.fill('#activity-search', 'quiz');
+  assert.deepEqual(Array.from(select.options, option => option.value), ['', 'minor']);
+  assert.equal(select.value, '', 'a single search result still requires an explicit selection');
+  assert.equal(f.w.$('#grade'), null);
+  select.value = 'minor'; select.dispatchEvent(new f.w.Event('change', { bubbles: true }));
+  assert.ok(f.w.$('#grade'));
+  assert.equal(f.w.$('#activity-search').value, '');
+  assert.equal(select.options.length, 3);
+  assert.equal(select.value, 'minor');
+  assert.equal(f.w.requests.filter(call => call.options?.method === 'POST').length, 0);
+});
+
+test('filtering activity types preserves the selected activity and its entered grade until a new choice', async t => {
+  const f = fixture(t); await f.open(); f.complete();
+  f.fill('#activity-search', 'missing type');
+  assert.equal(f.w.$('#activity').value, 'minor');
+  assert.equal(f.w.$('#grade').value, '97');
+  assert.match(f.w.$('#activity-results').textContent, /No matching activity types/);
+  f.fill('#activity-search', 'study');
+  assert.deepEqual(Array.from(f.w.$('#activity').options, option => option.value), ['', 'independent', 'minor']);
+  assert.equal(f.w.$('#grade').value, '97');
+  const enter = new f.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  f.w.$('#activity-search').dispatchEvent(enter);
+  assert.equal(enter.defaultPrevented, true, 'Enter in the optional search must not submit the assignment');
+  assert.equal(f.w.document.activeElement, f.w.$('#activity'));
+  f.w.$('#activity').value = 'independent'; f.w.$('#activity').dispatchEvent(new f.w.Event('change', { bubbles: true }));
+  assert.equal(f.w.$('#grade'), null);
+  assert.ok(f.w.$('#quantity'));
+});
+
 test('closing and reopening restores a draft, but a new session cannot inherit it', async t => {
   const f = fixture(t); await f.open(); f.complete();
   f.w.rememberSubmissionDraft(); f.w.modal.close();

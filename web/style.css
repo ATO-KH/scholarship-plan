@@ -954,59 +954,14 @@ dialog::backdrop {
   resize: vertical;
 }
 .activity-picker {
-  position: relative;
+  display: grid;
+  gap: 8px;
 }
-.activity-picker input[type="text"] {
-  padding-right: 48px;
+.activity-picker select {
+  min-height: 44px;
 }
-.activity-picker button {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 42px;
-  height: calc(100% - 2px);
-  border: 0;
-  border-left: 1px solid #b9c5d3;
-  background: white;
-  color: var(--ink);
-  cursor: pointer;
-}
-.activity-picker button:focus-visible {
-  outline: 2px solid var(--gold);
-  outline-offset: -3px;
-}
-.activity-options {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 3px);
-  left: 0;
-  right: 0;
-  max-height: 190px;
-  overflow-y: auto;
-  border: 1px solid #b9c5d3;
-  background: white;
-  box-shadow: 3px 3px 0 rgba(18, 42, 70, 0.16);
-}
-.activity-options[hidden] {
+#activity-results[hidden] {
   display: none;
-}
-.activity-options [role="option"] {
-  position: static;
-  display: block;
-  width: 100%;
-  height: auto;
-  padding: 10px 11px;
-  border: 0;
-  border-bottom: 1px solid #e1e6ec;
-  text-align: left;
-}
-.activity-options [role="option"].active,
-.activity-options [role="option"]:hover {
-  background: #eaf0f7;
-}
-.activity-empty {
-  padding: 10px 11px;
-  color: var(--muted);
 }
 .field small {
   display: block;

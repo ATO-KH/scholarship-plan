@@ -186,8 +186,6 @@
 /* Touch controls stay usable without triggering iOS input zoom. */
 @media (pointer: coarse), (max-width: 600px) {
   .activity-picker input, .field input, .field select, .field textarea { font-size: 16px; }
-  .activity-options [role="option"], #activity-open { min-height: 44px; }
-  .activity-options { overscroll-behavior: contain; max-height: min(240px, 40dvh); }
   .table-link, .text-btn { min-height: 44px; }
 }
 input[type="file"] { max-width: 100%; min-width: 0; }

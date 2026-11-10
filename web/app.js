@@ -787,86 +787,33 @@ function formError(message) {
   e.scrollIntoView({ block: "nearest" });
 }
 function activityPicker() {
-  return `<div class="activity-picker"><input id="activity-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="activity-options" placeholder="Choose or search for an activity" autocomplete="off" required><button id="activity-open" type="button" aria-label="Show activity types">▾</button><div id="activity-options" class="activity-options" role="listbox" hidden></div><input id="activity" name="activity" type="hidden" value=""></div><small>Type to find an activity or open the list.</small>`;
+  return `<div class="activity-picker"><input id="activity-search" type="search" aria-label="Filter activity types" aria-controls="activity" placeholder="Filter activity types (optional)" autocomplete="off"><select id="activity" name="activity" required aria-describedby="activity-help"></select></div><small id="activity-help">Choose an activity type. Search above to narrow the list.</small><small id="activity-results" role="status" aria-live="polite" hidden></small>`;
 }
 function wireActivityPicker() {
-  const search = $("#activity-search"), selected = $("#activity"),
-    menu = $("#activity-options"), picker = search.closest(".activity-picker");
-  let matches = [], active = 0;
-  function close() {
-    menu.hidden = true;
-    search.setAttribute("aria-expanded", "false");
-    search.removeAttribute("aria-activedescendant");
-  }
-  function highlight() {
-    menu.querySelectorAll("[role=option]").forEach((option, index) => {
-      option.classList.toggle("active", index === active);
-      option.setAttribute("aria-selected", String(index === active));
-    });
-    if (matches.length) search.setAttribute("aria-activedescendant", `activity-option-${active}`);
-    else search.removeAttribute("aria-activedescendant");
-  }
-  function open(all = false) {
+  const search = $("#activity-search"), selected = $("#activity"), feedback = $("#activity-results");
+  function renderOptions() {
+    const current = selected.value, categories = activeActivities();
     const query = search.value.trim().toLowerCase();
-    matches = activeActivities().filter((a) => all || a.name.toLowerCase().includes(query));
-    active = Math.max(0, matches.findIndex((a) => a.id === selected.value));
-    menu.innerHTML = matches.length
-      ? matches.map((a, index) => `<button id="activity-option-${index}" type="button" role="option" data-id="${esc(a.id)}">${esc(a.name)}</button>`).join("")
-      : '<div class="activity-empty">No matching activity</div>';
-    menu.hidden = false;
-    search.setAttribute("aria-expanded", "true");
-    highlight();
+    const matches = categories.filter(item => item.name.toLowerCase().includes(query));
+    const retained = categories.find(item => item.id === current && !matches.some(match => match.id === current));
+    const option = item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`;
+    selected.innerHTML = '<option value="">Choose an activity type</option>' + matches.map(option).join('') +
+      (retained ? `<optgroup label="Current selection">${option(retained)}</optgroup>` : '');
+    selected.value = categories.some(item => item.id === current) ? current : '';
+    feedback.hidden = !query;
+    feedback.textContent = !query ? '' : `${matches.length ? `${matches.length} matching activity ${matches.length === 1 ? 'type' : 'types'}.` : 'No matching activity types. Clear the search to see all types.'}${retained ? ' Your current selection is unchanged.' : ''}`;
   }
-  function choose(index) {
-    const match = matches[index];
-    if (!match) return;
-    search.value = match.name;
-    selected.value = match.id;
+  search.addEventListener('input', renderOptions);
+  search.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); selected.focus(); }
+  });
+  selected.addEventListener('change', () => {
+    search.value = '';
+    renderOptions();
     $('#claim-form').dataset.dirty = 'true';
-    close();
     updateForm();
-    if (matchMedia("(pointer: coarse)").matches) search.blur();
-    else search.focus();
-  }
-  search.addEventListener("input", () => {
-    const match = activeActivities().find((a) => a.name.toLowerCase() === search.value.trim().toLowerCase());
-    selected.value = match?.id || "";
-    updateForm();
-    open();
   });
-  search.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") { close(); return; }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      if (menu.hidden) open();
-      else if (matches.length) {
-        active = (active + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
-        highlight();
-      }
-    }
-    if (event.key === "Enter" && !menu.hidden && matches.length) {
-      event.preventDefault();
-      choose(active);
-    }
-  });
-  $("#activity-open").addEventListener("click", () => {
-    if (!matchMedia("(pointer: coarse)").matches) search.focus();
-    if (menu.hidden) open(true);
-    else close();
-  });
-  menu.addEventListener("click", (event) => {
-    const option = event.target.closest("[role=option]");
-    if (option) choose(matches.findIndex((a) => a.id === option.dataset.id));
-  });
-  picker.addEventListener("focusout", (event) => {
-    // iOS may report no focus target before delivering an option tap.
-    if (event.relatedTarget && !picker.contains(event.relatedTarget)) close();
-  });
-  const pickerEvents = new AbortController();
-  modal.addEventListener("pointerdown", event => {
-    if (!picker.contains(event.target)) close();
-  }, { signal: pickerEvents.signal });
-  modal.addEventListener("close", () => pickerEvents.abort(), { once: true });
+  renderOptions();
 }
 function currentSubmissionDraft() {
   return submissionDraft?.owner === user?.id && submissionDraft.epoch === sessionEpoch &&
@@ -938,14 +885,14 @@ async function newSubmission(prefill = {}) {
     isDemo()
       ? "Add a fictional activity for the Scholarship Chair to review."
       : "Add an activity and evidence for the Scholarship Chair to review.",
-    `<form id="claim-form" data-owner="${esc(user.id)}" data-epoch="${sessionEpoch}">${draft ? '<div class="notice info">Your unfinished submission was restored. <button class="text-btn" type="button" data-action="discard-submission-draft">Start over</button></div>' : ''}<p class="footnote">Choose an activity, add its details, then attach evidence. Drafts stay in this tab until you sign out or reload.</p><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${minimumDate}" max="${maximumDate}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Keep draft & close</button><button class="button ghost" type="submit" name="afterSubmit" value="another">Submit & add another</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+    `<form id="claim-form" data-owner="${esc(user.id)}" data-epoch="${sessionEpoch}">${draft ? '<div class="notice info">Your unfinished submission was restored. <button class="text-btn" type="button" data-action="discard-submission-draft">Start over</button></div>' : ''}<p class="footnote">Choose an activity, add its details, then attach evidence. Drafts stay in this tab until you sign out or reload.</p><div class="form-grid"><div class="field span2"><label for="activity">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${minimumDate}" max="${maximumDate}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Keep draft & close</button><button class="button ghost" type="submit" name="afterSubmit" value="another">Submit & add another</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
   wireActivityPicker();
   $("#evidence-file").addEventListener("change", uploadEvidence);
   const form = $('#claim-form');
   form.dataset.draftId = draft?.id || crypto.randomUUID();
   const initialCategory = activity(fields.activity);
-  if (initialCategory) { $('#activity').value = initialCategory.id; $('#activity-search').value = initialCategory.name; }
+  if (initialCategory) $('#activity').value = initialCategory.id;
   updateForm();
   restoreSubmissionFields(form, fields);
   if (draft) {
@@ -958,7 +905,7 @@ async function newSubmission(prefill = {}) {
   form.addEventListener('submit', submitClaim);
   updateSubmissionButtons(form);
   if (initialCategory) $('#title').focus();
-  else $('#activity-search').focus();
+  else $('#activity').focus();
 }
 function updateSubmissionPrompts(a) {
   if (!a) return;
@@ -1033,7 +980,7 @@ async function submitClaim(e) {
   if (busy) return;
   const form = e.target, owner = user?.id, epoch = sessionEpoch;
   const current = () => form.isConnected && modal.open && user?.id === owner && sessionEpoch === epoch;
-  if (!$('#activity').value) { formError('Choose an activity type.'); $('#activity-search').focus(); return; }
+  if (!$('#activity').value) { formError('Choose an activity type.'); $('#activity').focus(); return; }
   if (form.dataset.uploading) { formError('Wait for the evidence upload to finish.'); return; }
   if (activity($('#activity').value)?.grade && !$('#saved-course')?.value) {
     formError('Choose a class with an approved syllabus. Add or check it in My classes.'); return;
