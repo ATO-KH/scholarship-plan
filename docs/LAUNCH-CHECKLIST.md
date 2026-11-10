@@ -2,6 +2,17 @@
 
 This is a working acceptance checklist, not a claim that version 1.0 is approved. Keep member emails, grades, passwords, recovery keys and private backup paths out of this public repository. Record the Chair's real decisions and test-recipient addresses in a chapter-controlled location.
 
+## Weekly tomatoes and unified startup — November 10, 2026
+
+- Released commit `3af69a0c9c1a9a4b71bcdeafc8b99ed25169d28e` to [the live portal](https://scholarship-ato-kh.vercel.app/) through staged production deployment `dpl_FnXU6hAYdS8f8gnacTasGZjZ7Xz4` (`scholarship-ato-hkept0gz1-ato-kh.vercel.app`). Vercel independently confirmed the intended project, commit, production target and `pdx1` region. Previous deployment `dpl_fidqXYcNSwNwxLVFgHbXrSFti9v8` is available for rollback.
+- Members with exactly zero approved points strictly after checkpoint one now get a fresh tomato barrage on every page refresh. It starts at 3 and adds 2 per completed week; checkpoint two increases the starting amount and adds 4 weekly; checkpoint three increases it again and doubles weekly. Rendering is capped at 96 tomatoes, and later checkpoints do not restart the growth. With the current checkpoint dates, the phase starts are 3, 14 and 32, followed by 64 and 96 after the third checkpoint.
+- Splats scatter across the viewport, linger, slide downward and fade over roughly 15–16 seconds. Controls remain clickable; ordinary typing does not dismiss the effect. Escape, navigation and page hiding clear it. Dashboard redraws do not replay it, and reduced motion suppresses it.
+- The newer clockwise arm animation is the single startup screen for the live portal and demo. Requests load during a 2.5-second minimum, counting time already spent signing in; slower requests keep the same screen until ready. There is no second-spinner handoff. Errors reveal a retry screen, stale account responses cannot reveal a former account, and reduced motion skips the extra delay.
+- The [first-place member demo](https://scholarship-ato-kh.vercel.app/demo/?account=test2#overview) uses the fictional 90-point leader and its personal ATO trophy panel.
+- Validation: **337 tests passed, 0 failed, 0 skipped**, locally and in [GitHub's checks for the released commit](https://github.com/ATO-KH/scholarship-plan/actions/runs/42854770701), including isolated PostgreSQL, refresh replay, weekly progression/cap, cleanup, reduced motion, fast/slow startup, error recovery and session protection. Source checks passed. **30 staged and 30 public HTTP checks** verified 18 matching assets, production configuration and private API/file protection.
+- The initial runtime error/fatal query returned no records. No schema migration, Auth-setting change, real emails, live member/academic writes or paid upgrades were required. Seven-day invitation expiry remains unchanged.
+- Browser surfaces were unavailable. Actual animation appearance, rendered desktop/mobile layout and real-member acceptance remain unverified; DOM and HTTP checks do not establish those outcomes.
+
 ## Podium leaderboard and dashboard update — November 10, 2026
 
 - Released commit `e2c0fd16f6b404c649bd9fcc09bc718272ab8a7a` to [the live portal](https://scholarship-ato-kh.vercel.app/) through staged production deployment `dpl_fidqXYcNSwNwxLVFgHbXrSFti9v8` (`scholarship-ato-oe0v5d7fx-ato-kh.vercel.app`). Vercel independently confirmed the intended project, commit, production target and `pdx1` region. Previous deployment `dpl_86AkYoinFmBjUW9Cthn7EvwKWEWb` is available for rollback.
