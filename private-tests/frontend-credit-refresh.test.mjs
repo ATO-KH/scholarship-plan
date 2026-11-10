@@ -11,7 +11,11 @@ const deferred = () => {
 
 for (const path of ['../web/app.js', '../web/demo/app.js']) {
   const source = await readFile(new URL(path, import.meta.url), 'utf8');
-  const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const extract = (start, end) => {
+    const from = source.indexOf(start), to = source.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `Cannot locate ${start} in ${path}`);
+    return source.slice(from, to);
+  };
   const label = path.includes('/demo/') ? 'sandbox' : 'production';
 
   function fixture() {
@@ -46,7 +50,7 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
 
   test(`${label} refresh presents updated account hours and multiplier together`, async () => {
     const f = fixture();
-    const refresh = runInNewContext(`(${extract('async function refresh()', '\nfunction rows(')})`, f.context);
+    const refresh = runInNewContext(`(${extract('async function refresh(', '\nfunction rows(')})`, f.context);
     const work = refresh();
     assert.ok(f.requests.has('/api/me'));
     f.resolve(); await work;
@@ -67,7 +71,7 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
 
   test(`${label} refresh and submission callbacks cannot restore a superseded account session`, async () => {
     for (const [start, end] of [
-      ['async function refresh()', '\nfunction rows('],
+      ['async function refresh(', '\nfunction rows('],
       ['async function newSubmission(', '\nfunction updateSubmissionPrompts('],
     ]) {
       const f = fixture();
