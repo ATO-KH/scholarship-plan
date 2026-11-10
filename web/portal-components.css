@@ -364,6 +364,7 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 .podium-place-3 { grid-area: bronze; --step-height: 96px; }
 .podium-names { display: grid; gap: 8px; padding-bottom: 16px; }
 .podium-member { display: grid; justify-items: center; gap: 4px; padding: 8px 4px; overflow-wrap: anywhere; }
+.podium-crown { display: block; width: 52px; height: 39px; max-width: 100%; fill: var(--gold); stroke: var(--medal-name); stroke-width: 1.5; stroke-linejoin: round; }
 .podium-member > strong { color: var(--medal-name); font-size: 18px; line-height: 1.3; }
 .podium-member.leaderboard-you { outline: 1px solid var(--medal-border); }
 .podium-step { min-height: var(--step-height); padding: 12px 8px; border: 1px solid var(--medal-border); background: var(--medal-bg); color: var(--medal-name); }
@@ -399,6 +400,7 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 @media (max-width: 600px) {
   .leaderboard-podium { gap: 8px; margin: 24px 0; }
   .podium-member > strong { font-size: 14px; }
+  .podium-crown { width: 40px; height: 30px; }
   .podium-step h3 { font-size: 32px; }
   .podium-step p { flex-direction: column; align-items: center; gap: 0; }
   .leaderboard-list li { padding: 12px 8px; gap: 16px; }

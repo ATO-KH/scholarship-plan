@@ -1,5 +1,10 @@
 const places = { 1: ['gold', '1st'], 2: ['silver', '2nd'], 3: ['bronze', '3rd'] };
 const number = value => Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const crown = `<svg class="podium-crown" viewBox="0 0 72 54" aria-hidden="true" focusable="false">
+  <path d="m10 17 14 11L36 7l12 21 14-11-5 26H15Z"/>
+  <path d="M15 43h42v7H15Z"/>
+  <circle cx="10" cy="15" r="3"/><circle cx="36" cy="5" r="3"/><circle cx="62" cy="15" r="3"/>
+</svg>`;
 
 export function leaderGraphic(lead, esc) {
   if (!lead || !(lead.points > 0)) return '';
@@ -52,7 +57,7 @@ export async function mountLeaderboard(container, { api, esc, loading, isCurrent
       const [metal, label] = places[place];
       const tied = members.filter(member => member.place === place).length > 1;
       return `<section class="podium-place podium-place-${place} medal-${metal}" aria-label="${label} place, ${metal}${tied ? ', tied' : ''}">
-        <div class="podium-names">${winners.map(member => `<div class="podium-member${member.isYou ? ' leaderboard-you' : ''}"><strong>${esc(member.name)}</strong>${member.isYou ? '<span class="leaderboard-you-label">You</span>' : ''}</div>`).join('')}</div>
+        <div class="podium-names">${winners.map(member => `<div class="podium-member${member.isYou ? ' leaderboard-you' : ''}">${place === 1 ? crown : ''}<strong>${esc(member.name)}</strong>${member.isYou ? '<span class="leaderboard-you-label">You</span>' : ''}</div>`).join('')}</div>
         <div class="podium-step"><h3>${label}</h3><p><strong>${esc(number(winners[0].points))}</strong><span>points${tied ? ' · tied' : ''}</span></p></div>
       </section>`;
     }).join('');
