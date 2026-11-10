@@ -2,6 +2,12 @@
 
 This is a working acceptance checklist, not a claim that version 1.0 is approved. Keep member emails, grades, passwords, recovery keys and private backup paths out of this public repository. Record the Chair's real decisions and test-recipient addresses in a chapter-controlled location.
 
+## First-place crown — November 10, 2026
+
+- Released commit `8372836a843de027b291f945d22df310c9d40bae` through production deployment `dpl_BJWCy2UUVGDRdvQNCoALeY9DtCyp` (`scholarship-ato-gzs1w2p8n-ato-kh.vercel.app`). A gold SVG crown sits directly above each first-place podium name, including ties, with a smaller size on phones. The [fictional first-place podium demo](https://scholarship-ato-kh.vercel.app/demo/?account=test2#leaderboard) includes the update. Previous deployment `dpl_FnXU6hAYdS8f8gnacTasGZjZ7Xz4` remains available for rollback.
+- Five existing leaderboard checks and source checks passed locally. Both GitHub checks passed for the released commit; the full suite reported **337 passed, 0 failed, 0 skipped**. Vercel confirmed the project, commit, production target and `pdx1` region before promotion. **30 staged and 30 live HTTP checks** passed with 18 matching assets, and the initial error/fatal log query returned no records.
+- No data, authentication or scoring behavior changed. Browser rendering remains unverified because no browser surfaces were available.
+
 ## Weekly tomatoes and unified startup — November 10, 2026
 
 - Released commit `3af69a0c9c1a9a4b71bcdeafc8b99ed25169d28e` to [the live portal](https://scholarship-ato-kh.vercel.app/) through staged production deployment `dpl_FnXU6hAYdS8f8gnacTasGZjZ7Xz4` (`scholarship-ato-hkept0gz1-ato-kh.vercel.app`). Vercel independently confirmed the intended project, commit, production target and `pdx1` region. Previous deployment `dpl_fidqXYcNSwNwxLVFgHbXrSFti9v8` is available for rollback.
