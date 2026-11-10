@@ -1,7 +1,7 @@
 import { readImage, uploadImage } from './credit-ui.mjs';
 import { mountSyllabusPreview } from './syllabus-ui.mjs';
 
-export async function mountProfile(container, { api, esc, loading, isCurrent, sandbox = false, config = {} }) {
+export async function mountProfile(container, { api, esc, loading, isCurrent, sandbox = false, config = {}, onSubmitAssignment }) {
   const { classes, accountCredits, approvedCredits, creditsManaged } = await api('/api/classes');
   if (!isCurrent()) return;
   const formatHours = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -9,7 +9,7 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
   const total = hasHours(accountCredits) ? accountCredits : approvedCredits;
   container.innerHTML = `<h2>My classes</h2><p class="muted">Add each class’s credit hours and syllabus. The Chair approves both before the class’s hours count and assignments unlock.</p>${hasHours(total) ? `<p class="class-credit-total"><strong>${esc(formatHours(total))} approved credit hours</strong>${creditsManaged ? '<br><small>From your approved classes.</small>' : '<br><small>Your current account total stays in place until the Chair approves class credit hours.</small>'}</p>` : ''}<div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
   const list = container.querySelector('.profile-class-list'), editor = container.querySelector('.class-editor'), feedback = container.querySelector('.profile-feedback');
-  const reload = () => mountProfile(container, { api, esc, loading, isCurrent, sandbox, config });
+  const reload = () => mountProfile(container, { api, esc, loading, isCurrent, sandbox, config, onSubmitAssignment });
   const disableControls = () => {
     const controls = [...container.querySelectorAll('button,input')].map(control => [control, control.disabled]);
     controls.forEach(([control]) => { control.disabled = true; });
@@ -25,6 +25,12 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
     card.className = 'profile-class-card';
     card.innerHTML = `<div class="class-card-heading"><h3>${esc(course.name)}</h3><span class="status ${statusClass}">${status}</span></div><p class="class-credit-hours">${hours}</p>${course.removalPending ? '<p class="muted">These hours remain in your total until the Chair approves removal.</p>' : course.removalReview?.decision === 'denied' ? `<p class="review-note"><strong>Removal denied.</strong> ${esc(course.removalReview.note || '')}</p>` : ''}${course.reviewNote ? `<p class="review-note">${esc(course.reviewNote)}</p>` : ''}${course.syllabusId ? '<details class="syllabus-reference"><summary>View syllabus</summary><div class="syllabus-preview"></div></details>' : ''}<div class="class-card-actions"><button class="text-btn" type="button" data-replace${course.removalPending ? ' disabled' : ''}>${course.syllabusId ? 'Update class' : 'Add hours and syllabus'}</button><button class="text-btn" type="button" data-remove${course.removalPending ? ' disabled' : ''}>Remove class</button></div><div class="class-remove-confirm" hidden><p>${approved ? 'Ask the Chair to remove this class? Its approved hours stay in your total until the request is approved.' : 'Remove this class from your current list?'} Existing submissions keep their syllabus reference.</p><button class="button ghost" type="button" data-cancel-remove>Cancel</button> <button class="button danger" type="button" data-confirm-remove>${approved ? 'Request removal' : 'Remove class'}</button></div><div class="class-feedback" role="status"></div>`;
     list.append(card);
+    if (onSubmitAssignment && course.id && course.status === 'approved' && !course.removalPending) {
+      const submit = document.createElement('button');
+      submit.type = 'button'; submit.className = 'button gold small'; submit.textContent = 'Submit an assignment';
+      submit.onclick = () => { if (isCurrent()) onSubmitAssignment(course); };
+      card.querySelector('.class-card-actions').prepend(submit);
+    }
     card.querySelector('[data-replace]').onclick = () => edit(course, card.querySelector('[data-replace]'));
     const details = card.querySelector('details');
     if (details) details.ontoggle = () => {
@@ -92,7 +98,7 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
   container.querySelector('#add-class').onclick = () => edit();
 }
 
-export function mountCoursePicker(input, classes, esc) {
+export function mountCoursePicker(input, classes, esc, { classesHref = '#profile', onChange = () => {} } = {}) {
   const select = document.createElement('select');
   select.id = 'saved-course';
   input.before(select);
@@ -103,7 +109,7 @@ export function mountCoursePicker(input, classes, esc) {
   hint.className = 'syllabus-course-hint';
   input.after(hint);
   const field = input.closest('.field'), label = field.querySelector('label');
-  const form = input.closest('form'), submit = form.querySelector('button[type="submit"]');
+  const form = input.closest('form');
   let currentActivity = null, previousMode = null;
   const sync = () => {
     const graded = Boolean(currentActivity?.grade), noCourse = ['meeting', 'calendar'].includes(currentActivity?.id);
@@ -117,11 +123,12 @@ export function mountCoursePicker(input, classes, esc) {
       input.required = other && !noCourse && currentActivity?.id !== 'night';
     }
     label.htmlFor = select.hidden ? input.id : select.id;
+    form.querySelectorAll('button[type="submit"]').forEach(submit => submit.disabled = Boolean(form.dataset?.uploading || form.dataset?.saving || graded && !select.value));
   };
   const update = activity => {
     currentActivity = activity;
     const graded = Boolean(activity?.grade), mode = graded ? 'graded' : 'other';
-    const approved = classes.filter(course => course.id && course.status === 'approved');
+    const approved = classes.filter(course => course.id && course.status === 'approved' && !course.removalPending);
     if (mode !== previousMode) {
       const previousName = select.selectedOptions[0]?.textContent || input.value;
       select.innerHTML = graded
@@ -129,6 +136,7 @@ export function mountCoursePicker(input, classes, esc) {
         : `<option value="">Choose a class</option>${classes.map(course => `<option value="${esc(course.name)}">${esc(course.name)}</option>`).join('')}<option value="__other__">Other / not a class</option>`;
       const matching = [...select.options].find(option => option.textContent === previousName && option.value);
       if (matching) select.value = matching.value;
+      else if (graded && approved.length === 1) select.value = approved[0].id;
       previousMode = mode;
     }
     const noCourse = ['meeting', 'calendar'].includes(activity?.id);
@@ -136,14 +144,29 @@ export function mountCoursePicker(input, classes, esc) {
     select.hidden = noCourse;
     select.disabled = noCourse || (graded && !approved.length);
     select.required = !noCourse && activity?.id !== 'night';
-    submit.disabled = graded && !approved.length;
     hint.hidden = !graded;
-    hint.innerHTML = approved.length ? 'Only classes with an approved syllabus are available.' : 'Add a class and upload its syllabus in <a href="#profile">My profile</a>. Assignments unlock after Chair approval.';
+    const pending = classes.filter(course => course.status === 'pending').length;
+    hint.innerHTML = approved.length ? 'Choose an approved class. Its syllabus is included with your assignment.' :
+      `${pending ? `${pending} ${pending === 1 ? 'class is' : 'classes are'} awaiting review. ` : ''}Assignments unlock after the chair approves a class and its syllabus. <a href="${esc(classesHref)}">${classesHref === '#classes' ? 'Open My classes' : 'Open My profile'}</a>.`;
     const link = hint.querySelector('a');
     if (link) link.onclick = () => input.closest('dialog')?.close();
     sync();
   };
-  select.onchange = () => { select.name = currentActivity?.grade ? 'classId' : select.value === '__other__' ? '' : 'course'; sync(); };
-  input.coursePicker = { update };
+  select.onchange = () => {
+    select.name = currentActivity?.grade ? 'classId' : select.value === '__other__' ? '' : 'course';
+    sync(); onChange();
+  };
+  const restore = fields => {
+    if (currentActivity?.grade) {
+      if (fields.classId) select.value = [...select.options].some(option => option.value === fields.classId) ? fields.classId : '';
+    } else if (fields.course || fields.classId) {
+      const course = classes.find(course => course.id === fields.classId)?.name || fields.course || '';
+      select.value = [...select.options].some(option => option.value === course) ? course : '__other__';
+      input.value = course;
+    }
+    select.name = currentActivity?.grade ? 'classId' : select.value === '__other__' ? '' : 'course';
+    sync();
+  };
+  input.coursePicker = { update, restore };
   return input.coursePicker;
 }

@@ -42,7 +42,11 @@ let user,
   logs = [],
   busy = false,
   modalRevision = 0,
-  submissionPageIndex = 0;
+  submissionPageIndex = 0,
+  submissionSearch = "",
+  submissionMember = "",
+  submissionOrder = "oldest",
+  submissionDraft = null;
 const modal = $("#modal"),
   main = $("#main"),
   person = $("#persona");
@@ -187,6 +191,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["classes", "My classes"],
         ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
@@ -227,6 +232,7 @@ function route() {
   if (p === "access") p = "faq";
   if (user?.role === "chair" && ["overview", "submissions", "calendar"].includes(p))
     p = "queue";
+  if (user?.role === "chair" && p === "classes") p = "syllabi";
   if (
     user?.role === "member" &&
     ["queue", "members", "roster", "audit", "semester", "credit-review", "syllabi"].includes(p)
@@ -310,6 +316,40 @@ function overview() {
 function filters() {
   return `<div class="filters" aria-label="Filter submissions">${["all", "pending", "approved", "denied"].map((f) => `<button class="filter ${f === filter ? "active" : ""}" data-action="filter" data-value="${f}" aria-pressed="${f === filter}">${f === "all" ? "All submissions" : f === "pending" ? "Pending review" : f[0].toUpperCase() + f.slice(1)} <span>(${submissions.filter((s) => f === "all" || s.status === f).length})</span></button>`).join("")}</div>`;
 }
+function visibleSubmissions() {
+  const query = submissionSearch.trim().toLocaleLowerCase();
+  return submissions.filter(item => (filter === 'all' || item.status === filter) &&
+    (user.role !== 'chair' || !submissionMember || item.owner === submissionMember) &&
+    (!query || [item.title, item.course, item.memberName, submissionActivity(item).name].join(' ').toLocaleLowerCase().includes(query)))
+    .sort((a, b) => {
+      const direction = user.role === 'chair' && submissionOrder === 'oldest' ? 1 : -1;
+      return direction * a.submittedAt.localeCompare(b.submittedAt) || a.id.localeCompare(b.id);
+    });
+}
+function submissionToolbar() {
+  const chair = user.role === 'chair';
+  const people = [...new Map(submissions.map(item => [item.owner, item.memberName])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  return `<div class="submission-toolbar"><div class="field"><label for="submission-search">Search ${chair ? 'member, assignment or class' : 'assignment or class'}</label><input id="submission-search" type="search" value="${esc(submissionSearch)}" placeholder="Search submissions" autocomplete="off"></div>${chair ? `<div class="field"><label for="submission-member">Member</label><select id="submission-member"><option value="">All members</option>${people.map(([id, name]) => `<option value="${esc(id)}"${submissionMember === id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select></div><div class="field"><label for="submission-order">Review order</label><select id="submission-order"><option value="oldest"${submissionOrder === 'oldest' ? ' selected' : ''}>Oldest first</option><option value="newest"${submissionOrder === 'newest' ? ' selected' : ''}>Newest first</option></select></div>` : ''}</div><p id="submission-result-count" class="footnote" role="status" aria-live="polite"></p>`;
+}
+function paintSubmissionResults() {
+  const destination = $('#submission-results');
+  if (!destination) return;
+  const visible = visibleSubmissions();
+  destination.innerHTML = visible.length ? rows(visible, user.role === 'chair') :
+    '<div class="empty"><h3>No matching submissions</h3><p>Try another search or status.</p><button class="button ghost" data-action="clear-submission-filters">Clear filters</button></div>';
+  $('#submission-result-count').textContent = `${visible.length} ${visible.length === 1 ? 'submission' : 'submissions'} in this view`;
+  const next = $('[data-action="review-next"]');
+  if (next) next.disabled = !visible.some(item => item.status === 'pending');
+}
+function wireSubmissionToolbar() {
+  $('#submission-search').oninput = event => { submissionSearch = event.target.value; submissionPageIndex = 0; paintSubmissionResults(); };
+  if (user.role === 'chair') {
+    $('#submission-member').onchange = event => { submissionMember = event.target.value; submissionPageIndex = 0; paintSubmissionResults(); };
+    $('#submission-order').onchange = event => { submissionOrder = event.target.value; submissionPageIndex = 0; paintSubmissionResults(); };
+  }
+  paintSubmissionResults();
+}
 function submissionPage() {
   main.innerHTML =
     heading(
@@ -318,23 +358,18 @@ function submissionPage() {
       "",
       newButton(),
     ) +
-    filters() +
-    `<section class="panel recent">${rows(submissions.filter((s) => filter === "all" || s.status === filter))}</section><p class="footnote">*Estimates await chair approval. Denied submissions earn no points.</p>`;
+    filters() + submissionToolbar() +
+    `<section class="panel recent" id="submission-results"></section><p class="footnote">*Estimates await chair approval. Denied submissions earn no points.</p>`;
+  wireSubmissionToolbar();
 }
 function queue() {
-  const pending = submissions.filter((s) => s.status === "pending"),
-    approved = submissions.filter((s) => s.status === "approved");
-  main.innerHTML =
-    heading(
-      "",
-      "Review queue",
-      "Approve or deny pending submissions.",
-    ) +
-    `<div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting your review</b>${new Set(pending.map((s) => s.owner)).size} members with pending claims</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${approved.reduce((n, s) => n + s.awarded, 0)} points awarded</span></div><div class="mini-stat"><strong>${roster.filter((m) => m.approved < m.checkpoint).length}</strong><span><b>Below next checkpoint</b>${date(checkpointDate())} · no automatic sanctions</span></div></div><div class="notice info"><strong>One review updates the member’s record.</strong> Approve a claim to award points, or deny it with a reason. Members see your decision and note.</div>${filters()}<section class="panel recent"><div class="section-heading"><h2>${filter === "pending" ? "PENDING SUBMISSIONS" : "SUBMISSION REGISTER"}</h2><span class="muted">${esc(rules.semester?.name || "Current semester")}</span></div>${rows(
-      submissions.filter((s) => filter === "all" || s.status === filter),
-      true,
-    )}</section><p class="bottom-note">${shield()}Academic evidence is reserved for the Scholarship Chair.${isDemo() ? " Demo identities are freely switchable." : ""}</p><p class="footnote">*Estimated points. Fractional estimates require an explicit whole-point decision and explanation.</p>`;
+  const pending = submissions.filter(item => item.status === 'pending');
+  const approved = submissions.filter(item => item.status === 'approved');
+  main.innerHTML = heading('', 'Review queue', '') +
+    `<section class="panel review-workflow"><div><h2>Review assignments</h2><p>Work through pending submissions, with evidence beside each decision.</p></div><div class="heading-actions"><button class="button ghost" data-action="refresh-submissions">Refresh</button><a class="button ghost" href="#syllabi">Review classes</a><button class="button gold" data-action="review-next">Review next submission</button></div></section><div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting review</b>${new Set(pending.map(item => item.owner)).size} members</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${approved.reduce((sum, item) => sum + item.awarded, 0)} points awarded</span></div><div class="mini-stat"><strong>${roster.filter(member => member.approved < member.checkpoint).length}</strong><span><b>Below next checkpoint</b>${date(checkpointDate())}</span></div></div>${filters()}${submissionToolbar()}<section class="panel recent" id="submission-results"></section><p class="footnote">Whole-point awards are required. Explain denials or changes to the estimated points.</p>`;
+  wireSubmissionToolbar();
 }
+
 function membersPage() {
   main.innerHTML =
     heading(
@@ -342,7 +377,7 @@ function membersPage() {
       "Member points",
       "Approved points and checkpoint targets for each member.",
     ) +
-    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Manage member</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
+    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>${date(checkpointDate())} target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>${isDemo() ? "Fictional member" : esc(m.email || "")}</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending ? `<button class="table-link" data-action="review-member" data-id="${esc(m.id)}" aria-label="Review ${m.pending} pending submissions from ${esc(m.name)}">${m.pending} to review</button>` : "0"}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Manage member</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. The portal does not determine disciplinary outcomes.</div>`;
 }
 async function openPointAdjustments(memberId) {
   const owner = user.id;
@@ -411,13 +446,20 @@ function earnPage() {
 }
 async function syllabusReviewPage() {
   if (user.role !== "chair") return;
-  const owner = user.id;
+  const owner = user.id, epoch = sessionEpoch;
   main.innerHTML = heading("", "Classes", "") + `<section class="panel syllabus-shell">${loading("Loading classes…")}</section>`;
   const container = main.querySelector(".syllabus-shell");
-  const isCurrent = () => user?.id === owner && route() === "syllabi" && container.isConnected;
+  const isCurrent = () => user?.id === owner && sessionEpoch === epoch && route() === "syllabi" && container.isConnected;
   try {
     const { mountSyllabusQueue } = await import("/syllabus-ui.mjs");
-    if (isCurrent()) await mountSyllabusQueue(container, { api, esc, loading, isCurrent });
+    if (isCurrent()) await mountSyllabusQueue(container, { api, esc, loading, isCurrent, onReviewed: async () => {
+      try {
+        const [list, members] = await Promise.all([loadSubmissionList(), api('/api/members')]);
+        if (user?.id !== owner || sessionEpoch !== epoch) return;
+        submissions = list.submissions; roster = members.members;
+        navigation();
+      } catch { if (isCurrent()) toast('Class decision saved. Refresh the assignment queue before awarding points.'); }
+    } });
   } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
 async function loadSubmissionSyllabus(container, submission) {
@@ -544,23 +586,48 @@ async function profilePage() {
   try {
     const { mountProfile } = await import("/profile-ui.mjs");
     if (user?.id !== owner || route() !== "profile" || !container.isConnected) return;
-    await mountProfile(container, { api, esc, loading, config: appConfig,
+    await mountProfile(container, { api, esc, loading, config: appConfig, onSubmitAssignment: course => newSubmission({ classId: course.id }),
       isCurrent: () => user?.id === owner && route() === "profile" && container.isConnected });
   } catch (error) {
     if (container.isConnected) container.innerHTML = `<p class="error">${esc(error.message)}</p>`;
   }
 }
-async function loadCoursePicker() {
-  const input = $("#course"), owner = user.id;
+async function classesPage() {
+  if (user.role !== 'member') return;
+  const owner = user.id, epoch = sessionEpoch;
+  main.innerHTML = heading('', 'My classes', '', newButton()) + `<section class="panel profile-shell">${loading('Loading classes…')}</section>`;
+  const container = main.querySelector('.profile-shell');
+  const isCurrent = () => container.isConnected && user?.id === owner && sessionEpoch === epoch && route() === 'classes';
+  try {
+    const { mountProfile } = await import('/profile-ui.mjs');
+    if (isCurrent()) await mountProfile(container, { api, esc, loading, config: appConfig, isCurrent,
+      onSubmitAssignment: course => newSubmission({ classId: course.id }) });
+  } catch (error) { if (isCurrent()) container.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`; }
+}
+async function loadCoursePicker(fields = {}, supplied = null) {
+  const input = $("#course"), owner = user.id, epoch = sessionEpoch;
   const indicator = document.createElement("div");
   indicator.className = "course-loading";
   indicator.innerHTML = loading("Loading classes…", true);
   input.after(indicator);
   try {
-    const [profile, { mountCoursePicker }] = await Promise.all([api("/api/classes"), import("/profile-ui.mjs")]);
-    if (input.isConnected && user?.id === owner) { mountCoursePicker(input, profile.classes, esc); updateSubmissionPrompts(activity($("#activity").value)); }
+    const data = supplied ? supplied.then(result => { if (result.error) throw result.error; return result.profile; }) : api('/api/classes');
+    const [profile, { mountCoursePicker }] = await Promise.all([data, import("/profile-ui.mjs")]);
+    if (input.isConnected && user?.id === owner && sessionEpoch === epoch) {
+      mountCoursePicker(input, profile.classes, esc, { classesHref: '#classes', onChange: () => {
+        updateSubmissionButtons(input.closest('form')); rememberSubmissionDraft(input.closest('form'), true);
+      } });
+      const category = activity($('#activity').value);
+      if (category) updateSubmissionPrompts(category); else input.coursePicker.update(null);
+      input.coursePicker.restore(fields);
+      estimate();
+      updateSubmissionButtons(input.closest('form'));
+    }
   } catch {
-    if (input.isConnected) indicator.innerHTML = '<small>Classes unavailable. Reopen this form to retry; assignments require an approved syllabus.</small>';
+    if (input.isConnected) {
+      indicator.innerHTML = '<small>Classes could not load. Your form is still here.</small><button class="text-btn" type="button">Retry loading classes</button>';
+      indicator.querySelector('button').onclick = () => { indicator.remove(); loadCoursePicker(fields); };
+    }
     return;
   } finally {
     if (indicator.querySelector(".loading-state")) indicator.remove();
@@ -604,6 +671,7 @@ function render() {
       canvas: canvasPage,
       faq: faqPage,
       profile: profilePage,
+      classes: classesPage,
       "credit-review": () => { location.hash = "syllabi"; },
       syllabi: syllabusReviewPage,
       api: apiPage,
@@ -614,7 +682,9 @@ function render() {
   )();
 }
 function openModal(title, subtitle, body) {
+  rememberSubmissionDraft();
   modalRevision++;
+  modal.classList.remove('submission-review-dialog');
   $("#modal-content").innerHTML =
     `<div class="modal-heading"><div><h2>${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ""}</div><button class="close" data-action="close" aria-label="Close dialog">×</button></div>${body}`;
   if (!modal.open) modal.showModal();
@@ -687,8 +757,7 @@ function formError(message) {
   e.scrollIntoView({ block: "nearest" });
 }
 function activityPicker() {
-  const first = activeActivities()[0];
-  return `<div class="activity-picker"><input id="activity-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="activity-options" value="${esc(first.name)}" autocomplete="off" required><button id="activity-open" type="button" aria-label="Show activity types">▾</button><div id="activity-options" class="activity-options" role="listbox" hidden></div><input id="activity" name="activity" type="hidden" value="${esc(first.id)}"></div><small>Type to find an activity or open the list.</small>`;
+  return `<div class="activity-picker"><input id="activity-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="activity-options" placeholder="Choose or search for an activity" autocomplete="off" required><button id="activity-open" type="button" aria-label="Show activity types">▾</button><div id="activity-options" class="activity-options" role="listbox" hidden></div><input id="activity" name="activity" type="hidden" value=""></div><small>Type to find an activity or open the list.</small>`;
 }
 function wireActivityPicker() {
   const search = $("#activity-search"), selected = $("#activity"),
@@ -723,6 +792,7 @@ function wireActivityPicker() {
     if (!match) return;
     search.value = match.name;
     selected.value = match.id;
+    $('#claim-form').dataset.dirty = 'true';
     close();
     updateForm();
     if (matchMedia("(pointer: coarse)").matches) search.blur();
@@ -768,9 +838,40 @@ function wireActivityPicker() {
   }, { signal: pickerEvents.signal });
   modal.addEventListener("close", () => pickerEvents.abort(), { once: true });
 }
-async function newSubmission() {
+function currentSubmissionDraft() {
+  return submissionDraft?.owner === user?.id && submissionDraft.epoch === sessionEpoch &&
+    submissionDraft.semester === JSON.stringify(rules?.semester) ? submissionDraft : null;
+}
+function rememberSubmissionDraft(form = $('#claim-form'), changed = false) {
+  if (!form || form.dataset.submitted || form.dataset.saving || form.dataset.owner !== user?.id || Number(form.dataset.epoch) !== sessionEpoch) return;
+  if (changed) form.dataset.dirty = 'true';
+  if (!form.dataset.dirty) return;
+  const values = Object.fromEntries(new FormData(form));
+  const fields = {};
+  for (const key of ['activity', 'title', 'course', 'classId', 'date', 'grade', 'quantity', 'note', 'evidence', 'confirm'])
+    if (values[key] !== undefined) fields[key] = values[key];
+  submissionDraft = { id: form.dataset.draftId, owner: user.id, epoch: sessionEpoch, semester: JSON.stringify(rules?.semester), fields,
+    evidenceLabel: form.dataset.uploading ? form.dataset.previousEvidenceLabel || '' : form.querySelector('#upload-status')?.textContent || '' };
+}
+function updateSubmissionButtons(form = $('#claim-form')) {
+  if (!form) return;
+  const category = activity(form.querySelector('#activity').value);
+  const blocked = !category || form.dataset.saving || form.dataset.uploading ||
+    (category?.grade && !form.querySelector('#saved-course')?.value);
+  form.querySelectorAll('button[type="submit"]').forEach(button => button.disabled = Boolean(blocked));
+}
+function restoreSubmissionFields(form, fields) {
+  for (const key of ['title', 'date', 'grade', 'quantity', 'note', 'evidence']) {
+    const field = form.elements.namedItem(key);
+    if (field && fields[key] !== undefined) field.value = fields[key];
+  }
+  form.elements.namedItem('confirm').checked = fields.confirm === 'on';
+}
+async function newSubmission(prefill = {}) {
   if (user.role !== "member") return;
+  if (busy) { toast('Your submission is still saving. Please wait a moment.'); return; }
   const account = user, epoch = sessionEpoch;
+  const courseData = api('/api/classes').then(profile => ({ profile }), error => ({ error }));
   openModal("NEW SUBMISSION", "", `<div id="submission-loading">${loading("Loading submission form…")}</div>`);
   const pending = $("#submission-loading");
   const current = () => pending.isConnected && modal.open && user === account && sessionEpoch === epoch;
@@ -790,19 +891,44 @@ async function newSubmission() {
     openModal("NEW SUBMISSION", "", '<p>No point categories are available right now. Ask the Scholarship Chair to enable a category.</p><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>');
     return;
   }
+  const draft = prefill.fresh ? null : currentSubmissionDraft();
+  const fields = draft ? draft.fields : prefill;
+  const earliest = new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10);
+  const minimumDate = rules.semester?.startDate && rules.semester.startDate > earliest ? rules.semester.startDate : earliest;
+  const maximumDate = rules.semester?.endDate && rules.semester.endDate < rules.today ? rules.semester.endDate : rules.today;
+  if (minimumDate > maximumDate || !isDemo() && rules.semester?.endDate && rules.today > rules.semester.endDate) {
+    const message = rules.semester?.startDate > rules.today
+      ? `Submissions open on ${rules.semester.startDate}.`
+      : 'Submissions are closed for this semester.';
+    openModal('NEW SUBMISSION', '', `<p class="notice">${esc(message)}</p><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`);
+    return;
+  }
   openModal(
-    "SUBMIT YOUR EFFORT",
+    "NEW SUBMISSION",
     isDemo()
       ? "Add a fictional activity for the Scholarship Chair to review."
       : "Add an activity and evidence for the Scholarship Chair to review.",
-    `<form id="claim-form"><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${new Date(Date.parse(rules.today) - 14 * 86400000).toISOString().slice(0, 10)}" max="${rules.today}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
+    `<form id="claim-form" data-owner="${esc(user.id)}" data-epoch="${sessionEpoch}">${draft ? '<div class="notice info">Your unfinished submission was restored. <button class="text-btn" type="button" data-action="discard-submission-draft">Start over</button></div>' : ''}<p class="footnote">Choose an activity, add its details, then attach evidence. Drafts stay in this tab until you sign out or reload.</p><div class="form-grid"><div class="field span2"><label for="activity-search">Activity type</label>${activityPicker()}</div><div class="field span2"><label for="title">Assignment or activity title</label><input id="title" name="title" required maxlength="120" placeholder="e.g. Calculus II · Quiz 4"></div><div class="field"><label for="course">Course</label><input id="course" name="course" required maxlength="80" placeholder="e.g. MTH 2002"></div><div class="field"><label for="date">Activity date</label><input id="date" name="date" type="date" value="${rules.today}" min="${minimumDate}" max="${maximumDate}" required><small>${isDemo() ? "Demo date" : "Today"}: ${esc(rules.today)}.</small></div><div id="dynamic-field" class="field span2"></div></div><div class="preview-points"><div>Estimated points<small>Only awarded after chair approval · ${money(points.multiplier)}× credit multiplier</small></div><strong id="estimate">—</strong></div><div class="field"><label>Supporting evidence</label><p id="proof-hint" class="footnote"></p><div id="attachment" class="attachment"><p>${isDemo() ? "Upload a fictional sample file, or use the built-in evidence record." : "Upload a PDF, PNG, or JPEG, up to 5 MB. Only you and the chair can retrieve it."}</p><label for="evidence-file">Choose evidence file</label><input id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"><div id="upload-status" role="status" aria-live="polite"></div>${isDemo() ? '<button class="button ghost small" type="button" data-action="sample" style="margin-top:12px">Use built-in sample</button>' : ""}</div><input id="evidence" name="evidence" type="hidden" value=""></div><div class="field"><label for="note">Note for the chair <span class="muted">(optional)</span></label><textarea id="note" name="note" maxlength="1000" placeholder="Any details that help verify the activity."></textarea></div><label class="checkbox-line"><input type="checkbox" name="confirm" required><span>This is a new activity, and I have not claimed it under another category.</span></label><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Keep draft & close</button><button class="button ghost" type="submit" name="afterSubmit" value="another">Submit & add another</button><button class="button gold" type="submit">Submit for review</button></div></form>`,
   );
   wireActivityPicker();
   $("#evidence-file").addEventListener("change", uploadEvidence);
-  loadCoursePicker();
-  $("#claim-form").addEventListener("input", estimate);
-  $("#claim-form").addEventListener("submit", submitClaim);
+  const form = $('#claim-form');
+  form.dataset.draftId = draft?.id || crypto.randomUUID();
+  const initialCategory = activity(fields.activity);
+  if (initialCategory) { $('#activity').value = initialCategory.id; $('#activity-search').value = initialCategory.name; }
   updateForm();
+  restoreSubmissionFields(form, fields);
+  if (draft) {
+    form.dataset.dirty = 'true';
+    if (fields.evidence) $('#upload-status').textContent = draft.evidenceLabel || 'Previously uploaded evidence attached.';
+  }
+  loadCoursePicker(fields, courseData);
+  form.addEventListener('input', () => { estimate(); rememberSubmissionDraft(form, true); updateSubmissionButtons(form); });
+  form.addEventListener('change', () => { rememberSubmissionDraft(form, true); updateSubmissionButtons(form); });
+  form.addEventListener('submit', submitClaim);
+  updateSubmissionButtons(form);
+  if (initialCategory) $('#title').focus();
+  else $('#activity-search').focus();
 }
 function updateSubmissionPrompts(a) {
   if (!a) return;
@@ -831,7 +957,7 @@ function updateSubmissionPrompts(a) {
   if (saved) { saved.required = !optional; saved.disabled = noCourse; }
   course.disabled = noCourse || !!(saved && saved.selectedIndex !== saved.options.length - 1);
   if (course.coursePicker) course.coursePicker.update(a);
-  else $("#claim-form button[type=submit]").disabled = Boolean(a.grade);
+  updateSubmissionButtons();
   $("#note").placeholder = a.id === "night" ? "Anything the chair should know about this study night" : a.id === "partner" || a.id === "group" ? "Names of the brothers you studied with and any relevant details" : a.id === "office" ? "Professor’s name and topics discussed" : "Any details that help the chair verify this activity";
 }
 function updateForm() {
@@ -844,12 +970,14 @@ function updateForm() {
   }
   updateSubmissionPrompts(a);
   $("#proof-hint").textContent = a.proof.replace("A sample screenshot", "A screenshot");
+  const grade = $('#grade')?.value || '', quantity = $('#quantity')?.value || '';
   $("#dynamic-field").innerHTML = a.grade
-    ? '<label for="grade">Grade (%)</label><input id="grade" name="grade" type="number" min="0" max="100" step="0.01" value="95" required>'
+    ? `<label for="grade">Grade (%)</label><input id="grade" name="grade" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(grade)}" placeholder="Enter your actual grade" required>`
     : a.hours
-      ? '<label for="quantity">Hours completed</label><input id="quantity" name="quantity" type="number" min="0.01" max="24" step="0.01" value="1" required>'
+      ? `<label for="quantity">Hours completed</label><input id="quantity" name="quantity" type="number" inputmode="decimal" min="0.01" max="24" step="0.01" value="${esc(quantity)}" placeholder="Enter hours completed" required>`
       : "";
   estimate();
+  updateSubmissionButtons();
 }
 function estimate() {
   const form = $("#claim-form");
@@ -858,7 +986,7 @@ function estimate() {
     a = activity(data.activity),
     g = data.grade,
     q = data.quantity ?? 1;
-  if (!a) {
+  if (!a || a.grade && (g === '' || g === undefined) || a.hours && (data.quantity === '' || data.quantity === undefined)) {
     $("#estimate").textContent = "—";
     return;
   }
@@ -872,45 +1000,56 @@ function estimate() {
 }
 async function submitClaim(e) {
   e.preventDefault();
-  if (!$("#activity").value) {
-    formError("Choose an activity type from the list.");
-    $("#activity-search").focus();
-    return;
-  }
-  if (activity($("#activity").value)?.grade && !$("#saved-course")?.value) {
-    formError("Choose a class with an approved syllabus. Upload syllabi in My profile first.");
-    return;
-  }
   if (busy) return;
-  busy = true;
   const form = e.target, owner = user?.id, epoch = sessionEpoch;
   const current = () => form.isConnected && modal.open && user?.id === owner && sessionEpoch === epoch;
-  const button = e.submitter || e.target.querySelector('button[type="submit"]');
-  button.disabled = true;
-  const data = Object.fromEntries(new FormData(e.target));
-  data.categoryVersion = rules.categoryVersion;
-  if (["night", "meeting", "calendar"].includes(data.activity) && !data.course?.trim()) data.course = activity(data.activity).name;
-  if (data.evidence && data.evidence !== "sample")
-    data.evidenceId = data.evidence;
-  data.confirm = data.confirm === "on";
-  if (data.grade) data.grade = Number(data.grade);
-  if (data.quantity) data.quantity = Number(data.quantity);
-  try {
-    await api("/api/submissions", { method: "POST", body: data });
-    if (!current()) return;
-    window.atoCelebrate.submission();
-    modal.close();
-    filter = "pending";
-    location.hash = "submissions";
-    await refresh();
-    toast("Submission sent. Points will count after chair approval.");
-  } catch (err) {
-    if (current()) formError(err.message);
-  } finally {
-    busy = false;
-    button.disabled = false;
+  if (!$('#activity').value) { formError('Choose an activity type.'); $('#activity-search').focus(); return; }
+  if (form.dataset.uploading) { formError('Wait for the evidence upload to finish.'); return; }
+  if (activity($('#activity').value)?.grade && !$('#saved-course')?.value) {
+    formError('Choose a class with an approved syllabus. Add or check it in My classes.'); return;
   }
+  if (!$('#evidence').value) { formError('Attach your supporting evidence before submitting.'); $('#evidence-file').focus(); return; }
+  rememberSubmissionDraft(form, true);
+  const data = Object.fromEntries(new FormData(form));
+  const another = e.submitter?.value === 'another';
+  data.categoryVersion = rules.categoryVersion;
+  if (['night', 'meeting', 'calendar'].includes(data.activity) && !data.course?.trim()) data.course = activity(data.activity).name;
+  if (data.evidence !== 'sample') data.evidenceId = data.evidence;
+  data.confirm = data.confirm === 'on';
+  if (data.grade !== undefined && data.grade !== '') data.grade = Number(data.grade);
+  if (data.quantity !== undefined && data.quantity !== '') data.quantity = Number(data.quantity);
+  busy = true;
+  form.dataset.saving = 'true';
+  const controls = [...form.querySelectorAll('button,input,select,textarea')].map(control => [control, control.disabled]);
+  controls.forEach(([control]) => control.disabled = true);
+  let next = null;
+  try {
+    const result = await api('/api/submissions', { method: 'POST', body: data });
+    form.dataset.submitted = 'true';
+    if (submissionDraft?.id === form.dataset.draftId) submissionDraft = null;
+    if (!current()) return;
+    submissions = [{ ...result.submission, memberName: user.name }, ...submissions.filter(item => item.id !== result.submission.id)];
+    points = result.points;
+    window.atoCelebrate.submission();
+    filter = 'pending'; submissionSearch = ''; submissionPageIndex = 0;
+    toast('Submission sent for review.');
+    if (another) {
+      next = { fresh: true, activity: data.activity, classId: data.classId, course: data.course, date: data.date };
+      navigation();
+    } else {
+      modal.close();
+      if (location.hash === '#submissions') render(); else location.hash = 'submissions';
+    }
+  } catch (error) { if (current()) formError(error.message); }
+  finally {
+    busy = false;
+    delete form.dataset.saving;
+    controls.forEach(([control, disabled]) => control.disabled = disabled);
+    if (current()) updateSubmissionButtons(form);
+  }
+  if (next && current()) await newSubmission(next);
 }
+
 async function detail(id) {
   const revision = ++modalRevision, owner = user?.id, epoch = sessionEpoch;
   const current = () => revision === modalRevision && user?.id === owner && sessionEpoch === epoch;
@@ -926,7 +1065,19 @@ async function detail(id) {
       `${esc(s.id)} · ${esc(s.memberName)}`,
       `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, ${esc(s.date.slice(0, 4))}</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}${a.grade || s.syllabus ? `<section id="submission-syllabus">${loading("Loading syllabus reference…", true)}</section>` : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>${s.evidenceId ? "Private evidence file" : s.source === "canvas" ? "Canvas grade record" : "Fictional activity record"}</strong><small>${s.evidenceId ? "Private preview · owner and chair only" : s.source === "canvas" ? "Imported with this member’s authorization" : "Generated demo evidence"}</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${esc(s.id)}" data-version="${esc(s.reviewVersion)}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
     );
-    if (canReview) $("#review-form").addEventListener("submit", review);
+    if (canReview) {
+      modal.classList.add('submission-review-dialog');
+      const form = $('#review-form');
+      const details = document.createElement('div');
+      details.className = 'submission-review-details';
+      form.before(details);
+      for (const child of [...form.parentElement.children])
+        if (child !== form && child !== details && !child.classList.contains('modal-heading')) details.append(child);
+      form.querySelector('.modal-actions').insertAdjacentHTML('beforebegin', '<label class="checkbox-line review-next-choice"><input type="checkbox" name="reviewNext" checked><span>Open the next pending submission after this decision</span></label>');
+      form.addEventListener('submit', review);
+      const title = $('#modal-content h2');
+      title.tabIndex = -1; title.focus();
+    }
     evidence(id);
     if (a.grade || s.syllabus) loadSubmissionSyllabus($("#submission-syllabus"), s);
   } catch (e) {
@@ -935,42 +1086,42 @@ async function detail(id) {
 }
 async function review(e) {
   e.preventDefault();
-  if (busy) return;
-  const decision = e.submitter.value,
-    form = e.target,
-    data = Object.fromEntries(new FormData(form));
+  if (busy || e.target.dataset.reviewed) return;
+  const decision = e.submitter.value, form = e.target;
+  const data = Object.fromEntries(new FormData(form));
   const owner = user?.id, epoch = sessionEpoch;
   const current = () => form.isConnected && modal.open && user?.id === owner && sessionEpoch === epoch;
+  const continueReview = Boolean(form.querySelector?.('[name="reviewNext"]')?.checked);
   busy = true;
-  form.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  form.querySelectorAll('button,input,textarea').forEach(control => control.disabled = true);
   try {
-    await api(
-      "/api/submissions/" + encodeURIComponent(form.dataset.id) + "/review",
-      {
-        method: "POST",
-        body: {
-          decision,
-          version: form.dataset.version,
-          points: data.points === "" ? null : Number(data.points),
-          note: data.note,
-        },
-      },
-    );
+    const result = await api('/api/submissions/' + encodeURIComponent(form.dataset.id) + '/review', {
+      method: 'POST', body: { decision, version: form.dataset.version, points: data.points === '' ? null : Number(data.points), note: data.note },
+    });
     if (!current()) return;
-    modal.close();
-    await refresh();
-    toast(
-      decision === "approved"
-        ? "Approved. The member’s point total has been updated."
-        : "Denied. The member can see your reason.",
-    );
-  } catch (err) {
-    if (current()) formError(err.message);
+    form.dataset.reviewed = 'true';
+    submissions = submissions.map(item => item.id === form.dataset.id ? { ...item, ...result.submission } : item);
+    roster = roster.map(member => member.id === result.submission.owner ? { ...member, ...result.points } : member);
+    render();
+    const next = continueReview && visibleSubmissions().find(item => item.status === 'pending');
+    toast(decision === 'approved' ? 'Approved. Points awarded.' : 'Denied. The member can see your reason.');
+    if (next) {
+      await detail(next.id);
+      // A failed next-detail request must not leave the saved decision editable.
+      if (current()) modal.close();
+    }
+    else { modal.close(); if (continueReview) toast('Decision saved. No pending submissions remain in this view.'); }
+  } catch (error) {
+    if (current()) {
+      formError(error.message);
+      if (error.status === 409) form.querySelector('#form-error').insertAdjacentHTML('beforeend', `<p><button class="button ghost" type="button" data-action="detail" data-id="${esc(form.dataset.id)}">Reload current details</button></p>`);
+    }
   } finally {
     busy = false;
-    form.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    if (!form.dataset.reviewed) form.querySelectorAll('button,input,textarea').forEach(control => control.disabled = false);
   }
 }
+
 async function evidence(id) {
   const destination = $("#evidence-preview");
   if (!destination) return;
@@ -999,6 +1150,10 @@ async function evidence(id) {
 
 async function switchUser(id) {
   sessionEpoch++;
+  submissionDraft = null;
+  submissionSearch = "";
+  submissionMember = "";
+  submissionPageIndex = 0;
   logs = [];
   modal.close();
   person.disabled = true;
@@ -1055,11 +1210,32 @@ async function handleAction(e) {
   try {
     if (action === "new") newSubmission();
     else if (action === "close") modal.close();
+    else if (action === 'discard-submission-draft') {
+      const form = $('#claim-form');
+      if (form) form.dataset.submitted = 'true';
+      submissionDraft = null;
+      await newSubmission({ fresh: true });
+    }
+    else if (action === 'refresh-submissions') {
+      b.disabled = true;
+      try { await refresh(); } finally { b.disabled = false; }
+    }
+    else if (action === 'review-member') {
+      submissionMember = b.dataset.id; submissionSearch = ''; submissionPageIndex = 0; filter = 'pending';
+      if (location.hash === '#queue') render(); else location.hash = 'queue';
+    }
+    else if (action === 'review-next') {
+      const next = visibleSubmissions().find(item => item.status === 'pending');
+      if (next) await detail(next.id);
+    }
+    else if (action === 'clear-submission-filters') {
+      submissionSearch = ''; submissionMember = ''; submissionPageIndex = 0; filter = 'all'; render();
+    }
     else if (action === "detail") await detail(b.dataset.id);
     else if (action === "evidence") await evidence(b.dataset.id);
     else if (action === "submissions-page") {
       submissionPageIndex = Math.max(0, Number(b.dataset.page) || 0);
-      render();
+      paintSubmissionResults();
       main.querySelector('.submission-table')?.scrollIntoView({ block: 'start' });
     } else if (action === "filter") {
       submissionPageIndex = 0;
@@ -1069,6 +1245,7 @@ async function handleAction(e) {
       $("#evidence").value = "sample";
       $("#attachment").innerHTML =
         '<div class="sample-file"><span>▤</span><div><strong>Sample evidence attached</strong><small>Fictional activity record · previewable by the chair</small></div></div>';
+      rememberSubmissionDraft($('#claim-form'), true);
     } else if (action === "account") {
       openModal(
         "DEMO ACCOUNT",
@@ -1135,7 +1312,7 @@ for (const [button, direction] of [["#nav-prev", -1], ["#nav-next", 1]]) {
     });
   });
 }
-modal.addEventListener("close", () => { modalRevision++; });
+modal.addEventListener("close", () => { rememberSubmissionDraft(); modalRevision++; });
 modal.addEventListener("click", (e) => {
   if (e.target === modal && !modal.dataset.recoveryLocked) { const box = modal.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) modal.close(); }
 });
@@ -1258,6 +1435,10 @@ function loginPage() {
   setAuthLoading(false);
   document.body.classList.add("signed-out");
   sessionEpoch++;
+  submissionDraft = null;
+  submissionSearch = "";
+  submissionMember = "";
+  submissionPageIndex = 0;
   logs = [];
   submissions = [];
   roster = [];
@@ -1542,17 +1723,13 @@ async function uploadEvidence(e) {
     form = input.closest("form"),
     hidden = form.querySelector("#evidence"),
     attachment = form.querySelector("#upload-status"),
-    submit = form.querySelector('button[type="submit"]'),
-    owner = user.id,
+    owner = user.id, epoch = sessionEpoch,
     file = input.files[0] && (input.files[0].type ? input.files[0] : new File([input.files[0]], input.files[0].name, {type: /\.pdf$/i.test(input.files[0].name) ? "application/pdf" : /\.png$/i.test(input.files[0].name) ? "image/png" : /\.jpe?g$/i.test(input.files[0].name) ? "image/jpeg" : ""}));
   const current = () =>
-    form.isConnected && user?.id === owner && $("#claim-form") === form;
+    form.isConnected && user?.id === owner && sessionEpoch === epoch && $("#claim-form") === form;
   if (!file) return;
   input.value = ""; // Selecting the same file again must fire change after a failed upload.
   formError("");
-  hidden.value = "";
-  attachment.innerHTML =
-    '<p class="muted">No verified attachment selected.</p>';
   if (file.size > 5 * 1024 * 1024) {
     formError("Choose a file no larger than 5 MB.");
     return;
@@ -1561,7 +1738,10 @@ async function uploadEvidence(e) {
     formError("Choose a PDF, PNG, or JPEG. For an iPhone HEIC photo, export it as JPEG first.");
     return;
   }
-  submit.disabled = true;
+  const previous = { evidence: hidden.value, html: attachment.innerHTML };
+  form.dataset.previousEvidenceLabel = attachment.textContent || '';
+  form.dataset.uploading = 'true';
+  updateSubmissionButtons(form);
   input.disabled = true;
   attachment.innerHTML = loading("Uploading evidence…", true);
   try {
@@ -1618,15 +1798,22 @@ async function uploadEvidence(e) {
       "</strong><small>Uploaded privately · " +
       Math.ceil(result.upload.size / 1024) +
       " KB</small></div></div>";
+    delete form.dataset.uploading;
+    rememberSubmissionDraft(form, true);
     toast("Evidence uploaded. Submit the form to attach it to your claim.");
   } catch (err) {
     if (current()) {
-      attachment.innerHTML = '<p class="muted">No verified attachment selected.</p>';
+      hidden.value = previous.evidence;
+      attachment.innerHTML = previous.html || '<p class="muted">No verified attachment selected.</p>';
+      delete form.dataset.uploading;
+      rememberSubmissionDraft(form, true);
       formError(err.message);
     }
   } finally {
     if (current()) {
-      submit.disabled = false;
+      delete form.dataset.uploading;
+      delete form.dataset.previousEvidenceLabel;
+      updateSubmissionButtons(form);
       input.disabled = false;
     }
   }
@@ -1995,6 +2182,7 @@ async function semesterPage() {
   }
 }
 async function updateSemesterState() {
+  submissionDraft = null;
   const epoch = sessionEpoch;
   const session = await api("/api/session");
   const nextRules = await api("/api/rules");
@@ -2407,6 +2595,10 @@ document.addEventListener("click", async (e) => {
       if (b.disabled) return;
       b.disabled = true;
       sessionEpoch++;
+      submissionDraft = null;
+      submissionSearch = "";
+      submissionMember = "";
+      submissionPageIndex = 0;
       modal.close();
       setAuthLoading(true, "Signing out…");
       try {

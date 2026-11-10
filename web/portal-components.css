@@ -264,3 +264,29 @@ dialog { max-height: 90dvh; overscroll-behavior: contain; }
 
 .submission-pagination { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:16px 0; }
 #current-semester-settings { margin-bottom:32px; }
+.submission-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(150px, .55fr) minmax(150px, .4fr); gap: 16px; align-items: end; margin: 24px 0 8px; }
+.submission-toolbar .field { margin: 0; min-width: 0; }
+.submission-toolbar .field:only-child { grid-column: 1 / -1; }
+.submission-toolbar input, .submission-toolbar select { width: 100%; min-height: 44px; }
+.review-workflow { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 24px; margin-bottom: 24px; }
+.review-workflow h2 { margin: 0 0 8px; }
+.review-workflow p { margin: 0; color: var(--muted); }
+.review-workflow .heading-actions { margin: 0; flex-wrap: wrap; }
+.review-next-choice { margin-top: 24px; align-items: flex-start; }
+#claim-form .modal-actions { flex-wrap: wrap; }
+#claim-form .modal-actions .button { min-height: 44px; white-space: normal; }
+@media (min-width: 900px) {
+  #modal.submission-review-dialog { width: min(1100px, calc(100vw - 48px)); max-width: 1100px; }
+  .submission-review-dialog #modal-content { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(290px, 1fr); column-gap: 28px; }
+  .submission-review-dialog #modal-content > .modal-heading { grid-column: 1 / -1; }
+  .submission-review-dialog .submission-review-details { grid-column: 1; min-width: 0; }
+  .submission-review-dialog #review-form { grid-column: 2; grid-row: 2; align-self: start; position: sticky; top: 0; padding-left: 24px; border-left: 1px solid var(--line); }
+  .submission-review-dialog #review-form .modal-actions { flex-wrap: wrap; }
+  .submission-review-dialog #review-form .subtle-rule { display: none; }
+}
+@media (max-width: 700px) {
+  .submission-toolbar { grid-template-columns: 1fr 1fr; }
+  .submission-toolbar .field:first-child { grid-column: 1 / -1; }
+  .review-workflow .heading-actions, .review-workflow .heading-actions .button { width: 100%; }
+  #claim-form .modal-actions .button { flex: 1 1 100%; }
+}

@@ -4,9 +4,9 @@ Draft for the Scholarship Chair to review before invitations. This file does not
 
 1. Open the personal setup link in your invitation and choose a password. Then sign in and save your recovery key privately and confirm that you saved it. Do not share the link, password or recovery key.
 2. Visit [the Scholarship Portal](https://scholarship-ato-kh.vercel.app/). Sign in using your email and password. A badge number or portal ID assigned by the Chair also works.
-3. Open **My profile**. Add each class with its credit hours and a PDF or image of its syllabus. The Chair reviews both together; approved class hours add up to your account total. Wait for approval before submitting graded assignments for that class. You can also add your profile picture.
-4. Select **New submission**, choose the activity, enter its requested details and attach clear evidence. For a graded assignment, select the approved class. Check the information, then submit.
-5. Track the result in **My submissions**. Pending points are estimates; approved points count toward the calendar goals. Open a submission to read any review note.
+3. Open **My classes**. Add each class with its credit hours and a PDF or image of its syllabus. The Chair reviews both together; approved class hours add up to your account total. Wait for approval before submitting graded assignments for that class. Profile pictures and account settings remain in **My profile**.
+4. Select **Submit an assignment** on an approved class, or **New submission** from the overview. Choose the activity, enter its requested details and attach clear evidence. Enter your actual grade or hours; the form does not assume them. Check the information, then **Submit for review**. For several assignments in the same class, **Submit & add another** keeps the activity, class and date while clearing the assignment details and evidence.
+5. Track the result in **My submissions**. Search by assignment or class and filter by status. Pending points are estimates; approved points count toward the calendar goals. Open a submission to read any review note.
 6. If you forget your password, use the password-reset option or your saved recovery key. If neither works, contact the Scholarship Chair. If the key screen was interrupted, sign in again and save the replacement key offered by the portal.
 
 ## FAQ drafts
@@ -23,7 +23,11 @@ Use the email on your chapter account, your assigned portal ID, or a badge numbe
 
 **Why can't I select my class for an assignment?**
 
-Add the class, its credit hours and its syllabus in My profile. The Scholarship Chair must approve the syllabus before you can submit a major, minor, lab or other graded assignment for that class. Replacing a syllabus starts a new review.
+Add the class, its credit hours and its syllabus in **My classes**. The Scholarship Chair must approve the syllabus before you can submit a major, minor, lab or other graded assignment for that class. Replacing a syllabus starts a new review.
+
+**Can I finish a submission later?**
+
+**Keep draft & close** retains one unfinished submission in the current tab. Opening **New submission** restores it, including verified evidence. **Start over** clears the draft. Reloading, closing the tab, signing out or changing semesters clears it; drafts are not saved to your account or browser storage. A failed submission keeps your entries available to correct and retry.
 
 **What should my evidence show?**
 
