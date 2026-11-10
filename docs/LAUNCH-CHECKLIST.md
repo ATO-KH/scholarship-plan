@@ -2,6 +2,14 @@
 
 This is a working acceptance checklist, not a claim that version 1.0 is approved. Keep member emails, grades, passwords, recovery keys and private backup paths out of this public repository. Record the Chair's real decisions and test-recipient addresses in a chapter-controlled location.
 
+## Workflow and audit release — November 10, 2026
+
+- Commit `df625803c43aa87065898745388983966835c5bc` was built with production settings, checked at its staged deployment, and promoted to [the live portal](https://scholarship-ato-kh.vercel.app/). Vercel deployment: `dpl_FxkA3i5q5vouwxaXFVVo75KcAQ6e`.
+- The full suite passed 293 tests with no failures or skips, including isolated PostgreSQL concurrency checks. Both GitHub checks passed for the released commit.
+- The production configuration endpoint confirmed database access and configured chapter authentication. Thirteen staged HTTP checks and ten public-domain checks passed: delivered pages/assets matched the tested source, private APIs required sign-in, production demo APIs were disabled, and private server/configuration files were not served. The post-release runtime error scan returned no errors.
+- After promotion, the invitation and password-reset template bodies were installed in Supabase and independently read back against the release files. Seven-day email-link expiry (`604800` seconds) and all other Auth settings remained unchanged. No real emails were sent or accounts, academic decisions, or semester settings changed for testing.
+- Browser surfaces were unavailable. Desktop/mobile rendering, real member/Chair sign-in and submission/review flows, and inbox delivery remain acceptance checks below; HTTP and DOM tests do not establish those outcomes.
+
 ## Direct roster invitations — November 6, 2026
 
 - 260 automated tests passed without failures or skips, including isolated PostgreSQL and automatic roster-account creation, first-send protection, authorization, and later account editing.
