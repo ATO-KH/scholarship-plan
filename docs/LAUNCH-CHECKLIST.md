@@ -2,6 +2,17 @@
 
 This is a working acceptance checklist, not a claim that version 1.0 is approved. Keep member emails, grades, passwords, recovery keys and private backup paths out of this public repository. Record the Chair's real decisions and test-recipient addresses in a chapter-controlled location.
 
+## Chair management and invitation update — November 10, 2026
+
+- Released commit `6d69d3a842508e58c5eca485663b1a167c409344` to [the live portal](https://scholarship-ato-kh.vercel.app/) through staged production deployment `dpl_r6Q7kK1C913VhRfG4jcHYG3ZKf5T` (`scholarship-ato-8lf7ma8k2-ato-kh.vercel.app`). The previous deployment is `dpl_FxkA3i5q5vouwxaXFVVo75KcAQ6e` for rollback.
+- Roster now separates Members, Invitations and Roster sheet. Searchable member rows expose point adjustments, class-credit management and account settings. Point saves update the displayed balance without reloading submission history.
+- Class decisions return the affected member's current class list, credit total and pending estimates. The queue advances immediately without re-fetching the entire list. Approved and denied submissions/classes can be corrected with a required reason, retained history and stale-version protection. Class-hour changes preserve past assignment awards.
+- Invitations show verified account acceptance, awaiting links and seven-day expiry. Reviewed batches can include first invitations and pending-only resends. Each resend rechecks acceptance, skips confirmed accounts and rejects stale/replayed requests. Status lookup failures disable resends. Sending limits still apply; no automatic retries.
+- Validation: **308 tests passed, 0 failed, 0 skipped**, including SQLite, two-process PostgreSQL 17 concurrency, authorization, acceptance-after-selection, replay rejection, credit recalculation and DOM interaction tests. Both GitHub checks passed for the release commit. Source and deployment-file checks passed.
+- Seventeen staged HTTP checks and seventeen public-domain checks verified production configuration, exact updated source assets, account setup/reset routes, private API sign-in requirements and private source-file protection. The initial post-release runtime error query returned zero records.
+- The hosted invitation expiry was independently read back as **604800 seconds** and the production Site URL matched. No Auth settings were changed for this release. No real emails, passwords, member accounts or academic decisions were changed for testing.
+- Browser control returned no available browser surfaces. Rendered desktop/mobile layout and real-inbox/member/chair acceptance remain unverified; automated DOM and HTTP checks do not establish those outcomes.
+
 ## Workflow and audit release — November 10, 2026
 
 - Commit `df625803c43aa87065898745388983966835c5bc` was built with production settings, checked at its staged deployment, and promoted to [the live portal](https://scholarship-ato-kh.vercel.app/). Vercel deployment: `dpl_FxkA3i5q5vouwxaXFVVo75KcAQ6e`.
