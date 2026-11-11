@@ -1,4 +1,8 @@
+import { creditLoadScenario } from './credit-load-scenario.mjs';
+import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
+import { leaderboardScenario } from './leaderboard-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
+import { syllabusFixtures } from './syllabus-fixtures.mjs';
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -147,6 +151,10 @@ function client(server = demo) {
       return csrfToken;
     },
     async send(path, body, extraHeaders = {}) {
+      if (body && /^\/api\/submissions\/[^/]+\/review$/.test(path) && !('version' in body)) {
+        const current = await this.send(path.replace(/\/review$/, ''));
+        body = { ...body, version: current.submission?.reviewVersion };
+      }
       if (this.approvedClassId && body && path === "/api/submissions" && body.classId === undefined)
         body = { ...body, classId: this.approvedClassId };
       if (this.approvedClassId && body?.items && path === "/api/integrations/canvas/import")
@@ -236,6 +244,7 @@ test("anonymous requests reveal configuration but no member data", async () => {
     "/api/submissions",
     "/api/points",
     "/api/members",
+    "/api/leaderboard",
     "/api/audit",
     "/api/uploads/unknown",
   ]) {
@@ -645,34 +654,22 @@ test("denial requires an explanation and contributes zero approved points", asyn
   assert.match(item.reviewNote, /does not show a grade/);
 });
 
-test("fractional estimates require whole points and a chair explanation", async () => {
+test("fractional estimates can be approved directly without an adjustment note", async () => {
   const c = client();
-  await c.send("/api/demo/session", { persona: "chair" });
-  const path = "/api/submissions/S-2001/review";
-  assert.equal(
-    (
-      await c.send(path, {
-        decision: "approved",
-        points: 5.75,
-        note: "Explanation",
-      })
-    ).status,
-    422,
-  );
-  assert.equal(
-    (await c.send(path, { decision: "approved", points: 6, note: "" })).status,
-    422,
-  );
-  assert.equal(
-    (
-      await c.send(path, {
-        decision: "approved",
-        points: 6,
-        note: "Demonstration decision; chapter rounding rule is unresolved.",
-      })
-    ).status,
-    200,
-  );
+  await c.send('/api/demo/session', { persona: 'chair' });
+  const path = '/api/submissions/S-2001/review';
+  assert.equal((await c.send(path, { decision: 'approved', points: 5.751, note: '' })).status, 422);
+  assert.equal((await c.send(path, { decision: 'approved', points: 5, note: '' })).status, 422);
+  const saved = await c.send(path, { decision: 'approved', points: 5.75, note: '' });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.submission.awarded, 5.75);
+});
+
+test('Chair confirms full loads separately from class approval and can award decimals', async () => {
+  const c = client();
+  await c.send('/api/demo/session', { persona: 'alex' });
+  const upload = await c.send('/api/uploads', { name: 'syllabus.pdf', mime: 'application/pdf', base64: pdf.toString('base64') });
+  await creditLoadScenario((path, body) => c.send(path, body), { evidenceId: upload.upload.id });
 });
 
 test("claim validation rejects expired and duplicate work and enforces weekly study and minor-assignment caps", async () => {
@@ -794,6 +791,16 @@ test("independent demo browsers cannot observe one another's mutations or upload
     (await b.send(`/api/submissions/${created.submission.id}`)).status,
     404,
   );
+});
+
+test('new syllabus uploads reject Word and other formats that require an external document app', async () => {
+  const c = client();
+  await c.send('/api/demo/session', { persona: 'alex' });
+  for (const file of syllabusFixtures) {
+    const uploaded = await c.send('/api/uploads', { name: file.name, mime: file.mime, base64: file.bytes.toString('base64') });
+    assert.equal(uploaded.status, 422, file.name);
+    assert.match(uploaded.error, /PDF.*PNG.*JPEG/);
+  }
 });
 
 test("uploaded proof is an attachment visible only to its owner and their chair", async () => {
@@ -1057,7 +1064,7 @@ test("Chair point adjustments preserve submissions, isolate members and reject s
   const change = { version: initial.version, total: initial.approved + 20, reason: "20 points earned before rollout" };
   assert.equal((await c.send(path, change, { "X-CSRF-Token": "wrong" })).status, 403);
   assert.equal((await c.send(path, change, { Origin: "https://other.example" })).status, 403);
-  for (const total of [-1, 0.5, 10001, "20"]) assert.equal((await c.send(path, { ...change, total })).status, 422);
+  for (const total of [-1, 0.005, 10001, "20"]) assert.equal((await c.send(path, { ...change, total })).status, 422);
   assert.equal((await c.send(path, { ...change, reason: " " })).status, 422);
   const concurrent = await Promise.all([c.send(path, change), c.send(path, change)]);
   assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 409]);
@@ -1202,4 +1209,21 @@ test("custom grade categories require a syllabus while non-grade activities rema
   const upload = await c.send("/api/uploads", { name: "class-credits.pdf", mime: "application/pdf", base64: Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64") });
   assert.equal(upload.status, 201);
   await classCreditsScenario((path, body) => c.send(path, body), { evidenceId: upload.upload.id });
+});
+
+
+test('review corrections update points and class hours atomically while retaining history and rejecting stale decisions', async () => {
+  const c=client();
+  await c.send('/api/demo/session',{persona:'alex'});
+  const upload=await c.send('/api/uploads',{name:'correction-syllabus.pdf',mime:'application/pdf',base64:Buffer.from('%PDF-1.4\n%%EOF\n').toString('base64')});
+  assert.equal(upload.status,201);
+  await reviewCorrectionsScenario((path,body)=>c.send(path,body),{evidenceId:upload.upload.id});
+});
+
+test('authenticated chapter leaderboard reflects corrections and adjustments without exposing academic details', async () => {
+  const c = client();
+  await leaderboardScenario((path, body) => c.send(path, body));
+  await c.send('/api/demo/session', { persona: 'chair' });
+  assert.equal((await c.send('/api/roster/jordan/deactivate', {})).status, 200);
+  assert.ok(!(await c.send('/api/leaderboard')).members.some(row => row.name === 'Jordan Ellis'));
 });

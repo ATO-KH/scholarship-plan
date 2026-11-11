@@ -1,4 +1,5 @@
-import { pointBreakdown } from "../point-adjustment-data.mjs";
+import { creditLoadView } from '../credit-load-data.mjs';
+import { pointBreakdown, sumPoints } from "../point-adjustment-data.mjs";
 import { DEFAULT_CATEGORIES, categoriesFor, categoryForSubmission, categoryView, scoreCategory } from "../category-data.mjs";
 export const TODAY = "2026-09-28";
 export const members = [
@@ -49,7 +50,7 @@ export const members = [
 ];
 export const activities = DEFAULT_CATEGORIES;
 export const multiplier = (m) =>
-  m.credits < 9 ? 1.5 : m.credits < 12 ? 1.3 : m.credits < 15 ? 1.15 : 1;
+  m.creditLoad?.multiplier ?? 1;
 export const weekOf = (date) => {
   let d = new Date(date + "T12:00:00Z");
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
@@ -91,7 +92,7 @@ export function seed() {
         : activity === "minor" || activity === "lab"
           ? 95
           : null,
-    estimate: base * multiplier(members.find((x) => x.id === owner)),
+    estimate: base * (owner === "jordan" ? 1.15 : 1),
     awarded: status === "approved" ? base : 0,
     evidence: "sample",
     note: "Fictional demonstration evidence.",
@@ -113,6 +114,7 @@ export function seed() {
   });
   return {
     test2Seeded: true,
+    creditLoads: { jordan: { credits: 12, reviewer: "Demo Chair", at: "2026-09-14T12:00:00.000Z", version: "demo-confirmed" } },
     submissions: [
       ...Array.from({ length: 30 }, (_, index) => {
         const major = index % 3 === 0;
@@ -233,14 +235,12 @@ export function totals(state, member) {
   return {
     ...pointBreakdown(state, member.id),
     pending: mine.filter((s) => s.status === "pending").length,
-    pendingEstimate: mine
-      .filter((s) => s.status === "pending")
-      .reduce((n, s) => n + s.estimate, 0),
+    pendingEstimate: sumPoints(mine.filter(s => s.status === "pending").map(s => s.estimate)),
     approvedCount: mine.filter((s) => s.status === "approved").length,
     denied: mine.filter((s) => s.status === "denied").length,
     goal: member.goal,
     checkpoint: member.checkpoint,
-    multiplier: multiplier(member),
+    multiplier: creditLoadView(state, member.id).multiplier,
     studyHours: mine
       .filter(
         (s) =>
@@ -318,6 +318,6 @@ export function validateClaim(body, state, member) {
     note: String(body.note || "")
       .trim()
       .slice(0, 1000),
-    estimate: Math.round(value.base * multiplier(member) * 100) / 100,
+    estimate: Math.round(value.base * creditLoadView(state, member.id).multiplier * 100) / 100,
   };
 }

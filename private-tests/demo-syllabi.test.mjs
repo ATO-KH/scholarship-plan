@@ -1,7 +1,11 @@
+import { creditLoadScenario } from './credit-load-scenario.mjs';
+import { leaderboardScenario } from './leaderboard-scenario.mjs';
+import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handle } from '../web/demo/demo-service.mjs';
+import { syllabusFixtures } from './syllabus-fixtures.mjs';
 
 const pdf = '%PDF-1.4\n% Fictional syllabus for sandbox verification\n%%EOF\n';
 const file = { name: 'syllabus.pdf', mime: 'application/pdf', size: Buffer.byteLength(pdf), dataUrl: `data:application/pdf;base64,${Buffer.from(pdf).toString('base64')}` };
@@ -19,6 +23,18 @@ async function withSandbox(run) {
   };
   try { await run(call, store); } finally { globalThis.sessionStorage = originalStorage; }
 }
+
+test('sandbox rejects new document syllabi that cannot be previewed in the portal', () => withSandbox(async call => {
+  await call('/api/demo/session', { persona: 'test1' });
+  for (const fixture of syllabusFixtures) {
+    const file = { name: fixture.name, mime: fixture.mime, size: fixture.bytes.length, dataUrl: `data:${fixture.mime};base64,${fixture.bytes.toString('base64')}` };
+    assert.equal((await call('/api/classes', { name: `Syllabus ${fixture.name}`, credits: 3, file })).status, 422);
+  }
+}));
+
+test('sandbox separates class approvals from full-load confirmation and supports decimal awards', () => withSandbox(async call => {
+  await creditLoadScenario(call, { file }, 'test1');
+}));
 
 test('sandbox classes require verified syllabus files and are private to their member', () => withSandbox(async call => {
   await call('/api/demo/session', { persona: 'test1' });
@@ -164,4 +180,14 @@ test('sandbox invalid or oversized syllabus cannot create a partial class', () =
 
 test('sandbox class credit approvals match server totals, replacement and removal rules', () => withSandbox(async call => {
   await classCreditsScenario(call, { file }, 'test1');
+}));
+
+
+test('sandbox corrections match the live review and class-credit behavior', () => withSandbox(async call => {
+  await reviewCorrectionsScenario(call,{file},'test1');
+}));
+
+test('sandbox leaderboard follows live award and privacy rules', () => withSandbox(async call => {
+  assert.equal((await call('/api/leaderboard')).status, 401);
+  await leaderboardScenario(call);
 }));

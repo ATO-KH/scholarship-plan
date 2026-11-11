@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { appendFile, writeFile } from "node:fs/promises";
 const originalFetch = globalThis.fetch;
 const chairId = "aab93409-383f-4d8a-b443-3d940a277153";
 const memberId = "d4dc3984-9c89-4ff7-8075-cbe5b2cd18c4";
 const invitationUsers = new Map();
+const usedSetupLinks = new Set();
 const passwords = new Map([
   [chairId, "correct-test-password"],
   [memberId, "correct-test-password"],
@@ -45,15 +47,32 @@ globalThis.fetch = async (input, options = {}) => {
   if (url.pathname === "/auth/v1/admin/users" && options.method === "POST") {
     const { email, app_metadata } = JSON.parse(options.body);
     if (invitationUsers.has(email)) return respond({ error: "duplicate" }, 422);
-    const user = { id: email === "member@example.edu" ? memberId : "aadf192d-7b32-42d1-ab6f-a63ce8f0a1b4", email, app_metadata };
+    const user = { id: email === "member@example.edu" ? memberId : randomUUID(), email, app_metadata };
     invitationUsers.set(email, user);
     return respond(user);
   }
-  if (url.pathname === "/auth/v1/admin/users")
-    return respond({ users: [...invitationUsers.values()].filter(user => user.email.includes(url.searchParams.get("filter"))) });
-  if (url.pathname === "/auth/v1/invite")
-    return respond(invitationUsers.get(JSON.parse(options.body).email) || { error: "not prepared" });
+  if (url.pathname === "/auth/v1/admin/users") {
+    const filter = url.searchParams.get('filter'), page = Number(url.searchParams.get('page') || 1), size = Number(url.searchParams.get('per_page') || 100);
+    const users = [...invitationUsers.values()].filter(user => !filter || user.email.includes(filter));
+    return respond({ users: users.slice((page - 1) * size, page * size) });
+  }
+  if (url.pathname === "/auth/v1/invite") {
+    const user = invitationUsers.get(JSON.parse(options.body).email);
+    if (user) user.invited_at = user.confirmation_sent_at = new Date().toISOString();
+    return respond(user || { error: "not prepared" });
+  }
   if (url.pathname === "/auth/v1/recover") return respond({});
+  if (url.pathname === '/auth/v1/verify') {
+    const body = JSON.parse(options.body);
+    const token = body.token_hash;
+    if (options.method !== 'POST' || !['invite','recovery'].includes(body.type) || token !== 'fictional-member-invitation-hash' || usedSetupLinks.has(token))
+      return respond({code:'otp_expired', message:'Token expired'}, 403);
+    usedSetupLinks.add(token);
+    const account = invitationUsers.get('member@example.edu');
+    if (account) account.email_confirmed_at = new Date().toISOString();
+    return respond({access_token:'test-account-token',refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,
+      user:{id:memberId,email:'member@example.edu',email_confirmed_at:'2026-09-29T00:00:00Z'}});
+  }
   if (url.pathname === "/auth/v1/user") {
     const accessToken = new Headers(options.headers).get('authorization')?.replace(/^Bearer /, '');
     const chair = ['test-chair-account-token', 'test-chair-password-token'].includes(accessToken);

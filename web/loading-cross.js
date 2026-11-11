@@ -87,13 +87,13 @@ if (typeof customElements !== "undefined") {
       const preference = this.getAttribute("animation");
       this.variant = ["spin", "sequence"].includes(preference)
         ? preference
-        : Math.random() < 0.5 ? "spin" : "sequence";
+        : "sequence";
       this.setAttribute("data-cross-animation", this.variant);
       this.dispatchEvent(new Event("animationchange"));
     }
 
     setAnimation(preference) {
-      this.setAttribute("animation", ["spin", "sequence"].includes(preference) ? preference : "random");
+      this.setAttribute("animation", ["spin", "sequence"].includes(preference) ? preference : "sequence");
       this.chooseAnimation();
       this.restart();
     }

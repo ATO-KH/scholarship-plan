@@ -1,3 +1,5 @@
+import { correctInvitationEmail, emailCorrectionVersion } from '../server/roster-emails.mjs';
+import { rosterDirectory, rosterEmails } from '../server/roster-directory.mjs';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -5,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { openDatabase } from "../server/database.mjs";
-import { runInvitation, invitationView, invitationList } from "../server/invitations.mjs";
+import { runInvitation, invitationView, invitationList, invitationVersion, observeInvitationAccount, INVITATION_LIFETIME_SECONDS } from "../server/invitations.mjs";
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "ato-invitation-"));
@@ -374,7 +376,7 @@ test("legacy orphan is linked by exact email; existing profile is retained and n
   const f = await fixture(t);
   f.accounts.set(f.input.email, { id: randomUUID(), email: f.input.email, confirmed: true });
   const result = await f.run();
-  assert.equal(result.invitation.status, "delivery_unknown");
+  assert.equal(result.invitation.status, "accepted");
   assert.equal(f.calls.creates, 0);
   assert.equal(f.calls.sends, 0);
   await f.storage.prepare("UPDATE members SET tier=5, credits=9 WHERE id=?").run(result.memberId);
@@ -586,4 +588,138 @@ test('direct invitation rechecks authorization and roster eligibility after prov
     assert.equal(f.calls.sends,0);
     assert.equal((await f.storage.prepare('SELECT COUNT(*) AS n FROM members').get()).n,0);
   }
+});
+
+test('invitation expiry is seven days and verified acceptance remains accepted after expiry', async t => {
+  const f=await fixture(t), result=await f.run(), record=(await f.state()).invitations[f.input.email];
+  assert.equal(result.invitation.expiresAt, new Date(f.clock()+INVITATION_LIFETIME_SECONDS*1000).toISOString());
+  f.advance(INVITATION_LIFETIME_SECONDS*1000-1);
+  assert.equal(invitationView(record,f.clock()).status,'sent');
+  f.advance(1); assert.equal(invitationView(record,f.clock()).status,'expired');
+  assert.equal(invitationView(record,f.clock()).canResendPending,true);
+  const account={...f.accounts.get(f.input.email),confirmed:true,confirmedAt:new Date(f.clock()).toISOString()};
+  assert.equal(observeInvitationAccount(record,account,f.clock()),true);
+  assert.equal(observeInvitationAccount(record,account,f.clock()),false);
+  f.advance(20*86400000);
+  assert.equal(invitationView(record,f.clock()).status,'accepted');
+  assert.equal(invitationView(record,f.clock()).canResendPending,false);
+  assert.equal(invitationView(record,f.clock()).expiresAt,null);
+});
+
+test('pending-only resend skips a member who accepted after selection without sending recovery mail', async t => {
+  const f=await fixture(t); const result=await f.run(); f.advance(60_001);
+  f.accounts.get(f.input.email).confirmed=true;
+  const skipped=await f.run('resend-pending',{expectedVersion:result.invitation.version});
+  assert.equal(skipped.skipped,true); assert.equal(skipped.invitation.status,'accepted'); assert.equal(f.calls.sends,1);
+  const again=await f.run('resend-pending',{expectedVersion:result.invitation.version});
+  assert.equal(again.skipped,true); assert.equal(f.calls.sends,1);
+});
+
+test('pending-only resend requires the reviewed version and cannot replay even after cooldown', async t => {
+  const f=await fixture(t); const result=await f.run(); f.advance(7*86400000);
+  await assert.rejects(f.run('resend-pending'),error=>error.status===409);
+  await assert.rejects(f.run('resend-pending',{expectedVersion:'f'.repeat(64)}),error=>error.status===409);
+  assert.equal(f.calls.sends,1);
+  const sent=await f.run('resend-pending',{expectedVersion:result.invitation.version});
+  assert.equal(sent.invitation.status,'sent'); assert.equal(f.calls.sends,2);
+  f.advance(60_001);
+  await assert.rejects(f.run('resend-pending',{expectedVersion:result.invitation.version}),error=>error.status===409);
+  assert.equal(f.calls.sends,2);
+  assert.equal(sent.invitation.version,invitationVersion((await f.state()).invitations[f.input.email]));
+});
+
+test('legacy accounts can receive a reviewed pending-only resend, but cannot replay their untracked version', async t => {
+  const f=await fixture(t); const prepared=await f.run('prepare');
+  const state=await f.state(); delete state.invitations; await f.setState(state);
+  const version=invitationVersion(null,prepared.memberId);
+  const result=await f.run('resend-pending',{expectedVersion:version});
+  assert.equal(result.memberId,prepared.memberId); assert.equal(f.calls.sends,1); assert.equal(f.calls.creates,1);
+  f.advance(60_001);
+  await assert.rejects(f.run('resend-pending',{expectedVersion:version}),error=>error.status===409);
+});
+
+test('concurrent pending-only resends reserve one email, including while provider delivery is unresolved', async t => {
+  const f=await fixture(t); const prepared=await f.run('prepare');
+  let release, entered; const inside=new Promise(resolve=>{entered=resolve;});
+  const hold=new Promise(resolve=>{release=resolve;}); const send=f.provider.send;
+  f.provider.send=async account=>{entered(); await hold; await send(account);};
+  const sending=f.run('resend-pending',{expectedVersion:prepared.invitation.version}); await inside;
+  await assert.rejects(f.run('resend-pending',{expectedVersion:prepared.invitation.version}),error=>error.status===409);
+  release(); await sending; assert.equal(f.calls.sends,1);
+});
+
+async function correctionFixture(t, { prepared = true } = {}) {
+  const f = await fixture(t);
+  await f.setState({ submissions: [], roster: { emails: [f.input.email], directory: [{ email: f.input.email, name: f.input.name, membership: 'active' }] } });
+  const created = prepared ? await f.run('prepare') : null;
+  const snapshot = async email => {
+    const state = await f.state(), member = await f.db.prepare('SELECT * FROM members WHERE email=?').get(email);
+    const binding = member && await f.db.prepare("SELECT subject FROM identities WHERE provider='supabase' AND member_id=?").get(member.id);
+    return emailCorrectionVersion(state, email, member, binding?.subject || null);
+  };
+  const correct = async (nextEmail, email = f.input.email, version) => {
+    version ??= await snapshot(email);
+    return f.db.transaction(async () => {
+      const state = await f.state();
+      const result = await correctInvitationEmail({ db:f.db, workspace:'chapter', state, email, nextEmail, version, audit:async()=>{} });
+      await f.setState(state); return result;
+    });
+  };
+  return { ...f, created, correct, snapshot };
+}
+
+test('correcting an accepted address preserves academic records and login aliases, revokes old access, and sends no mail', async t => {
+  const f = await correctionFixture(t), id = f.created.memberId;
+  const originalAccount = f.accounts.get(f.input.email);
+  originalAccount.confirmed = true;
+  const state = await f.state(); state.invitations[f.input.email].acceptedAt = '2026-10-01';
+  state.submissions = [{ id:'award',owner:id,status:'approved',awarded:12 }];
+  state.classRecords = [{ id:'class',owner:id,approvedCredits:3 }]; await f.setState(state);
+  await f.db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?)').run('old-session','chapter',id,'csrf',Date.now()+100000);
+  const before = await f.snapshot(f.input.email);
+  // UI member booleans must agree with the database's integer representation.
+  const member = await f.db.prepare('SELECT * FROM members WHERE id=?').get(id);
+  assert.equal(before,emailCorrectionVersion(await f.state(),f.input.email,{...member,active:true},originalAccount.id));
+  await f.correct('corrected@example.edu');
+  assert.equal(f.calls.sends,0); assert.equal(f.calls.creates,1);
+  assert.equal((await f.db.prepare('SELECT * FROM sessions WHERE member_id=?').all(id)).length,0);
+  assert.equal((await f.db.prepare("SELECT * FROM identities WHERE provider='supabase' AND subject=?").get(originalAccount.id)),undefined);
+  assert.equal((await f.db.prepare("SELECT member_id FROM identities WHERE provider='login' AND subject=?").get('1234')).member_id,id);
+  assert.deepEqual((await f.state()).submissions,state.submissions); assert.deepEqual((await f.state()).classRecords,state.classRecords);
+  assert.deepEqual(rosterEmails(await f.state()),['corrected@example.edu']);
+  await assert.rejects(f.correct('other@example.edu',f.input.email,before),error=>error.status===409);
+  const result=await f.run('invite-roster',{email:'corrected@example.edu',input:undefined});
+  assert.equal(result.memberId,id); assert.equal(result.invitation.status,'sent'); assert.equal(f.calls.sends,1);
+  assert.notEqual(f.accounts.get('corrected@example.edu').id,originalAccount.id);
+});
+
+test('unprepared recipients can be corrected and sheet refreshes cannot revert the address or retain removed eligibility', async t => {
+  const f=await correctionFixture(t,{prepared:false});
+  const state=await f.state(); state.tierAssignments={[f.input.email]:4}; await f.setState(state);
+  await f.correct('new-address@example.edu');
+  assert.equal(f.calls.creates,0); assert.equal((await f.state()).tierAssignments['new-address@example.edu'],4);
+  const result=await f.run('invite-roster',{email:'new-address@example.edu',input:undefined}); assert.equal(result.invitation.status,'sent');
+  const after=await f.state(); after.roster={...state.roster};
+  assert.deepEqual(rosterEmails(after),['new-address@example.edu']);
+  after.roster.directory=[]; assert.deepEqual(rosterEmails(after),[]);
+  after.roster.directory=[{...state.roster.directory[0],name:'A Different Person'}]; assert.deepEqual(rosterEmails(after),[]);
+  after.roster.directory=[state.roster.directory[0],{email:'new-address@example.edu',name:'Someone Else',membership:'active'}];
+  assert.deepEqual(rosterEmails(after),[],'conflicting sheet rows never share one account');
+  after.roster.directory=[{...state.roster.directory[0],email:'new-address@example.edu'}]; after.roster.emails=['new-address@example.edu']; assert.deepEqual(rosterEmails(after),['new-address@example.edu'],'sheet can catch up with the correction');
+});
+
+test('email correction rejects collisions, stale versions, active sends and provider accounts it does not own', async t => {
+  const f=await correctionFixture(t);
+  let state=await f.state(); state.roster.directory.push({email:'taken@example.edu',name:'Another Member',membership:'active'}); await f.setState(state);
+  await assert.rejects(f.correct('taken@example.edu'),error=>error.status===409);
+  await assert.rejects(f.correct('bad email'),error=>error.status===422);
+  await assert.rejects(f.correct('fixed@example.edu',f.input.email,'0'.repeat(64)),error=>error.status===409);
+  state=await f.state(); state.invitations[f.input.email].operation={id:'sending',until:Date.now()+90000}; await f.setState(state);
+  await assert.rejects(f.correct('fixed@example.edu'),error=>error.status===409);
+  delete state.invitations[f.input.email].operation; await f.setState(state);
+  await f.correct('fixed@example.edu');
+  f.accounts.set('fixed@example.edu',{id:randomUUID(),email:'fixed@example.edu',confirmed:true});
+  await assert.rejects(f.run('invite-roster',{email:'fixed@example.edu',input:undefined}),error=>error.status===409);
+  assert.equal(f.calls.sends,0);
+  assert.equal((await f.db.prepare("SELECT * FROM identities WHERE provider='supabase' AND member_id=?").all(f.created.memberId)).length,0);
 });

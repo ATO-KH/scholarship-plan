@@ -1,3 +1,4 @@
+import { EVIDENCE_MIME_TYPES, SYLLABUS_FORMATS } from './syllabus-files.mjs';
 const previews = new WeakMap();
 
 // Keep the waiting state until the media itself is ready, not just its metadata.
@@ -75,13 +76,27 @@ export function mountFilePreview(container, getFile, {
   (async () => {
     const file = typeof getFile === 'function' ? await getFile() : getFile;
     if (!active() || settled) return;
-    const url = file.previewUrl || file.downloadUrl;
+    const documentFile = !EVIDENCE_MIME_TYPES.includes(file.mime) && SYLLABUS_FORMATS.find(format => format.mime === file.mime);
+    const url = documentFile ? file.downloadUrl || file.previewUrl : file.previewUrl || file.downloadUrl;
     if (!url) throw Error(`This ${label.toLowerCase()} is unavailable.`);
     const pdf = file.mime === 'application/pdf';
     const link = document.createElement('a');
     link.className = 'button ghost small'; link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
-    link.textContent = pdf ? 'Open PDF' : 'Open full size';
+    link.textContent = documentFile ? `Download ${label.toLowerCase()}` : pdf ? 'Open PDF' : 'Open full size';
     const actions = document.createElement('div'); actions.className = 'file-preview-actions'; actions.append(link); panel.append(actions);
+
+    if (documentFile) {
+      if (url.startsWith(`data:${file.mime};base64,`)) {
+        const bytes = Uint8Array.from(atob(url.split(',')[1]), char => char.charCodeAt(0));
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: file.mime }));
+        link.href = objectUrl;
+      }
+      link.download = file.name || 'syllabus';
+      const format = document.createElement('strong'); format.textContent = documentFile.label;
+      const hint = document.createElement('p'); hint.className = 'footnote';
+      hint.textContent = `Download this ${label.toLowerCase()} to open it in your document app.`;
+      frame.append(format, hint); finish(); return;
+    }
 
     if (pdf && navigator.pdfViewerEnabled === false) {
       if (/^data:application\/pdf;base64,[A-Za-z0-9+/=]+$/.test(url)) {

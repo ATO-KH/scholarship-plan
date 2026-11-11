@@ -102,7 +102,44 @@ function invitationIdentity(user, email) {
   const invitationProof = proof?.version === 1 && typeof proof.workspace === "string" &&
     /^[a-f0-9]{64}$/.test(proof.nonce || "")
     ? { version: 1, workspace: proof.workspace, nonce: proof.nonce } : null;
-  return { id: user.id, email, confirmed: Boolean(user.email_confirmed_at), invitationProof };
+  const timestamp = value => typeof value === "string" && Number.isFinite(Date.parse(value))
+    ? new Date(value).toISOString() : null;
+  return {
+    id: user.id, email, confirmed: Boolean(user.email_confirmed_at), invitationProof,
+    confirmedAt: timestamp(user.email_confirmed_at),
+    linkSentAt: [timestamp(user.confirmation_sent_at), timestamp(user.invited_at)].filter(Boolean).sort().at(-1) || null,
+  };
+}
+
+// One paginated read for the Chair's list, instead of a provider request per
+// member. Return only identities already bound to this chapter; never expose
+// provider records, metadata, tokens, or unrelated users to the browser.
+export async function invitationAccountsById(env, identities) {
+  if (!chapterAuthConfigured(env)) throw Error("Chapter account authentication is not configured.");
+  const wanted = new Map(identities.map(item => [item.id, item.email]));
+  const accounts = new Map();
+  if (!wanted.size) return accounts;
+  const signal = AbortSignal.timeout(20_000);
+  for (let page = 1; page <= 20; page++) {
+    const query = new URLSearchParams({ page: String(page), per_page: "1000" });
+    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users?${query}`, {
+      headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` },
+      redirect: "error", signal,
+    });
+    if (!response.ok) throw Error("Invitation acceptance could not be checked.");
+    const payload = await response.json();
+    if (!Array.isArray(payload.users) || payload.users.length > 1000)
+      throw Error("Invitation acceptance could not be checked safely.");
+    for (const user of payload.users) {
+      const email = wanted.get(user.id);
+      if (!email) continue;
+      if (accounts.has(user.id)) throw Error("Invitation acceptance changed while checking. Refresh again.");
+      if (user.deleted_at || user.email?.trim().toLowerCase() !== email) continue;
+      accounts.set(user.id, invitationIdentity(user, email));
+    }
+    if (accounts.size === wanted.size || payload.users.length < 1000) return accounts;
+  }
+  throw Error("Not all invitation statuses could be checked. Resending is unavailable until a complete check succeeds.");
 }
 
 function invitationClient(env) {
@@ -167,6 +204,17 @@ export async function userForAccountToken(env, accessToken) {
     // Internal-only migration information; never expose factors to the browser.
     hasVerifiedFactors: (verified.user.factors || []).some(factor => factor.status === "verified"),
   };
+}
+
+// Called only when the member submits their chosen password, never on a GET
+// or page load. Email security scanners cannot consume a link by previewing it.
+export async function exchangeAccountLink(env, tokenHash, type) {
+  if (!['invite', 'recovery'].includes(type) || typeof tokenHash !== 'string' ||
+      !/^[A-Za-z0-9_-]{16,1024}$/.test(tokenHash)) return null;
+  const { publicClient } = clients(env);
+  const { data, error } = await publicClient.auth.verifyOtp({ token_hash: tokenHash, type });
+  if (error || !data?.session?.access_token || !data.user?.id) return null;
+  return data.session.access_token;
 }
 
 export async function setPasswordWithToken(env, accessToken, password, expectedUserId) {

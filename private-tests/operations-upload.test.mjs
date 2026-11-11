@@ -13,11 +13,12 @@ const handlerSource = source.slice(start, end);
 
 async function uploadFixture(file, { fail = false } = {}) {
   const fields = { '#evidence': { value: 'old-evidence' }, '#upload-status': { innerHTML: '' }, 'button[type="submit"]': { disabled: false } };
-  const form = { isConnected: true, querySelector: selector => fields[selector] };
+  const form = { dataset: {}, isConnected: true, querySelector: selector => fields[selector] };
   const input = { files: [file], value: 'old-filename', disabled: false, closest: () => form };
   const requests = [], errors = [];
   const handler = runInNewContext(`(${handlerSource})`, {
     File, URL, Uint8Array, AbortSignal, btoa, user: { id: 'fictional' }, appConfig: { uploadMode: 'local' },
+    sessionEpoch: 0, rememberSubmissionDraft() {}, updateSubmissionButtons: () => { fields['button[type="submit"]'].disabled = Boolean(form.dataset.uploading); },
     $: () => form, formError: error => errors.push(error), loading: () => 'loading', esc: value => value, toast: () => {},
     api: async (path, options) => {
       requests.push({ path, body: options.body });
@@ -46,14 +47,14 @@ test('unsupported or explicitly conflicting mobile MIME never reaches upload API
   for (const file of [new File(['data'], 'photo.heic'), new File(['data'], 'fake.pdf', { type: 'text/html' }), new File(['data'], 'no-extension')]) {
     const result = await uploadFixture(file);
     assert.equal(result.requests.length, 0);
-    assert.equal(result.fields['#evidence'].value, '');
+    assert.equal(result.fields['#evidence'].value, 'old-evidence');
     assert.match(result.errors.at(-1), /PDF, PNG, or JPEG/);
   }
 });
 
-test('interrupted mobile evidence upload clears old proof and re-enables controls', async () => {
+test('interrupted replacement upload preserves the verified attachment and re-enables controls', async () => {
   const result = await uploadFixture(new File(['fictional'], 'evidence.pdf'), { fail: true });
-  assert.equal(result.fields['#evidence'].value, '');
+  assert.equal(result.fields['#evidence'].value, 'old-evidence');
   assert.equal(result.fields['button[type="submit"]'].disabled, false);
   assert.equal(result.input.disabled, false);
   assert.equal(result.input.value, '');

@@ -118,6 +118,7 @@ p {
   gap: 16px;
   border-bottom: 1px solid #efd9b7;
 }
+.demo-bar[hidden] { display: none; }
 .demo-bar strong {
   font-size: 11px;
   letter-spacing: 1px;
@@ -328,81 +329,6 @@ main {
 .page-heading .eyebrow {
   color: var(--muted);
   margin-bottom: 11px;
-}
-.portal-loading .workspace,
-.signed-out .workspace {
-  display: block;
-}
-.portal-loading .sidebar,
-.signed-out .sidebar {
-  display: none;
-}
-.portal-loading main,
-.signed-out main {
-  max-width: 680px;
-  margin: 0 auto;
-  padding-top: clamp(48px, 10vh, 110px);
-}
-.portal-loading .page-heading,
-.signed-out .page-heading {
-  justify-content: center;
-  text-align: center;
-}
-.portal-loading,
-.signing-in {
-  overflow: hidden;
-}
-.auth-loading {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--paper);
-  color: var(--ink);
-}
-.portal-loading .auth-loading,
-.signing-in .auth-loading {
-  display: flex;
-}
-.auth-loading-content {
-  display: grid;
-  justify-items: center;
-  gap: 22px;
-  text-align: center;
-}
-.auth-cross {
-  display: block;
-  width: clamp(104px, 22vw, 152px);
-  aspect-ratio: 1;
-  color: #ff9b26;
-}
-.auth-cross > svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.auth-loading p {
-  margin: 0;
-  font: 500 20px var(--display);
-  letter-spacing: .03em;
-}
-.workspace-loading {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: 18px;
-  min-height: min(60vh, 520px);
-  text-align: center;
-  color: var(--ink);
-}
-.workspace-loading .auth-cross { width: 112px; }
-.workspace-loading p {
-  margin: 0;
-  font: 500 19px var(--display);
 }
 .spinner-preview-controls {
   display: grid;
@@ -953,59 +879,11 @@ dialog::backdrop {
   resize: vertical;
 }
 .activity-picker {
-  position: relative;
+  display: grid;
+  gap: 8px;
 }
-.activity-picker input[type="text"] {
-  padding-right: 48px;
-}
-.activity-picker button {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 42px;
-  height: calc(100% - 2px);
-  border: 0;
-  border-left: 1px solid #b9c5d3;
-  background: white;
-  color: var(--ink);
-  cursor: pointer;
-}
-.activity-picker button:focus-visible {
-  outline: 2px solid var(--gold);
-  outline-offset: -3px;
-}
-.activity-options {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 3px);
-  left: 0;
-  right: 0;
-  max-height: 190px;
-  overflow-y: auto;
-  border: 1px solid #b9c5d3;
-  background: white;
-  box-shadow: 3px 3px 0 rgba(18, 42, 70, 0.16);
-}
-.activity-options[hidden] {
-  display: none;
-}
-.activity-options [role="option"] {
-  position: static;
-  display: block;
-  width: 100%;
-  height: auto;
-  padding: 10px 11px;
-  border: 0;
-  border-bottom: 1px solid #e1e6ec;
-  text-align: left;
-}
-.activity-options [role="option"].active,
-.activity-options [role="option"]:hover {
-  background: #eaf0f7;
-}
-.activity-empty {
-  padding: 10px 11px;
-  color: var(--muted);
+.activity-picker input {
+  min-height: 44px;
 }
 .field small {
   display: block;

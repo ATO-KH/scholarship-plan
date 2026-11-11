@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+
+export async function creditLoadScenario(call, evidence, owner = 'alex') {
+  const signIn = who => call('/api/demo/session', { persona: who });
+  await signIn(owner);
+  const initial = await call('/api/points'), today = (await call('/api/me')).today;
+  const course = await call('/api/classes', { name: 'Partial schedule regression', credits: 3, ...evidence });
+  assert.equal(course.status, 201);
+  assert.equal((await call(`/api/roster/${owner}/credit-load`)).status, 403);
+  await signIn('chair');
+  const item = (await call('/api/syllabi')).syllabi.find(row => row.id === course.class.syllabusId);
+  assert.equal((await call(`/api/syllabi/${item.id}/review`, { decision: 'approved', note: '', version: item.version })).status, 200);
+  let load = await call(`/api/roster/${owner}/credit-load`);
+  assert.equal(load.creditLoad.confirmed, false);
+  assert.equal(load.creditLoad.approvedCredits, 3);
+  await signIn(owner);
+  assert.equal((await call('/api/points')).multiplier, 1, 'One approved class must not create a low-load multiplier.');
+  const claim = { activity: 'major', grade: 97, date: today, classId: course.class.id, course: course.class.name, evidence: 'sample', confirm: true };
+  const first = await call('/api/submissions', { ...claim, title: 'Unconfirmed full load assignment' });
+  const second = await call('/api/submissions', { ...claim, title: 'Confirmed full load assignment' });
+  assert.equal(first.submission.estimate, 5);
+  await signIn('chair');
+  const before = (await call(`/api/submissions/${second.submission.id}`)).submission;
+  const review = async (id, points, note = '') => call(`/api/submissions/${id}/review`, { decision: 'approved', points, note, version: (await call(`/api/submissions/${id}`)).submission.reviewVersion });
+  assert.equal((await review(first.submission.id, 5)).status, 200, 'A normal five-point award needs no adjustment note.');
+  const attempts = await Promise.all([1, 2].map(() => call(`/api/roster/${owner}/credit-load`, { credits: 12, version: load.creditLoad.version })));
+  assert.deepEqual(attempts.map(result => result.status).sort(), [200, 409]);
+  const saved = attempts.find(result => result.status === 200);
+  assert.equal(saved.creditLoad.multiplier, 1.15);
+  assert.equal((await call(`/api/roster/${owner}/credit-load`, { credits: 15, version: load.creditLoad.version })).status, 409);
+  assert.equal((await call(`/api/submissions/${second.submission.id}/review`, { decision: 'approved', points: 5, note: '', version: before.reviewVersion })).status, 409);
+  assert.equal((await review(second.submission.id, 5.751)).status, 422);
+  assert.equal((await review(second.submission.id, 5)).status, 422, 'An actual override still requires a reason.');
+  const awarded = await review(second.submission.id, 5.75);
+  assert.equal(awarded.status, 200, JSON.stringify(awarded));
+  assert.equal(awarded.submission.awarded, 5.75);
+  const approved = (await call(`/api/submissions/${second.submission.id}`)).submission;
+  const corrected = await call(`/api/submissions/${second.submission.id}/revise`, { decision: 'approved', points: 6.25, note: 'Verified the corrected assignment award.', version: approved.reviewVersion });
+  assert.equal(corrected.status, 200);
+  const total = Math.round((initial.approved + 11.25) * 100) / 100;
+  await signIn(owner);
+  assert.equal((await call('/api/points')).approved, total);
+  assert.equal((await call('/api/leaderboard')).members.find(row => row.isYou).points, total);
+  assert.equal((await call(`/api/submissions/${first.submission.id}`)).submission.awarded, 5, 'Later confirmation does not rewrite awarded points.');
+}

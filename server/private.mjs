@@ -1,11 +1,18 @@
+import { creditLoadView, confirmCreditLoad, refreshCreditLoadEstimates } from '../web/credit-load-data.mjs';
+import { correctInvitationEmail, emailCorrectionVersion } from './roster-emails.mjs';
+import { EVIDENCE_MIME_TYPES, SYLLABUS_UPLOAD_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../web/syllabus-files.mjs';
+import { rosterDirectory, rosterEmails } from './roster-directory.mjs';
 import { authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./auth-mutation.mjs";
+import { cleanupExpiredAuth } from "./auth-cleanup.mjs";
+import { submissionPage, submissionReviewVersion } from "./submission-list.mjs";
 import { pilotEligible } from "./pilot-access.mjs";
-import { invitationView, invitationList, runInvitation, ROSTER_INVITATION_DEFAULTS } from "./invitations.mjs";
-import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
+import { invitationView, invitationList, invitationVersion, observeInvitationAccount, runInvitation, ROSTER_INVITATION_DEFAULTS, INVITATION_LIFETIME_SECONDS } from "./invitations.mjs";
+import { pointAdjustmentView, applyPointAdjustment, validPoints, roundPoints } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { creditSummary } from "../web/credit-data.mjs";
 import { profileView } from "../web/profile-data.mjs";
-import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, approveClassCredits, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
+import { leaderboardView } from "../web/leaderboard-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
@@ -22,12 +29,14 @@ import {
   chairAccountConfigured,
   verifyPassword,
   invitationAccountByEmail,
+  invitationAccountsById,
   prepareInvitationAccount,
   sendInvitationAccount,
   createPilotAccount,
   deleteNewPilotAccount,
   sendPasswordReset,
   userForAccountToken,
+  exchangeAccountLink,
   setPasswordWithToken,
   setPasswordByAdmin,
 } from "./chapter-auth.mjs";
@@ -54,6 +63,7 @@ import {
 } from "./storage.mjs";
 import {
   assertAcademicWritesAllowed,
+  validateSemesterSettings,
   semesterResetStatus,
   previewSemesterReset,
   startSemesterReset,
@@ -168,6 +178,9 @@ function semesterCheckpoints(state) {
   const semester = semesterSettings(state);
   return checkpointQuotaView(state, [...semester.checkpointDates, semester.targetDate]).checkpoints;
 }
+function semesterVersion(state) {
+  return sha(JSON.stringify([state.semesterGeneration || null, semesterSettings(state)]));
+}
 function academicGuard(state, generation) {
   assertAcademicWritesAllowed(state);
   if (
@@ -218,15 +231,16 @@ async function lockWorkspace(workspace) {
     .get(workspace);
   if (!row) fail(404, "Chapter workspace not found.");
 }
-async function assertActiveSession(session, user, checkEligibility = true) {
+async function assertActiveSession(session, user, checkEligibility = true, state) {
+  state ??= await stateOf(session.workspace);
   const fresh = await db
     .prepare("SELECT id FROM sessions WHERE id=? AND expires>?")
     .get(session.id, Date.now());
-  const currentMember = await member(session.workspace, user.id);
+  const currentMember = await member(session.workspace, user.id, state);
   if (!fresh || !currentMember?.active || currentMember.role !== user.role)
     fail(401, "Your account session is no longer active.");
   if (checkEligibility && user.role !== "chair")
-    assertRosterEligibility(await stateOf(session.workspace), currentMember);
+    assertRosterEligibility(state, currentMember);
   return currentMember;
 }
 
@@ -263,7 +277,7 @@ function rosterView(state) {
 function listedOnRoster(state, user) {
   const snapshot = state.roster;
   return rosterStatus(env).mode === "public_email_csv"
-    ? snapshot?.emails?.includes(user.email?.trim().toLowerCase()) === true
+    ? rosterEmails(state).includes(user.email?.trim().toLowerCase()) === true
     : snapshot?.ids?.includes(user.id) === true;
 }
 function assertRosterEligibility(state, user) {
@@ -349,7 +363,7 @@ async function refreshRoster(session, user, force = false) {
       return state;
     state.roster = snapshot;
     if (state.tierAssignments) {
-      const eligible = new Set(snapshot.emails || []);
+      const eligible = new Set(rosterEmails(state));
       state.tierAssignments = Object.fromEntries(Object.entries(state.tierAssignments)
         .filter(([email]) => eligible.has(email)));
     }
@@ -400,16 +414,16 @@ function memberView(row, checkpoint, finalCheckpoint) {
       : {}),
   };
 }
-async function member(workspace, id) {
+async function member(workspace, id, state) {
   const row = await db
     .prepare("SELECT * FROM members WHERE workspace=? AND id=?")
     .get(workspace, id);
   if (!row) return null;
-  const state = await stateOf(workspace);
+  state ??= await stateOf(workspace);
   const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return { ...memberView(row, checkpoint, schedule.at(-1)), creditsManaged: creditsManaged(state, row.id) };
+  return { ...memberView(row, checkpoint, schedule.at(-1)), creditLoad: creditLoadView(state, row.id), creditsManaged: creditsManaged(state, row.id) };
 }
 async function listMembers(workspace, state) {
   const rows = await db
@@ -420,7 +434,14 @@ async function listMembers(workspace, state) {
   const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return rows.map((row) => ({ ...memberView(row, checkpoint, schedule.at(-1)), creditsManaged: creditsManaged(state, row.id) }));
+  return rows.map((row) => ({ ...memberView(row, checkpoint, schedule.at(-1)), creditLoad: creditLoadView(state, row.id), creditsManaged: creditsManaged(state, row.id) }));
+}
+function classReviewResult(state, target) {
+  return {
+    classReviews: ownerClassReviews(state, target.id, target.credits, target.name),
+    member: { ...target, creditLoad: creditLoadView(state, target.id), creditsManaged: creditsManaged(state, target.id), ...totals(state, target, policyDay()) },
+    pendingEstimates: state.submissions.filter(row => row.owner === target.id && row.status === 'pending').map(row => ({ id: row.id, estimate: row.estimate })),
+  };
 }
 async function tierImportView(workspace, state) {
   const existing = (await listMembers(workspace, state)).filter((entry) => entry.role === "member");
@@ -429,7 +450,7 @@ async function tierImportView(workspace, state) {
   if (production) {
     if (rosterView(state).mode !== "public_email_csv" || !rosterView(state).fresh)
       fail(503, "Refresh the connected name-and-email roster before importing tiers.");
-    directory = state.roster.directory;
+    directory = rosterDirectory(state);
   } else {
     directory = existing.filter((entry) => entry.active).map((entry) => ({
       name: entry.name, email: entry.email, membership: "active",
@@ -516,13 +537,13 @@ async function clearAuthAttempts(kind, identifier) {
     .run(sha(`${kind}:${identifier.trim().toLowerCase()}`));
 }
 async function stateOf(workspace) {
-  return JSON.parse(
+  return refreshCreditLoadEstimates(JSON.parse(
     (
       await db
         .prepare("SELECT data FROM chapters WHERE workspace=?")
         .get(workspace)
     ).data,
-  );
+  ));
 }
 async function currentSession(req) {
   const raw = getCookie(req, sessionCookie);
@@ -535,11 +556,11 @@ async function currentSession(req) {
 }
 async function requireSession(req) {
   const session = await currentSession(req);
-  const user = session && (await member(session.workspace, session.member_id));
+  let state = session && await stateOf(session.workspace);
+  const user = session && (await member(session.workspace, session.member_id, state));
   if (!session || !user?.active)
     fail(401, "Sign in to an active chapter account.");
   if (user.role !== "chair" && req.url?.split("?")[0] !== "/api/logout") {
-    let state = await stateOf(session.workspace);
     const status = rosterView(state);
     if (!pilotEligible(state, user) && status.required && !status.fresh)
       state = await refreshRoster(session, user);
@@ -585,15 +606,18 @@ async function issueSession(workspace, userId, previousId = null) {
     .run(session.id, workspace, userId, session.csrf, session.expires);
   return { session, cookie: cookie(sessionCookie, raw) };
 }
+let cleanupTask = null, cleanupNext = 0;
 async function cleanup() {
-  await db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
-  await db.prepare("DELETE FROM transactions WHERE expires<=?").run(Date.now());
+  if (Date.now() < cleanupNext) return;
+  if (!cleanupTask) cleanupTask = cleanupExpiredAuth(db).then(() => { cleanupNext = Date.now() + 30_000; })
+    .finally(() => { cleanupTask = null; });
+  await cleanupTask;
 }
 async function mutate(session, user, fn) {
   return await atomic(async () => {
     await lockWorkspace(session.workspace);
-    const currentMember = await assertActiveSession(session, user);
     const state = await stateOf(session.workspace);
+    const currentMember = await assertActiveSession(session, user, true, state);
     const result = await fn(state, currentMember);
     await db
       .prepare("UPDATE chapters SET data=? WHERE workspace=?")
@@ -755,7 +779,7 @@ async function getUpload(id, session, user, ownerOnly = false) {
     fail(404, "Evidence file not found.");
   return upload;
 }
-function validUpload(input) {
+async function validUpload(input) {
   const name =
     typeof input.name === "string"
       ? basename(input.name.replaceAll("\\", "/"))
@@ -764,8 +788,8 @@ function validUpload(input) {
       : "";
   if (!name || name.length > 150)
     fail(422, "Choose a file name of at most 150 characters.");
-  if (!["application/pdf", "image/png", "image/jpeg"].includes(input.mime))
-    fail(422, "Only PDF, PNG and JPEG evidence files are accepted.");
+  if (!SYLLABUS_UPLOAD_MIME_TYPES.includes(input.mime))
+    fail(422, `Choose ${SYLLABUS_TYPES_LABEL}.`);
   if (typeof input.base64 !== "string" || input.base64.length % 4 !== 0)
     fail(422, "The file encoding is invalid.");
   if (input.base64.length > Math.ceil((5 * 1024 * 1024) / 3) * 4)
@@ -776,16 +800,8 @@ function validUpload(input) {
   if (!bytes.length) fail(422, "Choose a nonempty evidence file.");
   if (bytes.length > 5 * 1024 * 1024)
     fail(413, "Evidence must be no larger than 5 MiB.");
-  const matches =
-    input.mime === "application/pdf"
-      ? bytes.subarray(0, 5).toString() === "%PDF-"
-      : input.mime === "image/png"
-        ? bytes
-            .subarray(0, 8)
-            .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-        : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
-  if (!matches)
-    fail(422, "The file contents do not match its declared PDF or image type.");
+  if (!await validFileBytes(bytes, input.mime))
+    fail(422, "The file contents do not match a supported file format. Export the document as PDF and try again.");
   return { name, bytes, mime: input.mime };
 }
 function validateRoster(input) {
@@ -858,7 +874,7 @@ async function accountSettingsView(workspace, target, state) {
   const invitation = state.invitations?.[target.email];
   const alias = invitation?.alias || aliases.find(value => /^kh-[a-f0-9]{10}$/.test(value)) || aliases[0] || "";
   const badge = invitation?.badge ?? aliases.find(value => value !== alias) ?? "";
-  const membership = state.roster?.directory?.find(entry => entry.email === target.email)?.membership || "active";
+  const membership = rosterDirectory(state).find(entry => entry.email === target.email)?.membership || "active";
   const managedCredits = creditsManaged(state, target.id);
   const version = sha(JSON.stringify({
     id: target.id, name: target.name, email: target.email, role: target.role,
@@ -902,22 +918,22 @@ async function updateMemberBadge(workspace, target, state, current, badge) {
   if (record) Object.assign(record, { badge, alias, updatedAt: now() });
   return alias;
 }
-async function processInvitation(session, user, email, action, generation, input) {
+async function processInvitation(session, user, email, action, generation, input, expectedVersion) {
   if (!production || authMode !== "chapter" || !chapterAuthConfigured(env))
     fail(422, "Account setup requires real chapter sign-in.");
-  if (["create", "resend", "send-initial", "invite-roster"].includes(action) && !chapterEmailReady)
+  if (["create", "resend", "resend-pending", "send-initial", "invite-roster"].includes(action) && !chapterEmailReady)
     fail(503, "Configure and test chapter email before sending setup emails.");
   if (action === "invite-roster" && rosterStatus(env).mode !== "public_email_csv")
     fail(422, "Direct invitations require the connected name-and-email roster.");
   if (rosterStatus(env).mode === "public_email_csv" && !rosterView(await stateOf(session.workspace)).fresh)
     await refreshRoster(session, user);
   const result = await runInvitation({
-    db, workspace: session.workspace, email, input, action,
+    db, workspace: session.workspace, email, input, action, expectedVersion,
     authorize: () => assertActiveSession(session, user),
     guard: state => {
       academicGuard(state, generation);
       if (rosterStatus(env).mode === "public_email_csv" &&
-        (!rosterView(state).fresh || !state.roster.emails.includes(email)))
+        (!rosterView(state).fresh || !rosterEmails(state).includes(email)))
         fail(409, "Refresh the roster and confirm this member is still eligible before continuing.");
     },
     provider: {
@@ -931,7 +947,97 @@ async function processInvitation(session, user, email, action, generation, input
     member: result.memberId ? await member(session.workspace, result.memberId) : null,
     loginId: result.invitation.loginId,
     invitation: result.invitation, message: result.invitation.message,
+    skipped: Boolean(result.skipped),
   };
+}
+
+async function invitationStatusForChair(session, user) {
+  let state = await stateOf(session.workspace);
+  const members = await listMembers(session.workspace, state);
+  const active = members.filter(item => item.role === "member" && item.active && !item.email.endsWith("@pilot.invalid"));
+  const bindings = new Map((await db.prepare("SELECT member_id,subject FROM identities WHERE workspace=? AND provider='supabase'")
+    .all(session.workspace)).map(item => [item.member_id, item.subject]));
+  const identities = active.filter(item => bindings.has(item.id)).map(item => ({ id: bindings.get(item.id), email: item.email }));
+  let accounts = new Map(), statusWarning = "", checkedAt = null;
+  if (production && authMode === "chapter") {
+    try {
+      accounts = await invitationAccountsById(env, identities);
+      checkedAt = new Date().toISOString();
+    } catch {
+      statusWarning = "Live acceptance status could not be checked. Resending is disabled; refresh to try again. Previously recorded acceptance is still shown.";
+    }
+  }
+  await assertActiveSession(session, user);
+  if (checkedAt) state = await atomic(async () => {
+    await lockWorkspace(session.workspace);
+    await assertActiveSession(session, user);
+    const current = await stateOf(session.workspace);
+    let changed = false;
+    for (const record of Object.values(current.invitations || {})) {
+      if (bindings.get(record.memberId) === record.authUserId)
+        changed = observeInvitationAccount(record, accounts.get(record.authUserId)) || changed;
+    }
+    if (changed) await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(current), session.workspace);
+    return current;
+  });
+  const invitations = invitationList(state);
+  const eligibleMembers = new Map(active.map(item => [item.email, item.id]));
+  const allMembers = new Map(members.map(item => [item.email, item]));
+  const emailRoster = rosterStatus(env).mode === "public_email_csv";
+  const freshRoster = emailRoster && rosterView(state).fresh;
+  const eligible = email => !emailRoster || freshRoster && rosterEmails(state).includes(email);
+  for (const invitation of invitations) {
+    const record = state.invitations[invitation.email], existing = allMembers.get(invitation.email);
+    const bound = eligibleMembers.get(invitation.email) === invitation.memberId && bindings.get(invitation.memberId) === record.authUserId;
+    const account = accounts.get(record.authUserId);
+    invitation.canSendInitial = invitation.canSendInitial && bound && eligible(invitation.email);
+    invitation.canInviteFromRoster = invitation.canInviteFromRoster && freshRoster && rosterEmails(state).includes(invitation.email) &&
+      (record.bound ? bound : !existing || existing.role === "member" && existing.active && existing.id === record.memberId);
+    invitation.canResendPending = invitation.canResendPending && bound && eligible(invitation.email) && Boolean(checkedAt && account && !account.confirmed);
+    invitation.canResend = invitation.canResendPending;
+    if (checkedAt && bound && !account && invitation.status !== "accepted")
+      invitation.message = "The linked sign-in account could not be found. Check account setup before sending another invitation.";
+  }
+  for (const existing of active) {
+    if (state.invitations?.[existing.email]) continue;
+    const authUserId = bindings.get(existing.id), account = accounts.get(authUserId);
+    if (checkedAt && account) {
+      const record = { email: existing.email, name: existing.name, memberId: existing.id, authUserId, bound: true,
+        status: "ready", acceptedAt: account.confirmed ? account.confirmedAt || checkedAt : null, linkSentAt: account.linkSentAt };
+      const view = invitationView(record);
+      invitations.push({ ...view, version: invitationVersion(null, existing.id), canSendInitial: false, canInviteFromRoster: false,
+        canResendPending: view.canResendPending && eligible(existing.email), canResend: view.canResendPending && eligible(existing.email) });
+    } else invitations.push({
+      email: existing.email, name: existing.name, status: "untracked", memberId: existing.id,
+      version: invitationVersion(null, existing.id), loginId: null, lastSentAt: null, expiresAt: null, acceptedAt: null,
+      retryAt: null, canReconcile: true, canResend: false, canResendPending: false, canSendInitial: false, canInviteFromRoster: false,
+      message: "This account predates invitation tracking. Check its setup before sending another setup email.",
+    });
+  }
+  if (emailRoster) for (const entry of rosterDirectory(state)) {
+    if (allMembers.has(entry.email) || state.invitations?.[entry.email]) continue;
+    invitations.push({
+      email: entry.email, name: entry.name, status: "unprepared", memberId: null, loginId: null,
+      lastSentAt: null, expiresAt: null, acceptedAt: null, retryAt: null, canReconcile: false, canResend: false, canResendPending: false, canSendInitial: false,
+      canInviteFromRoster: freshRoster && rosterEmails(state).includes(entry.email) && ["active", "new_member"].includes(entry.membership),
+      tier: entry.membership === "new_member" ? 1 : state.tierAssignments?.[entry.email] ?? ROSTER_INVITATION_DEFAULTS.tier,
+      credits: ROSTER_INVITATION_DEFAULTS.credits,
+      message: "The account will be created when its invitation is sent. Member details can be adjusted afterward.",
+    });
+  }
+  for (const invitation of invitations) {
+    const target = allMembers.get(invitation.email);
+    invitation.emailVersion = emailCorrectionVersion(state, invitation.email, target || null, bindings.get(target?.id) || null);
+    invitation.canCorrectEmail = emailRoster && freshRoster && eligible(invitation.email) &&
+      (!target || target.active && target.role === 'member') && !(state.invitations?.[invitation.email]?.operation?.until > Date.now());
+    invitation.sourceEmail = rosterDirectory(state).find(row => row.email === invitation.email)?.sourceEmail || null;
+  }
+  if (Object.keys(state.rosterEmailCorrections || {}).length && rosterDirectory(state).length < (state.roster?.directory || []).length) {
+    statusWarning = [statusWarning, 'A corrected address conflicts with the roster sheet or its member name changed. Check the source sheet; affected addresses are unavailable until the conflict is resolved.'].filter(Boolean).join(' ');
+  }
+  invitations.sort((a, b) => a.name.localeCompare(b.name));
+  return { invitations, emailReady: chapterEmailReady, defaults: ROSTER_INVITATION_DEFAULTS,
+    checkedAt, statusWarning, rosterFresh: !emailRoster || freshRoster, invitationLifetimeSeconds: INVITATION_LIFETIME_SECONDS };
 }
 async function coordinatedCanvasRefresh(
   session,
@@ -1100,6 +1206,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, origin);
     const path = url.pathname;
     if (!["GET", "POST"].includes(req.method)) fail(405, "Method not allowed.");
+    if (path.startsWith('/api/')) await cleanup();
     if (path === "/api/config" && req.method === "GET") {
       const current = await currentSession(req);
       const state = production
@@ -1281,10 +1388,19 @@ const server = http.createServer(async (req, res) => {
       requireOrigin(req);
       if (!chapterAuthConfigured(env) || !chairAccountConfigured(env)) fail(503, "Chapter sign-in is not ready.");
       const input = await readBody(req);
-      if (typeof input.accessToken !== "string" || input.accessToken.length > 8192 ||
-          typeof input.password !== "string" || input.password.length < 12 || input.password.length > 1024)
+      if (typeof input.password !== "string" || input.password.length < 12 || input.password.length > 1024)
         fail(422, "Choose a password of at least 12 characters.");
-      const account = await userForAccountToken(env, input.accessToken);
+      let accessToken = input.accessToken;
+      if (input.tokenHash !== undefined) {
+        if (accessToken !== undefined || !['invite', 'recovery'].includes(input.type) ||
+            typeof input.tokenHash !== 'string' || !/^[A-Za-z0-9_-]{16,1024}$/.test(input.tokenHash))
+          fail(422, 'Open the complete account link from your latest email.');
+        await authAttempt('account_link', sha(input.tokenHash), 5);
+        accessToken = await exchangeAccountLink(env, input.tokenHash, input.type);
+      }
+      if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 8192)
+        fail(401, 'This account link has expired or was already used. Request a new one from Sign in → Forgot password.');
+      const account = await userForAccountToken(env, accessToken);
       if (!account) fail(401, "This account link has expired. Request a new one.");
       const binding = await identityMember("chapter", "supabase", account.id);
       const user = binding && await member("chapter", binding.member_id);
@@ -1318,7 +1434,7 @@ const server = http.createServer(async (req, res) => {
         // have already been verified above; update only that identity without
         // changing its provider factors or granting a portal session.
         if (account.hasVerifiedFactors) await setPasswordByAdmin(env, account.id, input.password);
-        else if (!(await setPasswordWithToken(env, input.accessToken, input.password, account.id))) throw Error('Unconfirmed password update');
+        else if (!(await setPasswordWithToken(env, accessToken, input.password, account.id))) throw Error('Unconfirmed password update');
       } catch {
         fail(503, "Password update could not be confirmed. Wait two minutes, then try signing in with your new password or request a new reset link.");
       }
@@ -1598,7 +1714,7 @@ const server = http.createServer(async (req, res) => {
           const linked = new Set((await db.prepare(
             "SELECT member_id FROM identities WHERE workspace=? AND provider='supabase'",
           ).all(session.workspace)).map((entry) => entry.member_id));
-          view.candidates = state.roster.directory.map((entry) => {
+          view.candidates = rosterDirectory(state).map((entry) => {
             const account = enrolled.get(entry.email);
             const invitation = invitationView(state.invitations?.[entry.email]);
             return {
@@ -1618,8 +1734,26 @@ const server = http.createServer(async (req, res) => {
         const state = await stateOf(session.workspace);
         return json(res, 200, {
           semester: semesterSettings(state),
+          version: semesterVersion(state),
           reset: semesterResetStatus(state),
         });
+      }
+      if (path === '/api/semester' && req.method === 'POST') {
+        chair(user);
+        if (Object.keys(input).sort().join(',') !== 'semester,version' || typeof input.version !== 'string')
+          fail(422, 'Submit the current semester version and its settings.');
+        const settings = validateSemesterSettings(input.semester);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          if (input.version !== semesterVersion(state)) fail(409, 'Semester settings changed. Reload before saving.');
+          const previous = semesterSettings(state);
+          state.semester = settings;
+          delete state.semesterPreview;
+          await audit(session.workspace, user.name, 'semester.settings', settings.name,
+            JSON.stringify({ previous, current: settings }));
+          return { semester: semesterSettings(state), version: semesterVersion(state) };
+        });
+        return json(res, 200, result);
       }
       if (path === "/api/semester/preview" && req.method === "GET") {
         chair(user);
@@ -1697,7 +1831,7 @@ const server = http.createServer(async (req, res) => {
           weeklyMinorAssignments: categoriesFor(state).find(category => category.id === "minor")?.weeklyLimit ?? null,
           weekConvention:
             "Monday–Sunday, America/New_York (portal convention; policy must confirm)",
-          rounding: "Chair must enter whole points and explain any difference.",
+          rounding: "Awards support up to two decimal places. Matching the calculated award needs no adjustment note.",
           tierSource:
             "Page 5 GPA ranges; Chair assigns tiers. New members use Tier 1.",
           checkpoints: semesterCheckpoints(state),
@@ -1797,7 +1931,7 @@ const server = http.createServer(async (req, res) => {
         const updated = await mutate(session, user, async state => {
           academicGuard(state, generation);
           const upload = await getUpload(input.evidenceId, session, user, true);
-          if (!["application/pdf", "image/png", "image/jpeg"].includes(upload.mime)) fail(422, "Upload a PDF, PNG or JPEG syllabus.");
+          if (!SYLLABUS_UPLOAD_MIME_TYPES.includes(upload.mime)) fail(422, `Upload ${SYLLABUS_TYPES_LABEL} as your syllabus.`);
           state.classRecords ||= [];
           state.syllabi ||= [];
           let course = input.classId && state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived);
@@ -1878,14 +2012,15 @@ const server = http.createServer(async (req, res) => {
             course.archived = true;
             const total = approvedClassCredits(state, course.owner);
             await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(total, session.workspace, course.owner);
-            refreshPendingCreditEstimates(state, course.owner, multiplier({ credits: total }));
+            refreshCreditLoadEstimates(state, course.owner);
           }
           delete course.pendingRemoval;
           Object.assign(course, { version: randomUUID(), updatedAt: now(), removalReview: { decision: input.decision, note, reviewer: user.name, reviewedAt: now() } });
           state.memberProfiles ||= {};
           (state.memberProfiles[course.owner] ||= { courses: [] }).version = randomUUID();
           await audit(session.workspace, user.name, "class.removal_review", course.id, `${input.decision}; ${note}`);
-          return { classId: course.id, decision: input.decision, ...classView(state, course.owner, (await member(session.workspace, course.owner)).credits) };
+          return { classId: course.id, decision: input.decision, ...classView(state, course.owner, (await member(session.workspace, course.owner)).credits),
+            ...classReviewResult(state, { ...target, credits: input.decision === "approved" ? approvedClassCredits(state, course.owner) : target.credits }) };
         });
         return json(res, 200, result);
       }
@@ -1900,7 +2035,26 @@ const server = http.createServer(async (req, res) => {
           removals: (state.classRecords || []).filter(row => !row.archived && row.pendingRemoval)
             .map(row => ({ ...removalView(state, row, owners.get(row.owner)?.credits ?? null), memberName: owners.get(row.owner)?.name || "Former member" })) });
       }
-      const syllabusRoute = path.match(/^\/api\/syllabi\/([^/]+)\/(evidence|review)$/);
+      if (path === '/api/syllabi/approve-batch' && req.method === 'POST') {
+        chair(user);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          const { owners, ids } = applySyllabusBatch(state, input, { reviewer: user.name, at: now(), newVersion: randomUUID });
+          const members = new Map((await listMembers(session.workspace, state)).map(row => [row.id, row]));
+          const results = [];
+          for (const [owner, credits] of owners) {
+            const target = members.get(owner);
+            if (!target?.active || target.role !== 'member') fail(409, 'A selected member is no longer active. No approvals were saved.');
+            await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(credits, session.workspace, owner);
+            refreshCreditLoadEstimates(state, owner);
+            results.push(classReviewResult(state, { ...target, credits }));
+          }
+          for (const id of ids) await audit(session.workspace, user.name, 'syllabus.review', id, JSON.stringify(state.syllabi.find(row => row.id === id).history.at(-1)));
+          return { results, approved: ids.length };
+        });
+        return json(res, 200, result);
+      }
+      const syllabusRoute = path.match(/^\/api\/syllabi\/([^/]+)\/(evidence|review|revise)$/);
       if (syllabusRoute) {
         const state = await stateOf(session.workspace);
         const item = (state.syllabi || []).find(row => row.id === syllabusRoute[1] && (user.role === "chair" || row.owner === user.id));
@@ -1910,34 +2064,30 @@ const server = http.createServer(async (req, res) => {
           await audit(session.workspace, user.name, "syllabus.view", item.id, user.role);
           return json(res, 200, { name: upload.name, mime: upload.mime, previewUrl: `/api/uploads/${upload.id}/preview`, downloadUrl: `/api/uploads/${upload.id}` });
         }
-        if (syllabusRoute[2] === "review" && req.method === "POST") {
+        if (["review", "revise"].includes(syllabusRoute[2]) && req.method === "POST") {
           chair(user);
-          const note = typeof input.note === "string" ? input.note.trim() : "";
-          if (!["approved", "denied"].includes(input.decision) || note.length > 1000 || (input.decision === "denied" && note.length < 5))
-            fail(422, "Approve the syllabus or deny it with a reason of at least 5 characters.");
+          const correction = syllabusRoute[2] === 'revise';
           const result = await mutate(session, user, async current => {
             academicGuard(current, requestGeneration);
             const syllabus = (current.syllabi || []).find(row => row.id === item.id);
-            const course = (current.classRecords || []).find(row => row.id === syllabus?.classId && row.owner === syllabus.owner && !row.archived && row.syllabusId === syllabus.id);
-            if (!syllabus || !course || course.pendingRemoval || syllabus.status !== "pending" || syllabus.version !== input.version)
-              fail(409, "This syllabus changed or was already reviewed. Reload the list.");
-            const target = await member(session.workspace, course.owner);
+            const course = (current.classRecords || []).find(row => row.id === syllabus?.classId && row.owner === syllabus.owner);
+            if (!course) fail(409, "This class changed. Reload the list.");
+            const target = await member(session.workspace, course.owner, current);
             if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
-            if (input.decision === "approved") {
-              const total = approveClassCredits(current, course, syllabus.credits);
+            const { total } = applySyllabusDecision(current, syllabus, course, input, { correction, reviewer: user.name, at: now(), newVersion: randomUUID });
+            if (total !== null) {
               await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(total, session.workspace, course.owner);
-              refreshPendingCreditEstimates(current, course.owner, multiplier({ credits: total }));
+              refreshCreditLoadEstimates(current, course.owner);
             }
-            Object.assign(syllabus, { status: input.decision, reviewNote: note, reviewedAt: now(), reviewer: user.name, version: randomUUID() });
-            course.version = randomUUID();
-            current.memberProfiles ||= {};
-            (current.memberProfiles[course.owner] ||= { courses: [] }).version = randomUUID();
-            await audit(session.workspace, user.name, "syllabus.review", syllabus.id, input.decision);
-            return { syllabus: syllabusView(current, syllabus, input.decision === "approved" ? approvedClassCredits(current, course.owner) : target.credits) };
+            const credits = total ?? target.credits;
+            await audit(session.workspace, user.name, correction ? "syllabus.correct" : "syllabus.review", syllabus.id,
+              JSON.stringify(syllabus.history.at(-1)));
+            return { syllabus: syllabusView(current, syllabus, credits), ...classReviewResult(current, { ...target, credits }) };
           });
           return json(res, 200, result);
         }
       }
+
       if (path === "/api/profile" && ["GET", "POST"].includes(req.method)) {
         individual(user);
         if (req.method === "POST") fail(422, "Add classes with a syllabus in My profile.");
@@ -2263,7 +2413,7 @@ const server = http.createServer(async (req, res) => {
         if (
           !name ||
           name.length > 150 ||
-          !["application/pdf", "image/png", "image/jpeg"].includes(
+          !SYLLABUS_UPLOAD_MIME_TYPES.includes(
             input.mime,
           ) ||
           !Number.isInteger(input.size) ||
@@ -2272,7 +2422,7 @@ const server = http.createServer(async (req, res) => {
         )
           fail(
             422,
-            "Choose a PDF, PNG or JPEG evidence file of at most 5 MiB.",
+            `Choose ${SYLLABUS_TYPES_LABEL} of at most 5 MiB.`,
           );
         const id = randomUUID();
         const path = `quarantine/${session.workspace}/${user.id}/${id}`;
@@ -2300,7 +2450,7 @@ const server = http.createServer(async (req, res) => {
             );
         });
         try {
-          const grant = await createUploadGrant({ path, env });
+          const grant = await createUploadGrant({ path, mime: input.mime, env });
           await assertActiveSession(session, user);
           academicGuard(await stateOf(session.workspace), generation);
           return json(res, 201, {
@@ -2339,6 +2489,7 @@ const server = http.createServer(async (req, res) => {
           if (!found || found.backend !== "supabase")
             fail(404, "Evidence upload not found.");
           if (found.status === "ready") return found;
+          if (!SYLLABUS_UPLOAD_MIME_TYPES.includes(found.mime)) fail(422, "Upload the syllabus as a PDF, PNG or JPEG so it can be reviewed in the portal.");
           if (
             found.status !== "pending" ||
             Date.now() - Date.parse(found.created_at) > 2 * 60 * 60 * 1000
@@ -2422,7 +2573,7 @@ const server = http.createServer(async (req, res) => {
         const generation = await academicSnapshot(session, requestGeneration);
         if (directUploads)
           fail(422, "Use the direct evidence upload workflow.");
-        const file = validUpload(input);
+        const file = await validUpload(input);
         const id = randomUUID();
         const filename = `${id}.bin`;
         await writeFile(resolve(filesDir, filename), file.bytes, {
@@ -2473,7 +2624,7 @@ const server = http.createServer(async (req, res) => {
       const uploadRoute = path.match(/^\/api\/uploads\/([a-f0-9-]{36})(\/preview)?$/);
       if (uploadRoute && req.method === "GET") {
         const upload = await getUpload(uploadRoute[1], session, user);
-        const inline = uploadRoute[2] === "/preview";
+        const inline = uploadRoute[2] === "/preview" && EVIDENCE_MIME_TYPES.includes(upload.mime);
         if (upload.backend === "supabase") {
           const grant = await createDownloadGrant({
             path: upload.final_path,
@@ -2556,6 +2707,16 @@ const server = http.createServer(async (req, res) => {
           ...totals(await stateOf(session.workspace), user, policyDay()),
         });
       }
+      if (path === "/api/leaderboard" && req.method === "GET") {
+        const state = await stateOf(session.workspace);
+        const members = await listMembers(session.workspace, state);
+        const rosterConfig = rosterStatus(env);
+        const emailRoster = rosterConfig.mode === 'public_email_csv';
+        const allowed = new Set(emailRoster ? rosterEmails(state) : state.roster?.ids || []);
+        const eligible = production && rosterConfig.required
+          ? members.filter(member => allowed.has(emailRoster ? member.email?.trim().toLowerCase() : member.id)) : members;
+        return json(res, 200, leaderboardView(state, eligible, user.id));
+      }
       if (path === "/api/members" && req.method === "GET") {
         chair(user);
         const state = await stateOf(session.workspace);
@@ -2607,7 +2768,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === "/api/roster" && req.method === "GET") {
         chair(user);
-        const members = await listMembers(session.workspace);
+        const state = await stateOf(session.workspace);
+        const members = await listMembers(session.workspace, state);
         const identities = await db
           .prepare(
             "SELECT member_id,provider,subject FROM identities WHERE workspace=? AND provider<>?",
@@ -2622,6 +2784,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, {
           members: members.map((m) => ({
             ...m,
+            ...(m.role === "member" ? totals(state, m, policyDay()) : {}),
             identities: identitiesByMember.get(m.id) || [],
           })),
         });
@@ -2630,7 +2793,7 @@ const server = http.createServer(async (req, res) => {
         chair(user);
         const view = await tierImportView(session.workspace, await stateOf(session.workspace));
         if (production) {
-          const identifiers = await fetchRosterImportIdentifiers({ env });
+          const identifiers = rosterDirectory(await stateOf(session.workspace), await fetchRosterImportIdentifiers({ env }));
           const byEmail = new Map(identifiers.map((entry) => [entry.email, entry]));
           if (identifiers.length !== view.targets.length || view.targets.some((target) => {
             const entry = byEmail.get(target.email);
@@ -2724,42 +2887,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === "/api/admin/invitations" && req.method === "GET") {
         chair(user);
-        const state = await stateOf(session.workspace);
-        const invitations = invitationList(state);
-        const members = await listMembers(session.workspace, state);
-        const eligibleMembers = new Map(members.filter(member => member.role === "member" && member.active)
-          .map(member => [member.email, member.id]));
-        const allMembers = new Map(members.map(member => [member.email, member]));
-        const emailRoster = rosterStatus(env).mode === "public_email_csv";
-        const freshRoster = emailRoster && rosterView(state).fresh;
-        for (const invitation of invitations) {
-          invitation.canSendInitial = invitation.canSendInitial && eligibleMembers.get(invitation.email) === invitation.memberId &&
-            (!emailRoster || rosterView(state).fresh && state.roster.emails.includes(invitation.email));
-          const existing = allMembers.get(invitation.email), record = state.invitations[invitation.email];
-          invitation.canInviteFromRoster = invitation.canInviteFromRoster && freshRoster && state.roster.emails.includes(invitation.email) &&
-            (record.bound ? eligibleMembers.get(invitation.email) === record.memberId : !existing || existing.role === "member" && existing.active && existing.id === record.memberId);
-        }
-        for (const existing of members) {
-          if (existing.role !== "member" || !existing.active || existing.email.endsWith("@pilot.invalid") || state.invitations?.[existing.email]) continue;
-          invitations.push({
-            email: existing.email, name: existing.name, status: "untracked", memberId: existing.id,
-            loginId: null, lastSentAt: null, retryAt: null, canReconcile: true, canResend: false, canSendInitial: false, canInviteFromRoster: false,
-            message: "This account predates invitation tracking. Check its setup before sending another setup email.",
-          });
-        }
-        if (emailRoster) for (const entry of state.roster?.directory || []) {
-          if (allMembers.has(entry.email) || state.invitations?.[entry.email]) continue;
-          invitations.push({
-            email: entry.email, name: entry.name, status: "unprepared", memberId: null, loginId: null,
-            lastSentAt: null, retryAt: null, canReconcile: false, canResend: false, canSendInitial: false,
-            canInviteFromRoster: freshRoster && state.roster.emails.includes(entry.email) && ["active", "new_member"].includes(entry.membership),
-            tier: entry.membership === "new_member" ? 1 : state.tierAssignments?.[entry.email] ?? ROSTER_INVITATION_DEFAULTS.tier,
-            credits: ROSTER_INVITATION_DEFAULTS.credits,
-            message: "The account will be created when its invitation is sent. Member details can be adjusted afterward.",
-          });
-        }
-        invitations.sort((a, b) => a.name.localeCompare(b.name));
-        return json(res, 200, { invitations, emailReady: chapterEmailReady, defaults: ROSTER_INVITATION_DEFAULTS });
+        return json(res, 200, await invitationStatusForChair(session, user));
       }
       if (path === "/api/admin/invitations/prepare" && req.method === "POST") {
         chair(user);
@@ -2769,7 +2897,7 @@ const server = http.createServer(async (req, res) => {
         const result = await processInvitation(session, user, prepared.email, "prepare", requestGeneration, prepared);
         return json(res, 201, result);
       }
-      const invitationAction = path.match(/^\/api\/admin\/invitations\/([^/]+)\/(reconcile|resend|send-initial|invite-roster)$/);
+      const invitationAction = path.match(/^\/api\/admin\/invitations\/([^/]+)\/(reconcile|resend|resend-pending|send-initial|invite-roster)$/);
       if (invitationAction && req.method === "POST") {
         chair(user);
         let email;
@@ -2777,8 +2905,10 @@ const server = http.createServer(async (req, res) => {
         catch { fail(422, "Invalid member email."); }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)
           fail(422, "Invalid member email.");
-        if (Object.keys(input).length) fail(422, "This action does not accept account changes.");
-        const result = await processInvitation(session, user, email, invitationAction[2], requestGeneration);
+        const pendingOnly = invitationAction[2] === "resend-pending";
+        if (pendingOnly ? Object.keys(input).join(",") !== "version" || !/^[a-f0-9]{64}$/.test(input.version || "") : Object.keys(input).length)
+          fail(422, pendingOnly ? "Refresh invitation status before sending." : "This action does not accept account changes.");
+        const result = await processInvitation(session, user, email, invitationAction[2], requestGeneration, undefined, input.version);
         return json(res, 200, result);
       }
       if (path === "/api/roster" && req.method === "POST") {
@@ -2792,9 +2922,9 @@ const server = http.createServer(async (req, res) => {
             if (!rosterView(state).fresh) state = await refreshRoster(session, user);
             if (!rosterView(state).fresh)
               fail(503, "Current roster eligibility is unavailable. Refresh the roster before inviting members.");
-            if (!state.roster.emails.includes(invited.email))
+            if (!rosterEmails(state).includes(invited.email))
               fail(422, "This email is not eligible on the connected chapter roster.");
-            const listed = state.roster.directory.find((entry) => entry.email === invited.email);
+            const listed = rosterDirectory(state).find((entry) => entry.email === invited.email);
             invited.tier = listed?.membership === "new_member" ? 1 :
               state.tierAssignments?.[invited.email] ?? invited.tier;
           }
@@ -2836,6 +2966,24 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 201, { member: created });
       }
+      const correctEmail = path.match(/^\/api\/admin\/invitations\/([^/]+)\/correct-email$/);
+      if (correctEmail && req.method === 'POST') {
+        chair(user);
+        if (!production || authMode !== 'chapter' || rosterStatus(env).mode !== 'public_email_csv') fail(422, 'Email corrections require the connected chapter roster.');
+        if (Object.keys(input).sort().join(',') !== 'email,version' || typeof input.version !== 'string' || !/^[a-f0-9]{64}$/.test(input.version))
+          fail(422, 'Submit the corrected email and the reviewed recipient version.');
+        if (!rosterView(await stateOf(session.workspace)).fresh) await refreshRoster(session, user);
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          if (!rosterView(state).fresh) fail(409, 'Refresh the roster before correcting an address.');
+          let email;
+          try { email = decodeURIComponent(correctEmail[1]).trim().toLowerCase(); } catch { fail(422, 'Invalid recipient address.'); }
+          return correctInvitationEmail({ db, workspace: session.workspace, state, email,
+            nextEmail: input.email, version: input.version,
+            audit: (action, subject, detail) => audit(session.workspace, user.name, action, subject, detail) });
+        });
+        return json(res, 200, result);
+      }
       const accountSettings = path.match(/^\/api\/roster\/([^/]+)\/account-settings$/);
       if (accountSettings && ["GET", "POST"].includes(req.method)) {
         chair(user);
@@ -2855,7 +3003,7 @@ const server = http.createServer(async (req, res) => {
           academicGuard(state, requestGeneration);
           if (current.version !== input.version) fail(409, "This account changed. Reopen its settings before saving.");
           if (production && rosterStatus(env).mode === "public_email_csv" && !target.email.endsWith("@pilot.invalid") &&
-            (!rosterView(state).fresh || !state.roster.emails.includes(target.email)))
+            (!rosterView(state).fresh || !rosterEmails(state).includes(target.email)))
             fail(409, "Refresh the roster and confirm this member is still eligible before saving.");
           const details = validateChapterMember({ ...input, email: target.email });
           if (current.membership === "new_member" && details.tier !== 1)
@@ -2868,11 +3016,31 @@ const server = http.createServer(async (req, res) => {
             .run(details.name, details.tier, details.credits, session.workspace, target.id);
           if (record) Object.assign(record, { name: details.name, badge: details.badge, alias, tier: details.tier, credits: details.credits, updatedAt: now() });
           if (state.tierAssignments) delete state.tierAssignments[target.email];
-          if (target.credits !== details.credits) refreshPendingCreditEstimates(state, target.id, multiplier({ credits: details.credits }));
+          if (target.credits !== details.credits) refreshCreditLoadEstimates(state, target.id);
           await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
           await audit(session.workspace, user.name, "roster.account_settings", target.id,
             `Account details updated without email; tier ${target.tier} to ${details.tier}; credits ${target.credits} to ${details.credits}`);
           return await accountSettingsView(session.workspace, await member(session.workspace, target.id), state);
+        });
+        return json(res, 200, result);
+      }
+      const creditLoadRoute = path.match(/^\/api\/roster\/([^/]+)\/credit-load$/);
+      if (creditLoadRoute && ["GET", "POST"].includes(req.method)) {
+        chair(user);
+        const view = async state => {
+          const target = await member(session.workspace, creditLoadRoute[1], state);
+          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+          return { creditLoad: creditLoadView(state, target.id), ...classReviewResult(state, target) };
+        };
+        if (req.method === "GET") return json(res, 200, await view(await stateOf(session.workspace)));
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          const target = await member(session.workspace, creditLoadRoute[1], state);
+          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+          const before = creditLoadView(state, target.id);
+          const after = confirmCreditLoad(state, target.id, input, { reviewer: user.name, at: now(), newVersion: randomUUID });
+          await audit(session.workspace, user.name, "credits.confirm_load", target.id, JSON.stringify({ before, after }));
+          return view(state);
         });
         return json(res, 200, result);
       }
@@ -2892,7 +3060,7 @@ const server = http.createServer(async (req, res) => {
           const target = await member(session.workspace, academicSettings[1]);
           if (!target?.active || target.role !== "member")
             fail(404, "Active member not found.");
-          if (state.roster?.directory?.find((entry) => entry.email === target.email)?.membership === "new_member" && input.tier !== 1)
+          if (rosterDirectory(state).find((entry) => entry.email === target.email)?.membership === "new_member" && input.tier !== 1)
             fail(422, "New members must be assigned Tier 1.");
           if (creditsManaged(state, target.id) && target.credits !== input.credits)
             fail(409, "This member’s credit hours come from approved classes. Review their classes to change the total.");
@@ -2901,7 +3069,7 @@ const server = http.createServer(async (req, res) => {
           await db.prepare(
             "UPDATE members SET tier=?, credits=? WHERE workspace=? AND id=? AND role='member' AND active=1",
           ).run(input.tier, input.credits, session.workspace, target.id);
-          refreshPendingCreditEstimates(state, target.id, multiplier({ credits: input.credits }));
+          refreshCreditLoadEstimates(state, target.id);
           await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
           await audit(session.workspace, user.name, "roster.academic_settings", target.id,
             `tier ${target.tier} to ${input.tier}; credits ${target.credits} to ${input.credits}`);
@@ -2976,20 +3144,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === "/api/submissions" && req.method === "GET") {
         const state = await stateOf(session.workspace);
-        return json(res, 200, {
-          submissions: await Promise.all(
-            state.submissions
-              .filter((s) => user.role === "chair" || s.owner === user.id)
-              .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
-              .map(async (s) => ({
-                ...s,
-                syllabus: submissionSyllabus(state, s),
-                memberName:
-                  (await member(session.workspace, s.owner))?.name ||
-                  "Former member",
-              })),
-          ),
-        });
+        const names = new Map((await db.prepare('SELECT id,name FROM members WHERE workspace=?')
+          .all(session.workspace)).map(member => [member.id, member.name]));
+        return json(res, 200, submissionPage(state, user, names, url.searchParams));
       }
       if (path === "/api/submissions" && req.method === "POST") {
         individual(user);
@@ -3009,8 +3166,10 @@ const server = http.createServer(async (req, res) => {
         else evidence = (await getUpload(evidenceId, session, user, true)).id;
         const result = await mutate(session, user, async (state, user) => {
           academicGuard(state, generation);
-          if (evidence !== "sample")
-            await getUpload(evidence, session, user, true);
+          if (evidence !== "sample") {
+            const upload = await getUpload(evidence, session, user, true);
+            if (!EVIDENCE_MIME_TYPES.includes(upload.mime)) fail(422, "Assignment evidence must be a PDF, PNG or JPEG file.");
+          }
           const item = newSubmission(
             claim(input, state, user, evidence),
             user,
@@ -3031,7 +3190,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 201, result);
       }
       const submissionRoute = path.match(
-        /^\/api\/submissions\/([^/]+)(?:\/(review|evidence))?$/,
+        /^\/api\/submissions\/([^/]+)(?:\/(review|revise|evidence))?$/,
       );
       if (submissionRoute) {
         const state = await stateOf(session.workspace);
@@ -3040,6 +3199,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, {
             submission: {
               ...item,
+              reviewVersion: submissionReviewVersion(state, item),
               syllabus: submissionSyllabus(state, item),
               memberName:
                 (await member(session.workspace, item.owner))?.name ||
@@ -3100,14 +3260,17 @@ const server = http.createServer(async (req, res) => {
             },
           });
         }
-        if (submissionRoute[2] === "review" && req.method === "POST") {
+        if (["review", "revise"].includes(submissionRoute[2]) && req.method === "POST") {
           chair(user);
+          const correction = submissionRoute[2] === "revise";
           const generation = await academicSnapshot(session, requestGeneration);
           const result = await mutate(session, user, async (state) => {
             academicGuard(state, generation);
             const item = ownSubmission(state, user, submissionRoute[1]);
-            if (item.status !== "pending")
-              fail(409, "This submission has already been reviewed.");
+            if (correction ? !["approved", "denied"].includes(item.status) : item.status !== "pending")
+              fail(409, "This submission changed. Reopen it to review or correct the current decision.");
+            if (input.version !== submissionReviewVersion(state, item))
+              fail(409, 'This submission or its point estimate changed. Reopen it and review the current details before deciding.');
             if (!["approved", "denied"].includes(input.decision))
               fail(422, "Choose approve or deny.");
             const note =
@@ -3116,26 +3279,27 @@ const server = http.createServer(async (req, res) => {
               fail(422, "Keep the review note under 1,000 characters.");
             if (
               input.decision === "approved" &&
-              (!Number.isInteger(input.points) ||
-                input.points < 0 ||
-                input.points > 10000)
+              !validPoints(input.points)
             )
-              fail(422, "Award a whole number of points from 0 to 10,000.");
+              fail(422, "Award 0 to 10,000 points, with up to two decimal places.");
             if (
-              (input.decision === "denied" || input.points !== item.estimate) &&
+              (correction || input.decision === "denied" || input.points !== item.estimate) &&
               note.length < 5
             )
               fail(
                 422,
                 "Explain the denial or point adjustment in a review note.",
               );
+            const before = { status: item.status, awarded: item.awarded, note: item.reviewNote || "", reviewer: item.reviewer || null, at: item.reviewedAt || null };
             item.status = input.decision;
-            item.awarded = input.decision === "approved" ? input.points : 0;
+            item.awarded = input.decision === "approved" ? roundPoints(input.points) : 0;
             item.reviewNote = note;
             item.reviewedAt = now();
             item.reviewer = user.name;
+            item.history ||= [];
             item.history.push({
-              event:
+              ...(correction ? { before, correction: true } : {}),
+              event: correction ? `Corrected ${before.status} (${before.awarded} points) → ${item.status} (${item.awarded} points)` :
                 item.status === "approved"
                   ? `Approved · ${item.awarded} points`
                   : "Denied",
@@ -3146,9 +3310,9 @@ const server = http.createServer(async (req, res) => {
             await audit(
               session.workspace,
               user.name,
-              `submission.${input.decision}`,
+              correction ? "submission.correct" : `submission.${input.decision}`,
               item.id,
-              `${item.awarded} points; ${note}`,
+              JSON.stringify({ before, status: item.status, awarded: item.awarded, note }),
             );
             return {
               submission: item,
@@ -3252,8 +3416,14 @@ const server = http.createServer(async (req, res) => {
       "/profile-data.mjs": "profile-data.mjs",
       "/syllabus-data.mjs": "syllabus-data.mjs",
       "/syllabus-ui.mjs": "syllabus-ui.mjs",
+      "/syllabus-files.mjs": "syllabus-files.mjs",
+      "/credit-load-data.mjs": "credit-load-data.mjs",
+      "/credit-load-ui.mjs": "credit-load-ui.mjs",
+      "/roster-ui.mjs": "roster-ui.mjs",
       "/file-preview-ui.mjs": "file-preview-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",
+      "/leaderboard-ui.mjs": "leaderboard-ui.mjs",
+      "/leaderboard-data.mjs": "leaderboard-data.mjs",
       "/badge-ui.mjs": "badge-ui.mjs",
       "/credit-data.mjs": "credit-data.mjs",
       "/credit-ui.mjs": "credit-ui.mjs",

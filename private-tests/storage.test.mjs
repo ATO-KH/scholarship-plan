@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { syllabusFixtures } from './syllabus-fixtures.mjs';
 import {
-  MAX_EVIDENCE_BYTES, EVIDENCE_MIME_TYPES, StorageError, storageStatus, verifyStorageConfiguration,
+  MAX_EVIDENCE_BYTES, EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, StorageError, storageStatus, verifyStorageConfiguration,
   createUploadGrant, verifyStoredEvidence, finalizeStoredEvidence, createDownloadGrant, removeStoredEvidence, deleteStoredEvidenceAndVerify,
 } from '../server/storage.mjs';
 
@@ -101,6 +102,37 @@ test('browser upload grant is restricted to one quarantine path and denies overw
   assert.equal(grant.expiresIn, 7200);
   assert.ok(!JSON.stringify(grant).includes(env.SUPABASE_SECRET_KEY));
   await rejects(createUploadGrant({ path: finalPath, env, fetchImpl: p.fetchImpl }), 'STORAGE_PATH', 422);
+});
+
+test('expanded legacy storage remains readable while new document grants are refused', async () => {
+  const expanded = { ...bucket, allowed_mime_types: [...SYLLABUS_MIME_TYPES] };
+  const p = provider(() => json({ url: `${uploadRoute}?token=temporary-upload-token` }), expanded);
+  assert.deepEqual((await verifyStorageConfiguration({ env, fetchImpl: p.fetchImpl })).mimeTypes, SYLLABUS_MIME_TYPES);
+  await createUploadGrant({ path, mime: 'application/pdf', env, fetchImpl: p.fetchImpl });
+  await rejects(createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: p.fetchImpl }), 'STORAGE_FILE_TYPE', 422);
+  const old = provider(() => assert.fail('unsupported format cannot receive a grant'));
+  await rejects(createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: old.fetchImpl }), 'STORAGE_FILE_TYPE', 422);
+});
+
+test('direct syllabus finalization verifies document bytes and preserves their exact format', async () => {
+  const expanded = { ...bucket, allowed_mime_types: [...SYLLABUS_MIME_TYPES] };
+  for (const file of syllabusFixtures) {
+    let written = false;
+    const p = provider((url, options) => {
+      if (options.method === 'GET') return new Response(file.bytes);
+      if (options.method === 'POST') {
+        assert.equal(route(url), finalRoute);
+        assert.equal(options.headers['Content-Type'], file.mime);
+        assert.deepEqual(options.body, file.bytes); written = true;
+      }
+      return json({});
+    }, expanded);
+    const result = await finalizeStoredEvidence({ path, finalPath, env, expectedMime: file.mime, expectedSize: file.bytes.length, fetchImpl: p.fetchImpl });
+    assert.equal(result.mime, file.mime); assert.equal(written, true);
+    const invalid = provider(() => new Response('Not a Word file'), expanded);
+    await rejects(finalizeStoredEvidence({ path, finalPath, env, expectedMime: syllabusFixtures[0].mime, expectedSize: 15, fetchImpl: invalid.fetchImpl }), 'STORAGE_FILE_TYPE', 422);
+    assert.equal(invalid.calls.some(call => call.method === 'POST'), false);
+  }
 });
 
 test('object references reject traversal, foreign URLs, malformed IDs and unsafe segments before network access', async () => {
@@ -268,17 +300,22 @@ test('provider JSON responses are bounded and delete requests are limited to one
   assert.equal(p.calls.length, 1);
 });
 
-test('permanent deletion requires a follow-up absent-object check; authorization errors cannot prove deletion', async () => {
-  for (const status of [200, 401, 403, 500]) {
-    const p = provider((url, options) => options.method === 'DELETE' ? json([]) :
-      new Response(null, { status }));
-    await assert.rejects(deleteStoredEvidenceAndVerify({ path: finalPath, env, fetchImpl: p.fetchImpl }), StorageError);
+test('permanent deletion recognizes only bounded, explicit NoSuchKey errors', async () => {
+  for (const [status, body] of [[200, {}], [400, {code:'InvalidJWT',statusCode:'401'}], [400, {code:'NoSuchBucket',statusCode:'404'}], [404, {}], [401, {code:'NoSuchKey',statusCode:'404'}], [403, {}], [500, {}]]) {
+    const p = provider((url, options) => options.method === 'DELETE' ? json([]) : json(body, {status}));
+    await assert.rejects(deleteStoredEvidenceAndVerify({path:finalPath, env, fetchImpl:p.fetchImpl}), StorageError);
   }
-  const absent = provider((url, options) => {
-    if (options.method === 'DELETE') return json([]);
-    assert.equal(options.method, 'HEAD');
-    assert.equal(route(url), `/object/${bucket.id}/${finalPath}`);
-    return new Response(null, { status: 404 });
-  });
-  assert.deepEqual(await deleteStoredEvidenceAndVerify({ path: finalPath, env, fetchImpl: absent.fetchImpl }), { deleted: true });
+  for (const status of [400, 404]) {
+    const absent = provider((url, options) => {
+      if (options.method === 'DELETE') return json([]);
+      assert.equal(options.method, 'GET');
+      assert.equal(route(url), `/object/info/${bucket.id}/${finalPath}`);
+      return json({code:'NoSuchKey',statusCode:'404',message:'Object not found'}, {status});
+    });
+    assert.deepEqual(await deleteStoredEvidenceAndVerify({path:finalPath,env,fetchImpl:absent.fetchImpl}), {deleted:true});
+  }
+  for (const body of ['not JSON', 'x'.repeat(32 * 1024 + 1)]) {
+    const p = provider((url, options) => options.method === 'DELETE' ? json([]) : new Response(body,{status:400}));
+    await assert.rejects(deleteStoredEvidenceAndVerify({path:finalPath,env,fetchImpl:p.fetchImpl}), StorageError);
+  }
 });

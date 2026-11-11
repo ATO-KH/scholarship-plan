@@ -1,15 +1,16 @@
 import { readImage, uploadImage } from './credit-ui.mjs';
 import { mountSyllabusPreview } from './syllabus-ui.mjs';
+import { SYLLABUS_ACCEPT, SYLLABUS_TYPES_LABEL, syllabusMime } from './syllabus-files.mjs';
 
-export async function mountProfile(container, { api, esc, loading, isCurrent, sandbox = false, config = {} }) {
-  const { classes, accountCredits, approvedCredits, creditsManaged } = await api('/api/classes');
+export async function mountProfile(container, { api, esc, loading, isCurrent, sandbox = false, config = {}, onSubmitAssignment }) {
+  const { classes, accountCredits, approvedCredits, creditsManaged, creditLoad } = await api('/api/classes');
   if (!isCurrent()) return;
   const formatHours = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
   const hasHours = value => value !== null && value !== undefined && Number.isFinite(Number(value));
-  const total = hasHours(accountCredits) ? accountCredits : approvedCredits;
-  container.innerHTML = `<h2>My classes</h2><p class="muted">Add each class’s credit hours and syllabus. The Chair approves both before the class’s hours count and assignments unlock.</p>${hasHours(total) ? `<p class="class-credit-total"><strong>${esc(formatHours(total))} approved credit hours</strong>${creditsManaged ? '<br><small>From your approved classes.</small>' : '<br><small>Your current account total stays in place until the Chair approves class credit hours.</small>'}</p>` : ''}<div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
+  const total = creditsManaged ? (hasHours(accountCredits) ? accountCredits : approvedCredits) : null;
+  container.innerHTML = `<h2>My classes</h2><p class="muted">Add each class’s credit hours and syllabus. The Chair approves both before the class’s hours count and assignments unlock.</p><p class="class-credit-total"><strong>${hasHours(total) ? `${esc(formatHours(total))} approved credit hours` : 'N/A credit hours'}</strong><br><small>${creditsManaged ? 'From your approved classes.' : 'Awaiting class approval.'}</small></p><p class="footnote">Semester multiplier: <strong>${esc(creditLoad?.multiplier ?? 1)}×</strong> · ${creditLoad?.confirmed ? `${esc(formatHours(creditLoad.credits))} total semester hours confirmed by the Chair.` : 'The Chair must confirm your full semester credit load separately. Class approval alone does not add a multiplier.'}</p><div class="profile-class-list"></div><button class="button ghost" type="button" id="add-class">Add class</button><div class="class-editor" hidden></div><div class="profile-feedback" role="status"></div>`;
   const list = container.querySelector('.profile-class-list'), editor = container.querySelector('.class-editor'), feedback = container.querySelector('.profile-feedback');
-  const reload = () => mountProfile(container, { api, esc, loading, isCurrent, sandbox, config });
+  const reload = () => mountProfile(container, { api, esc, loading, isCurrent, sandbox, config, onSubmitAssignment });
   const disableControls = () => {
     const controls = [...container.querySelectorAll('button,input')].map(control => [control, control.disabled]);
     controls.forEach(([control]) => { control.disabled = true; });
@@ -25,6 +26,12 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
     card.className = 'profile-class-card';
     card.innerHTML = `<div class="class-card-heading"><h3>${esc(course.name)}</h3><span class="status ${statusClass}">${status}</span></div><p class="class-credit-hours">${hours}</p>${course.removalPending ? '<p class="muted">These hours remain in your total until the Chair approves removal.</p>' : course.removalReview?.decision === 'denied' ? `<p class="review-note"><strong>Removal denied.</strong> ${esc(course.removalReview.note || '')}</p>` : ''}${course.reviewNote ? `<p class="review-note">${esc(course.reviewNote)}</p>` : ''}${course.syllabusId ? '<details class="syllabus-reference"><summary>View syllabus</summary><div class="syllabus-preview"></div></details>' : ''}<div class="class-card-actions"><button class="text-btn" type="button" data-replace${course.removalPending ? ' disabled' : ''}>${course.syllabusId ? 'Update class' : 'Add hours and syllabus'}</button><button class="text-btn" type="button" data-remove${course.removalPending ? ' disabled' : ''}>Remove class</button></div><div class="class-remove-confirm" hidden><p>${approved ? 'Ask the Chair to remove this class? Its approved hours stay in your total until the request is approved.' : 'Remove this class from your current list?'} Existing submissions keep their syllabus reference.</p><button class="button ghost" type="button" data-cancel-remove>Cancel</button> <button class="button danger" type="button" data-confirm-remove>${approved ? 'Request removal' : 'Remove class'}</button></div><div class="class-feedback" role="status"></div>`;
     list.append(card);
+    if (onSubmitAssignment && course.id && course.status === 'approved' && !course.removalPending) {
+      const submit = document.createElement('button');
+      submit.type = 'button'; submit.className = 'button gold small'; submit.textContent = 'Submit an assignment';
+      submit.onclick = () => { if (isCurrent()) onSubmitAssignment(course); };
+      card.querySelector('.class-card-actions').prepend(submit);
+    }
     card.querySelector('[data-replace]').onclick = () => edit(course, card.querySelector('[data-replace]'));
     const details = card.querySelector('details');
     if (details) details.ontoggle = () => {
@@ -61,7 +68,7 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
     feedback.textContent = '';
     editor.hidden = false;
     const initialHours = hasHours(course?.credits) ? course.credits : hasHours(course?.approvedCredits) ? course.approvedCredits : '';
-    editor.innerHTML = `<h3>${course ? 'Update class' : 'Add class'}</h3>${course?.syllabusId ? '<p class="muted">Upload the syllabus for a new review. Previously approved hours stay in your total until the Chair approves the change.</p>' : ''}<form id="profile-form"><div class="field"><label for="class-name">Class name or code</label><input id="class-name" name="name" required maxlength="80" placeholder="e.g. MTH 2002 · Calculus II" value="${esc(course?.name || '')}"${course ? ' readonly' : ''}></div><div class="field"><label for="class-credits">Credit hours</label><input id="class-credits" name="credits" type="number" inputmode="decimal" min="0" max="30" step="0.01" required placeholder="e.g. 3" value="${esc(String(initialHours))}" aria-describedby="class-credits-help"><small id="class-credits-help">Use the credit hours listed for this class. The Chair will verify them with your syllabus.</small></div><div class="field"><label for="class-syllabus">Syllabus</label><input id="class-syllabus" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" required aria-describedby="class-syllabus-help"><small id="class-syllabus-help">PDF, PNG, or JPEG, up to ${sandbox ? 1 : 5} MB.${sandbox ? ' Use a fictional syllabus in the sandbox.' : ''}</small></div><div class="profile-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" type="button" data-cancel>Cancel</button><button class="button gold" type="submit">Submit class for review</button></div></form>`;
+    editor.innerHTML = `<h3>${course ? 'Update class' : 'Add class'}</h3>${course?.syllabusId ? '<p class="muted">Upload the syllabus for a new review. Previously approved hours stay in your total until the Chair approves the change.</p>' : ''}<form id="profile-form"><div class="field"><label for="class-name">Class name or code</label><input id="class-name" name="name" required maxlength="80" placeholder="e.g. MTH 2002 · Calculus II" value="${esc(course?.name || '')}"${course ? ' readonly' : ''}></div><div class="field"><label for="class-credits">Credit hours</label><input id="class-credits" name="credits" type="number" inputmode="decimal" min="0" max="30" step="0.01" required placeholder="e.g. 3" value="${esc(String(initialHours))}" aria-describedby="class-credits-help"><small id="class-credits-help">Use the credit hours listed for this class. The Chair will verify them with your syllabus.</small></div><div class="field"><label for="class-syllabus">Syllabus</label><input id="class-syllabus" type="file" accept="${SYLLABUS_ACCEPT}" required aria-describedby="class-syllabus-help"><small id="class-syllabus-help">${SYLLABUS_TYPES_LABEL}, up to ${sandbox ? 1 : 5} MB. Export Word documents as PDF first.${sandbox ? ' Use a fictional syllabus in the sandbox.' : ''}</small></div><div class="profile-feedback" role="status"></div><div class="modal-actions"><button class="button ghost" type="button" data-cancel>Cancel</button><button class="button gold" type="submit">Submit class for review</button></div></form>`;
     const form = editor.querySelector('form'), status = form.querySelector('.profile-feedback');
     form.querySelector('[data-cancel]').onclick = () => { editor.hidden = true; editor.replaceChildren(); opener.focus(); };
     form.onsubmit = async event => {
@@ -69,9 +76,9 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
       const creditsInput = form.querySelector('#class-credits'), credits = creditsInput.valueAsNumber;
       if (!Number.isFinite(credits) || credits < 0 || credits > 30 || Math.abs(credits * 100 - Math.round(credits * 100)) > 0.000001) { status.textContent = 'Enter credit hours from 0 to 30, with up to two decimal places.'; creditsInput.focus(); return; }
       let file = form.querySelector('#class-syllabus').files[0];
-      const mime = file?.type || (/\.pdf$/i.test(file?.name || '') ? 'application/pdf' : /\.png$/i.test(file?.name || '') ? 'image/png' : /\.jpe?g$/i.test(file?.name || '') ? 'image/jpeg' : '');
-      if (!file || !['application/pdf', 'image/png', 'image/jpeg'].includes(mime) || file.size > (sandbox ? 1 : 5) * 1024 * 1024) { status.textContent = `Choose a PDF, PNG, or JPEG up to ${sandbox ? 1 : 5} MB.`; return; }
-      if (!file.type) file = new File([file], file.name, { type: mime });
+      const mime = syllabusMime(file);
+      if (!file || !mime || !file.size || file.size > (sandbox ? 1 : 5) * 1024 * 1024) { status.textContent = `Choose ${SYLLABUS_TYPES_LABEL} up to ${sandbox ? 1 : 5} MB.`; return; }
+      if (file.type !== mime) file = new File([file], file.name, { type: mime });
       const name = form.querySelector('#class-name').value.trim();
       const restoreControls = disableControls();
       status.innerHTML = loading('Uploading syllabus…', true);
@@ -92,7 +99,7 @@ export async function mountProfile(container, { api, esc, loading, isCurrent, sa
   container.querySelector('#add-class').onclick = () => edit();
 }
 
-export function mountCoursePicker(input, classes, esc) {
+export function mountCoursePicker(input, classes, esc, { classesHref = '#profile', onChange = () => {} } = {}) {
   const select = document.createElement('select');
   select.id = 'saved-course';
   input.before(select);
@@ -103,7 +110,7 @@ export function mountCoursePicker(input, classes, esc) {
   hint.className = 'syllabus-course-hint';
   input.after(hint);
   const field = input.closest('.field'), label = field.querySelector('label');
-  const form = input.closest('form'), submit = form.querySelector('button[type="submit"]');
+  const form = input.closest('form');
   let currentActivity = null, previousMode = null;
   const sync = () => {
     const graded = Boolean(currentActivity?.grade), noCourse = ['meeting', 'calendar'].includes(currentActivity?.id);
@@ -117,11 +124,12 @@ export function mountCoursePicker(input, classes, esc) {
       input.required = other && !noCourse && currentActivity?.id !== 'night';
     }
     label.htmlFor = select.hidden ? input.id : select.id;
+    form.querySelectorAll('button[type="submit"]').forEach(submit => submit.disabled = Boolean(form.dataset?.uploading || form.dataset?.saving || graded && !select.value));
   };
   const update = activity => {
     currentActivity = activity;
     const graded = Boolean(activity?.grade), mode = graded ? 'graded' : 'other';
-    const approved = classes.filter(course => course.id && course.status === 'approved');
+    const approved = classes.filter(course => course.id && course.status === 'approved' && !course.removalPending);
     if (mode !== previousMode) {
       const previousName = select.selectedOptions[0]?.textContent || input.value;
       select.innerHTML = graded
@@ -129,6 +137,7 @@ export function mountCoursePicker(input, classes, esc) {
         : `<option value="">Choose a class</option>${classes.map(course => `<option value="${esc(course.name)}">${esc(course.name)}</option>`).join('')}<option value="__other__">Other / not a class</option>`;
       const matching = [...select.options].find(option => option.textContent === previousName && option.value);
       if (matching) select.value = matching.value;
+      else if (graded && approved.length === 1) select.value = approved[0].id;
       previousMode = mode;
     }
     const noCourse = ['meeting', 'calendar'].includes(activity?.id);
@@ -136,14 +145,29 @@ export function mountCoursePicker(input, classes, esc) {
     select.hidden = noCourse;
     select.disabled = noCourse || (graded && !approved.length);
     select.required = !noCourse && activity?.id !== 'night';
-    submit.disabled = graded && !approved.length;
     hint.hidden = !graded;
-    hint.innerHTML = approved.length ? 'Only classes with an approved syllabus are available.' : 'Add a class and upload its syllabus in <a href="#profile">My profile</a>. Assignments unlock after Chair approval.';
+    const pending = classes.filter(course => course.status === 'pending').length;
+    hint.innerHTML = approved.length ? 'Choose an approved class. Its syllabus is included with your assignment.' :
+      `${pending ? `${pending} ${pending === 1 ? 'class is' : 'classes are'} awaiting review. ` : ''}Assignments unlock after the chair approves a class and its syllabus. <a href="${esc(classesHref)}">${classesHref === '#classes' ? 'Open My classes' : 'Open My profile'}</a>.`;
     const link = hint.querySelector('a');
     if (link) link.onclick = () => input.closest('dialog')?.close();
     sync();
   };
-  select.onchange = () => { select.name = currentActivity?.grade ? 'classId' : select.value === '__other__' ? '' : 'course'; sync(); };
-  input.coursePicker = { update };
+  select.onchange = () => {
+    select.name = currentActivity?.grade ? 'classId' : select.value === '__other__' ? '' : 'course';
+    sync(); onChange();
+  };
+  const restore = fields => {
+    if (currentActivity?.grade) {
+      if (fields.classId) select.value = [...select.options].some(option => option.value === fields.classId) ? fields.classId : '';
+    } else if (fields.course || fields.classId) {
+      const course = classes.find(course => course.id === fields.classId)?.name || fields.course || '';
+      select.value = [...select.options].some(option => option.value === course) ? course : '__other__';
+      input.value = course;
+    }
+    select.name = currentActivity?.grade ? 'classId' : select.value === '__other__' ? '' : 'course';
+    sync();
+  };
+  input.coursePicker = { update, restore };
   return input.coursePicker;
 }

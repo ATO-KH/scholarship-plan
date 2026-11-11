@@ -26,6 +26,10 @@ export async function classCreditsScenario(call, evidence, persona = 'alex') {
       assert.equal(after.awarded, before.awarded, 'Past awarded points do not change.');
     }
   };
+  const confirmLoad = async credits => {
+    const path = `/api/roster/${persona}/credit-load`, view = await call(path);
+    assert.equal((await call(path, { credits, version: view.creditLoad.version })).status, 200);
+  };
   const sendClass = (name, credits, rest = {}) => call('/api/classes', { name, credits, ...evidence, ...rest });
   for (const credits of [undefined, null, '3', -1, 31, 1.234]) {
     assert.equal((await sendClass('Invalid credits', credits)).status, 422);
@@ -44,16 +48,18 @@ export async function classCreditsScenario(call, evidence, persona = 'alex') {
   await signIn('chair');
   let queue = await call('/api/syllabi');
   const firstItem = queue.syllabi.find(row => row.id === first.class.syllabusId);
-  assert.equal(firstItem.currentAccountCredits, initial.credits);
+  assert.equal(firstItem.currentAccountCredits, null, 'Unapproved starting hours are displayed as N/A without changing the stored scoring baseline.');
   assert.equal(firstItem.projectedAccountCredits, 12.25);
   const approval = await call(`/api/syllabi/${firstItem.id}/review`, { decision: 'approved', note: '', version: firstItem.version });
   assert.equal(approval.status, 200);
   assert.equal(approval.syllabus.currentAccountCredits, 12.25);
+  assert.equal(approval.member.multiplier, 1, 'Partial class approvals do not confirm the full semester load.');
   const secondItem = (await call('/api/syllabi')).syllabi.find(row => row.id === second.class.syllabusId);
   assert.equal(secondItem.projectedAccountCredits, 15);
   assert.equal((await call(`/api/syllabi/${secondItem.id}/review`, { decision: 'approved', note: '', version: secondItem.version })).status, 200);
   assert.equal((await call(`/api/roster/${persona}/academic-settings`, { tier: 3, credits: 6 })).status, 409);
   assert.equal((await call(`/api/roster/${persona}/academic-settings`, { tier: 3, credits: 15 })).status, 200);
+  await confirmLoad(15);
   const members = await call('/api/members');
   assert.equal(members.members.find(row => row.id === persona).creditsManaged, true);
 
@@ -82,6 +88,7 @@ export async function classCreditsScenario(call, evidence, persona = 'alex') {
   pending = (await call('/api/syllabi')).syllabi.find(row => row.id === changed.class.syllabusId);
   const decisions = await Promise.all(['approved', 'approved'].map(decision => call(`/api/syllabi/${pending.id}/review`, { decision, note: 'Verified against syllabus.', version: pending.version })));
   assert.deepEqual(decisions.map(row => row.status).sort(), [200, 409]);
+  await confirmLoad(12);
   await signIn(persona);
   assert.equal((await call('/api/me')).user.credits, 12);
   assert.equal((await call('/api/points')).multiplier, 1.15);
@@ -113,6 +120,7 @@ export async function classCreditsScenario(call, evidence, persona = 'alex') {
   await signIn('chair');
   assert.equal((await call(`/api/classes/${course.id}/removal-review`, { decision: 'approved', version: removal.removalVersion })).status, 200);
   assert.equal((await call(`/api/classes/${course.id}/removal-review`, { decision: 'approved', version: removal.removalVersion })).status, 409);
+  await confirmLoad(9.25);
   await signIn(persona);
   assert.equal((await call('/api/me')).user.credits, 9.25);
   assert.equal((await call('/api/points')).multiplier, 1.3);

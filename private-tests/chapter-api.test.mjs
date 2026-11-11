@@ -231,15 +231,20 @@ test("chapter accounts bind aliases, restrict chair actions and stop deactivated
       identifier: "1234",
     })).status, 429);
     const failedSetup = await request("/api/auth/complete", {
-      accessToken: "test-account-token", password: "short",
+      tokenHash: "fictional-member-invitation-hash", type: "invite", password: "short",
     });
     assert.equal(failedSetup.status, 422);
     assert.equal(failedSetup.payload.recoveryKey, undefined);
+    for (let preview = 0; preview < 3; preview++) {
+      assert.equal((await fetch(base + '/account/setup')).status, 200, 'email link previews must not consume the token');
+    }
+    assert.equal((await request('/api/auth/complete', {tokenHash:'fictional-member-invitation-hash',type:'email',password:'a-long-new-password'})).status,422);
     const completedSetup = await request("/api/auth/complete", {
-      accessToken: "test-account-token", password: "a-long-new-password",
+      tokenHash: "fictional-member-invitation-hash", type: "invite", password: "a-long-new-password",
     });
     assert.equal(completedSetup.status, 200);
     assert.equal(completedSetup.payload.recoveryKey,undefined);
+    assert.equal((await request('/api/auth/complete', {tokenHash:'fictional-member-invitation-hash',type:'invite',password:'a-long-new-password'})).status,401,'a used one-time link cannot be replayed');
     assert.equal((await request("/api/session", undefined, member.cookie)).status, 401);
     assert.equal((await request("/api/session", undefined, byEmail.cookie)).status, 401);
     assert.equal((await request("/api/session", undefined, byPortalId.cookie)).status, 401);

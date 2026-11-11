@@ -17,7 +17,7 @@ The hosted implementation runs at [scholarship-ato-kh.vercel.app](https://schola
 - Staged chapter-managed email/password login with badge number or portal ID aliases, chair invitations, and password resets. Members receive a 16-word recovery key on their first sign-in each semester and can use it to reset a password without email. A dedicated office account holds the Chair role; Microsoft code remains inactive legacy support.
 - Chapter membership bound to a stable verified provider identity, not a user-entered role.
 - Canvas OAuth connection, encrypted token storage, refresh handling, and read-only import of the consenting member's released numeric grades.
-- Duplicate import protection, chair-controlled point awards, and explicit handling of undefined multiplier rounding.
+- Duplicate import protection, chair-controlled point awards, and decimal awards with up to two decimal places.
 - A demo mode for testing without university accounts and a production mode with no demo identity switch.
 - Hosted uploads that go directly to private Storage, followed by server-side byte validation and immutable final evidence storage.
 - Read-only Google Sheets eligibility using exact school emails and Active/New Member status, with a 15-minute freshness requirement and chair recovery access. Legacy explicit portal-ID mode remains available.
@@ -61,7 +61,7 @@ The local version uses Node's built-in SQLite module. The hosted version uses Po
 
 **Member:** add a class and syllabus in My profile → receive Chair syllabus approval → select that class for a graded assignment → submit evidence → see the decision and approved total. Non-graded activities do not require an approved syllabus. A pending estimate never contributes to the approved total.
 
-**Chair:** approve or deny class syllabi in **Syllabi**. When reviewing a graded assignment, expand its **Class syllabus** reference alongside the evidence, then enter a whole-point award or a denial reason. Review history and totals update from the same submission record; totals are computed, not kept in a second manually edited sheet.
+**Chair:** approve or deny class syllabi in **Syllabi**. When reviewing a graded assignment, expand its **Class syllabus** reference alongside the evidence, then approve the calculated award (up to two decimal places) or enter a denial reason. Confirm each member’s **full semester credit load** in **Classes** or **Roster → Manage credits** before applying a multiplier. Individual class approvals never establish the full load; unconfirmed loads use 1×. Review history and totals update from the same submission record; totals are computed, not kept in a second manually edited sheet.
 
 **Canvas (deferred):** the code for a read-only import exists, but the feature is hidden until the chapter decides to implement and test it.
 
@@ -141,6 +141,7 @@ The original submission/points endpoints remain compatible with the public demo'
 | POST     | `/api/uploads/cleanup`                 | Chair cleanup of expired upload intents               |
 | GET/POST | `/api/roster`                          | Chair roster listing and creation                     |
 | POST     | `/api/roster/:id/deactivate`           | Deactivate member access                              |
+| GET/POST | `/api/roster/:id/credit-load`          | Chair confirms full semester load independently of classes |
 | POST     | `/api/roster/:id/academic-settings`    | Chair updates tier and credit load                    |
 | GET/POST | `/api/admin/tier-import`              | Preview eligible targets / apply reviewed tiers       |
 | POST     | `/api/admin/tier-import/settings`     | Save column layout metadata only                      |
@@ -163,7 +164,7 @@ Authenticated mutations send `X-CSRF-Token` and are checked against the configur
 Based on the supplied 2026 scholarship plan; the original PDF is not committed:
 
 - Use the GPA tier ranges on page 5 of the chapter plan. The Chair can import a CSV export in the Roster view; GPA and 900 numbers are processed in the Chair's browser, while the portal stores only tier assignments. New members use Tier 1.
-- Multipliers can produce decimals, while the plan prohibits fractional awards and does not define rounding. Require an explicit integer award and a reason for adjustments.
+- The chapter requested decimal awards on November 11, 2026: accept up to two decimal places, with no adjustment note for the calculated amount. A denial, changed award or correction still requires a reason. This supersedes the original plan’s whole-point restriction for portal operation.
 - The demo uses Monday–Sunday weeks and reserves weekly capacity for pending claims; the chapter must confirm this convention.
 - Grade-posting date in America/New_York is the import claim date. Confirm that interpretation of the 14-day window.
 - Initial Fall 2026 date fallbacks use `SEMESTER_TARGET_DATE` and `SEMESTER_END_DATE` (the submission closing date itself, not the end of finals). A blank initial closing date means no configured final closure.
@@ -186,7 +187,9 @@ The design follows [ato.org](https://ato.org/). This is an unofficial chapter wo
 
 The public test credentials `test1` / `1234` on the chapter sign-in screen open a browser-only sandbox member. They do not authenticate with Supabase or grant access to chapter records. Test submissions stay in that browser and can be reviewed in its Chair demo.
 
-Members manage current-semester classes under **My profile → My classes**. Each new class requires a PDF, PNG, or JPEG syllabus (5 MB live; 1 MB in the sandbox). Major, minor, lab, and other grade-scored categories require a current approved syllabus. Existing saved class names start as **Syllabus needed**; no class is approved automatically. Existing submissions without a syllabus reference remain unchanged.
+Members manage current-semester classes under **My classes**. Each new class requires a syllabus in PDF, PNG, or JPEG format (5 MB live; 1 MB in the sandbox), with an inline preview for the Chair. Export Word documents as PDF before uploading. Previously uploaded documents retain their private **Download syllabus** action. Actual file contents are checked before acceptance. Assignment evidence remains PDF, PNG, or JPEG. Major, minor, lab, and other grade-scored categories require a current approved syllabus. Existing saved class names start as **Syllabus needed**; no class is approved automatically. Existing submissions without a syllabus reference remain unchanged.
+
+The private Storage bucket retains its 5 MiB limit and permits new PDF, PNG and JPEG uploads. The application can read the previous expanded bucket configuration during rollout, but rejects new non-previewable files at upload initiation, completion and class attachment. Narrowing the bucket MIME allowlist does not delete previously uploaded documents. Do not add wildcards or make the bucket public.
 
 Syllabus files and references are available only to their member and the Scholarship Chair. Replacing a syllabus starts a new review and blocks new graded assignments for that class until approval. Previously submitted assignments keep their original syllabus reference after replacement or class removal. Semester reset removes class records, syllabi, and their uploaded files through the existing cleanup process; separately retained backups and downloaded copies follow their own retention policies. This feature uses existing chapter state and private upload storage and requires no database schema migration.
 
@@ -204,3 +207,14 @@ Clicking the small Overview calendar opens a full-size calendar popup with month
 The public session-only sandbox also accepts `test2` / `1234`: a fictional Tier 4 member with 30 approved submissions totaling 90 points, so Overview plays the goal celebration (unless reduced motion is enabled).
 
 Mobile forms retain activity options during iOS null-focus transitions, preserve file pickers through upload failures, use compact class loaders, and show submission cards on narrow screens. Submission labels/examples follow the selected activity; study-night subjects are optional, and chapter meetings/calendars do not require a course. Profile pictures can be cropped with zoom and drag/position controls before saving, and appear in the account avatar. Evidence details automatically show authenticated image/PDF previews; mobile PDF viewers may still require Open full size. Preview URLs keep the same owner/Chair checks as downloads.
+
+
+### Chapter leaderboard and dashboard update
+
+Signed-in members and the Chair can open **Leaderboard**. Active eligible members appear by approved points: the top three places form a gold/silver/bronze podium, followed by an unnumbered list. Ties share a place (1, 1, 3); zero-point totals never get medals. A positive first-place member sees an ATO trophy panel on their own Overview. The authenticated `/api/leaderboard` response contains only names, approved point totals, top-three place labels and a current-user marker. It includes manual adjustments and corrected awards, excludes pending estimates, inactive accounts and pilot identities, and does not expose academic or contact details. Award aggregation runs once across submissions and adjustments; it adds no storage or schema changes.
+
+Starting hours display **N/A** until class hours are approved. Existing stored credit baselines and historical point awards are preserved; approved zero remains zero. The activity picker combines typing and browser-native suggestions in a single field, retains grade inputs during partial searches, and requires a listed activity. Reviewed submission rows now expose **Edit decision / points** directly.
+
+The live portal and fictional demo share one branded startup screen using the clockwise arm sequence. It stays visible for at least 2.5 seconds while data loads, then reveals the ready screen without handing off to a second spinner. Time already spent signing in counts toward that minimum; reduced motion skips the artificial delay. Errors still reveal a usable retry screen.
+
+Members at exactly zero approved points strictly after a checkpoint date get an SVG tomato barrage on Overview. It replays after a full refresh but not ordinary dashboard redraws. The first phase starts with 3 tomatoes and adds 2 per completed week; the second starts above the preceding phase (at least 12) and adds 4 weekly; the third starts higher again (at least 24) and doubles each completed week, capped at 96. The fourth checkpoint does not reset growth. Splats spread across the screen, linger, drift downward and fade over roughly 15–16 seconds. Clicks and typing pass through; Escape, navigation or page hiding clears the effect. Both startup motion and the tomato effect respect reduced-motion preferences. These effects need no image downloads or database writes.

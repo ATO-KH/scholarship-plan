@@ -126,9 +126,10 @@ test(
       const id = duplicates.find((r) => r.status === 201).submission.id;
       await request(a, "/api/demo/session", { persona: "chair" });
       const path = `/api/submissions/${id}/review`;
+      const version = (await request(a, path.replace(/\/review$/, ""))).submission.reviewVersion;
       const approvals = await Promise.all([
-        request(a, path, { decision: "approved", points: 5, note: "" }),
-        request(b, path, { decision: "approved", points: 5, note: "" }),
+        request(a, path, { decision: "approved", points: 5, note: "", version }),
+        request(b, path, { decision: "approved", points: 5, note: "", version }),
       ]);
       assert.deepEqual(approvals.map((r) => r.status).sort(), [200, 409]);
       const events = (await request(b, "/api/audit")).events.filter(
@@ -136,8 +137,26 @@ test(
           event.subject === id && event.action === "submission.approved",
       );
       assert.equal(events.length, 1);
+      const reviewed = (await request(a, `/api/submissions/${id}`)).submission;
+      const corrections = await Promise.all([
+        request(a, `/api/submissions/${id}/revise`, {decision:'approved',points:7,note:'Corrected calculation',version:reviewed.reviewVersion}),
+        request(b, `/api/submissions/${id}/revise`, {decision:'approved',points:7,note:'Corrected calculation',version:reviewed.reviewVersion}),
+      ]);
+      assert.deepEqual(corrections.map(result=>result.status).sort(),[200,409]);
+      const corrected=(await request(a, `/api/submissions/${id}`)).submission;
+      assert.equal(corrected.awarded,7); assert.equal(corrected.history.filter(event=>event.correction).length,1);
+      const classState = JSON.parse((await db.prepare('SELECT data FROM chapters WHERE workspace=?').get(workspace)).data);
+      classState.classRecords.push(...['batch-a','batch-b'].map(id=>({id,owner:'alex',name:id,syllabusId:id,version:'1',archived:false})));
+      classState.syllabi.push(...['batch-a','batch-b'].map(id=>({id,classId:id,className:id,owner:'alex',status:'pending',credits:3,version:'1',createdAt:'2026-11-10T12:00:00Z'})));
+      await db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify(classState),workspace);
+      const batchInput={approvals:['batch-a','batch-b'].map(id=>({id,version:'1',credits:3,note:''}))};
+      const batches=await Promise.all([request(a,'/api/syllabi/approve-batch',batchInput),request(b,'/api/syllabi/approve-batch',batchInput)]);
+      assert.deepEqual(batches.map(result=>result.status).sort(),[200,409]);
+      const classFinal=JSON.parse((await db.prepare('SELECT data FROM chapters WHERE workspace=?').get(workspace)).data);
+      for(const id of ['batch-a','batch-b']) assert.equal(classFinal.syllabi.find(row=>row.id===id).history.length,1);
+      assert.equal((await db.prepare('SELECT credits FROM members WHERE workspace=? AND id=?').get(workspace,'alex')).credits,6);
       await request(a, "/api/demo/session", { persona: "alex" });
-      assert.equal((await request(b, "/api/points")).approved, 23);
+      assert.equal((await request(b, "/api/points")).approved, 25);
       await request(a, "/api/logout", {});
       assert.equal((await request(b, "/api/session")).status, 401);
       // A private schema must not be available through Supabase's public API roles.

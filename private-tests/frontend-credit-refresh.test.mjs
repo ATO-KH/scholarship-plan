@@ -11,12 +11,16 @@ const deferred = () => {
 
 for (const path of ['../web/app.js', '../web/demo/app.js']) {
   const source = await readFile(new URL(path, import.meta.url), 'utf8');
-  const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const extract = (start, end) => {
+    const from = source.indexOf(start), to = source.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `Cannot locate ${start} in ${path}`);
+    return source.slice(from, to);
+  };
   const label = path.includes('/demo/') ? 'sandbox' : 'production';
 
   function fixture() {
     const requests = new Map(), dialogs = [], rendered = [];
-    const pending = { isConnected: true, innerHTML: '' }, control = { addEventListener() {} };
+    const pending = { isConnected: true, innerHTML: '' }, control = { dataset: {}, addEventListener() {}, focus() {} };
     const context = {
       user: { id: 'fictional-member', role: 'member', credits: 15 }, sessionEpoch: 3,
       rules: { activities: [], today: '2026-09-28' }, points: { multiplier: 1 }, submissions: [], roster: [],
@@ -27,13 +31,17 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
       activeActivities: () => context.rules.activities, isDemo: () => false, money: String,
       activityPicker: () => '', wireActivityPicker() {}, loadCoursePicker() {}, updateForm() {},
       uploadEvidence() {}, estimate() {}, submitClaim() {},
+      busy: false, currentSubmissionDraft: () => null, activity: () => null, restoreSubmissionFields() {}, updateSubmissionButtons() {},
+      crypto: { randomUUID: () => 'fictional-draft' },
     };
+    context.loadSubmissionList = () => context.api('/api/submissions');
     const resolve = () => {
       const values = {
         '/api/me': { user: { id: 'fictional-member', role: 'member', credits: 3 } },
         '/api/points': { multiplier: 1.5 },
         '/api/rules': { activities: [{ id: 'major' }], today: '2026-09-28' },
         '/api/submissions': { submissions: [{ id: 'fictional-new' }] },
+        '/api/classes': { classes: [] },
       };
       for (const [path, request] of requests) request.resolve(values[path]);
     };
@@ -42,7 +50,7 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
 
   test(`${label} refresh presents updated account hours and multiplier together`, async () => {
     const f = fixture();
-    const refresh = runInNewContext(`(${extract('async function refresh()', '\nfunction rows(')})`, f.context);
+    const refresh = runInNewContext(`(${extract('async function refresh(', '\nfunction rows(')})`, f.context);
     const work = refresh();
     assert.ok(f.requests.has('/api/me'));
     f.resolve(); await work;
@@ -52,9 +60,9 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
 
   test(`${label} submission form fetches current credit-load estimate before displaying it`, async () => {
     const f = fixture();
-    const open = runInNewContext(`(${extract('async function newSubmission()', '\nfunction updateSubmissionPrompts(')})`, f.context);
+    const open = runInNewContext(`(${extract('async function newSubmission(', '\nfunction updateSubmissionPrompts(')})`, f.context);
     const work = open();
-    assert.deepEqual([...f.requests.keys()].sort(), ['/api/me', '/api/points', '/api/rules']);
+    assert.deepEqual([...f.requests.keys()].sort(), label === 'production' ? ['/api/classes', '/api/me', '/api/points', '/api/rules'] : ['/api/me', '/api/points', '/api/rules']);
     assert.equal(f.dialogs.length, 1, 'only the loading view is displayed while the refresh is pending');
     f.resolve(); await work;
     assert.equal(f.context.user.credits, 3);
@@ -63,8 +71,8 @@ for (const path of ['../web/app.js', '../web/demo/app.js']) {
 
   test(`${label} refresh and submission callbacks cannot restore a superseded account session`, async () => {
     for (const [start, end] of [
-      ['async function refresh()', '\nfunction rows('],
-      ['async function newSubmission()', '\nfunction updateSubmissionPrompts('],
+      ['async function refresh(', '\nfunction rows('],
+      ['async function newSubmission(', '\nfunction updateSubmissionPrompts('],
     ]) {
       const f = fixture();
       const run = runInNewContext(`(${extract(start, end)})`, f.context);

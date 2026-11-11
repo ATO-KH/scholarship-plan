@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
+import { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, SYLLABUS_UPLOAD_MIME_TYPES, mediaMime, validFileBytes } from '../web/syllabus-files.mjs';
+export { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES } from '../web/syllabus-files.mjs';
 
 export const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
-export const EVIDENCE_MIME_TYPES = Object.freeze(['application/pdf', 'image/png', 'image/jpeg']);
 const JSON_LIMIT = 32 * 1024;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
@@ -87,13 +88,13 @@ async function providerRequest(ctx, route, { method = 'GET', json, bytes, mime, 
         redirect: 'error', signal: controller.signal,
       }), deadline,
     ]);
-    if (!response.ok) {
-      if (response.status === 404 && missingReturnsNull) return null;
+    const checkMissing = missingReturnsNull && [400, 404].includes(response.status);
+    if (!response.ok && !checkMissing) {
       if (response.status === 404 && missingStatus !== 502) fail('STORAGE_NOT_FOUND', missingStatus, 'Uploaded evidence was not found.');
       if (response.status === 409) fail('STORAGE_CONFLICT', 409, 'The evidence destination already exists.');
       fail('STORAGE_UPSTREAM', 502, 'Private evidence storage could not complete the request.');
     }
-    if (discardSuccess) return Buffer.alloc(0);
+    if (discardSuccess && response.ok) return Buffer.alloc(0);
     const declared = response.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) {
       fail('STORAGE_SIZE', maxBytes === MAX_EVIDENCE_BYTES ? 413 : 502, 'The storage response exceeds the allowed size.');
@@ -109,7 +110,16 @@ async function providerRequest(ctx, route, { method = 'GET', json, bytes, mime, 
       if (length > maxBytes) fail('STORAGE_SIZE', maxBytes === MAX_EVIDENCE_BYTES ? 413 : 502, 'The storage response exceeds the allowed size.');
       chunks.push(Buffer.from(value));
     }
-    return Buffer.concat(chunks, length);
+    const result = Buffer.concat(chunks, length);
+    if (checkMissing) {
+      // Storage can use HTTP 400 for NoSuchKey. A missing bucket, invalid JWT,
+      // generic 400/404, or unreadable error must never prove object deletion.
+      let error;
+      try { error = JSON.parse(result.toString('utf8')); } catch {}
+      if (error?.code === 'NoSuchKey' && String(error.statusCode) === '404') return null;
+      fail('STORAGE_UPSTREAM', 502, 'Private evidence storage could not verify object deletion.');
+    }
+    return result;
   } catch (error) {
     if (error instanceof StorageError) throw error;
     if (expired) fail('STORAGE_TIMEOUT', 504, 'Private evidence storage timed out.');
@@ -133,10 +143,11 @@ async function assertPrivateBucket(ctx) {
   const types = bucket?.allowed_mime_types;
   if (bucket?.id !== ctx.config.bucket || bucket.public !== false ||
       Number(bucket.file_size_limit) !== MAX_EVIDENCE_BYTES || !Array.isArray(types) ||
-      types.length !== EVIDENCE_MIME_TYPES.length || !EVIDENCE_MIME_TYPES.every(type => types.includes(type))) {
-    fail('STORAGE_BUCKET', 503, 'Evidence storage must use a private bucket limited to PDF, PNG and JPEG files of at most 5 MiB.');
+      !EVIDENCE_MIME_TYPES.every(type => types.includes(type)) ||
+      types.some(type => !SYLLABUS_MIME_TYPES.includes(type)) || new Set(types).size !== types.length) {
+    fail('STORAGE_BUCKET', 503, 'File storage must be private, limited to supported syllabus formats and at most 5 MiB.');
   }
-  return { private: true, maxBytes: MAX_EVIDENCE_BYTES, mimeTypes: [...EVIDENCE_MIME_TYPES] };
+  return { private: true, maxBytes: MAX_EVIDENCE_BYTES, mimeTypes: [...types] };
 }
 
 export async function verifyStorageConfiguration(options = {}) {
@@ -160,7 +171,11 @@ function signedURL(ctx, raw, route) {
 export async function createUploadGrant(options) {
   const ctx = context(options);
   const path = objectPath(options.path, 'quarantine');
-  await assertPrivateBucket(ctx);
+  if (options.mime && !SYLLABUS_UPLOAD_MIME_TYPES.includes(options.mime))
+    fail('STORAGE_FILE_TYPE', 422, 'Upload a PDF, PNG or JPEG. Export Word documents as PDF first.');
+  const bucket = await assertPrivateBucket(ctx);
+  if (options.mime && !bucket.mimeTypes.includes(options.mime))
+    fail('STORAGE_FILE_TYPE', 503, 'This file format is not enabled in storage yet. Please try again shortly.');
   const route = `/object/upload/sign/${ctx.config.bucket}/${path}`;
   const result = await providerJSON(ctx, route, { method: 'POST', json: {} });
   const url = signedURL(ctx, result?.url, route);
@@ -168,17 +183,17 @@ export async function createUploadGrant(options) {
     headers: { 'x-upsert': 'false' }, expiresIn: 7200 };
 }
 
-function detectedMime(bytes) {
-  if (bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) return 'application/pdf';
-  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  fail('STORAGE_FILE_TYPE', 422, 'Evidence must contain a PDF, PNG or JPEG file.');
+async function detectedMime(bytes, expectedMime) {
+  const media = mediaMime(bytes);
+  if (media) return media;
+  if (await validFileBytes(bytes, expectedMime)) return expectedMime;
+  fail('STORAGE_FILE_TYPE', 422, 'The file contents do not match a supported file format. Export the document as PDF and try again.');
 }
 
 async function readEvidence(ctx, options) {
   const path = objectPath(options.path);
-  if (options.expectedMime !== undefined && !EVIDENCE_MIME_TYPES.includes(options.expectedMime)) {
-    fail('STORAGE_FILE_TYPE', 422, 'Choose a PDF, PNG or JPEG evidence file.');
+  if (options.expectedMime !== undefined && !SYLLABUS_MIME_TYPES.includes(options.expectedMime)) {
+    fail('STORAGE_FILE_TYPE', 422, 'Choose a supported evidence or syllabus file.');
   }
   if (options.expectedSize !== undefined && (!Number.isInteger(options.expectedSize) || options.expectedSize < 1 || options.expectedSize > MAX_EVIDENCE_BYTES)) {
     fail('STORAGE_SIZE', 422, 'Evidence must be between 1 byte and 5 MiB.');
@@ -186,7 +201,7 @@ async function readEvidence(ctx, options) {
   const bytes = await providerRequest(ctx, `/object/authenticated/${ctx.config.bucket}/${path}`, {
     maxBytes: MAX_EVIDENCE_BYTES, missingStatus: 404,
   });
-  const mime = detectedMime(bytes);
+  const mime = await detectedMime(bytes, options.expectedMime);
   if ((options.expectedSize !== undefined && bytes.length !== options.expectedSize) ||
       (options.expectedMime !== undefined && mime !== options.expectedMime)) {
     fail('STORAGE_METADATA', 422, 'The uploaded evidence does not match the selected file.');
@@ -254,8 +269,8 @@ export async function deleteStoredEvidenceAndVerify(options) {
   const ctx = context(options);
   const path = objectPath(options.path);
   await removeWithContext(ctx, path);
-  const remaining = await providerRequest(ctx, `/object/${ctx.config.bucket}/${path}`, {
-    method: 'HEAD', missingReturnsNull: true, discardSuccess: true,
+  const remaining = await providerRequest(ctx, `/object/info/${ctx.config.bucket}/${path}`, {
+    method: 'GET', missingReturnsNull: true, discardSuccess: true,
   });
   if (remaining !== null) fail('STORAGE_DELETE_PENDING', 502, 'Evidence deletion could not yet be verified.');
   return { deleted: true };

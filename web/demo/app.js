@@ -114,6 +114,7 @@ function navigation() {
     ? [
         ["queue", "Review queue", pending],
         ["members", "Member progress"],
+        ["leaderboard", "Leaderboard"],
         ["syllabi", "Classes"],
         ["earn", "Point rules"],
         ["faq", "FAQ"],
@@ -121,6 +122,7 @@ function navigation() {
     : [
         ["overview", "Overview"],
         ["submissions", "My submissions"],
+        ["leaderboard", "Leaderboard"],
         ["profile", "My profile"],
         ["earn", "Ways to earn points"],
         ["faq", "FAQ"],
@@ -152,13 +154,14 @@ function route() {
     p = "overview";
   return p;
 }
-async function refresh() {
+async function refresh(beforeRender = async () => {}) {
   const account = user;
   const [s, p, me] = await Promise.all([
     api("/api/submissions"),
     api(account.role === "chair" ? "/api/members" : "/api/points"),
     api("/api/me"),
   ]);
+  await beforeRender();
   if (user !== account || me.user?.id !== account.id || me.user.role !== account.role) return;
   user = me.user;
   submissions = s.submissions;
@@ -173,8 +176,8 @@ function rows(items, chair = false) {
 }
 function overview() {
   const percent = Math.round((points.approved / points.goal) * 100),
-    remaining = Math.max(0, points.goal - points.approved),
-    checkpoint = Math.max(0, points.checkpoint - points.approved);
+    remaining = Math.max(0, Math.round((points.goal - points.approved) * 100) / 100),
+    checkpoint = Math.max(0, Math.round((points.checkpoint - points.approved) * 100) / 100);
   const approvedWidth = Math.min(100, Math.max(0, (points.approved / points.goal) * 100));
   const pendingWidth = Math.min(100 - approvedWidth, Math.max(0, (points.pendingEstimate / points.goal) * 100));
   main.innerHTML =
@@ -184,7 +187,7 @@ function overview() {
       "Track submissions, decisions, and approved points.",
       "",
     ) +
-    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><div class="overview-points-stack"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><div class="stats-row overview-stats"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div></div><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar("2026-10-10", checkpoint)}</section></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Your member view shows your records. Only the chair reviews academic evidence.</p><p class="footnote">Demo date: September 28, 2026. *Pending estimates are not awarded points.</p>`;
+    `<h2 class="overview-greeting">Hello, ${esc(user.name)}</h2><div id="leader-honor"></div><div class="page-actions overview-submit">${newButton()}</div><div class="overview-grid"><div class="overview-points-stack"><section class="points-panel"><p class="eyebrow">APPROVED POINTS</p><div class="points-number">${points.approved} <span>/ ${points.goal}</span></div><p>Semester goal · Tier ${user.tier}</p><p>${points.adjustmentPoints ? `${points.adjustmentPoints > 0 ? "+" : ""}${points.adjustmentPoints} manual adjustment · ` : ""}<button class="text-btn" data-action="adjust-points" data-id="${esc(user.id)}">Point details</button></p><div class="progress" role="progressbar" aria-label="Approved semester points" aria-valuenow="${points.approved}" aria-valuemin="0" aria-valuemax="${Math.max(points.goal, points.approved)}"><span class="progress-approved" style="width:${approvedWidth}%"></span>${points.pending > 0 && pendingWidth > 0 ? `<span class="progress-pending" aria-hidden="true" style="left:${approvedWidth}%;width:${pendingWidth}%"></span>` : ""}</div><div class="points-foot"><span class="points-foot-detail"><span>${remaining ? remaining + " points to your semester goal" : "Semester point goal reached"}</span>${points.pending > 0 ? `<span class="pending-count" aria-label="${money(points.pendingEstimate)} estimated points pending">${money(points.pendingEstimate)} pending</span>` : ""}</span><strong>${percent}%</strong></div></section><div class="stats-row overview-stats"><div class="mini-stat"><strong>${points.pending}</strong><span><b>Awaiting review</b>${money(points.pendingEstimate)} estimated points</span></div><div class="mini-stat"><strong>${points.approvedCount}</strong><span><b>Approved submissions</b>Counted toward your goal</span></div><div class="mini-stat"><strong>${money(points.multiplier)}×</strong><span><b>Credit-load multiplier</b>${user.credits} enrolled credits</span></div></div></div><section class="panel checkpoint calendar-trigger">${window.atoCheckpointCalendar("2026-10-10", checkpoint)}</section></div><section class="panel recent"><div class="section-heading"><h2>RECENT SUBMISSIONS</h2><a href="#submissions">View all</a></div>${rows(submissions.slice(0, 4))}</section><p class="bottom-note">${shield()}Academic evidence stays private to you and the Chair.</p><p class="footnote">Demo date: September 28, 2026. *Pending estimates are not awarded points.</p>`;
   const calendarTrigger = main.querySelector(".calendar-trigger");
   let calendarOffset = 0;
   calendarTrigger.onclick = event => {
@@ -198,6 +201,32 @@ function overview() {
   };
   calendarTrigger.onkeydown = event => { if (event.target.classList.contains("mini-calendar-open") && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openCalendar(); } };
   window.atoCelebrate.goal(user.id + ":" + (rules.semester?.name || "semester"), points.approved, points.goal);
+  loadLeaderHonor(main.querySelector('#leader-honor'));
+  window.atoCelebrate.checkpoint({ memberId: user.id, role: user.role, approved: points.approved, today: rules.today, checkpoints: rules.checkpoints, semesterKey: rules.semester?.startDate || rules.semester?.name || 'semester' });
+}
+function leaderboardPage() {
+  main.innerHTML = heading('', 'Leaderboard', '') + `<section class="panel leaderboard-panel"><h2>Chapter leaderboard</h2><p class="muted">Approved points this semester, highest first. Gold, silver and bronze mark the first three places; tied scores share a place. Pending submissions are excluded.</p><div id="leaderboard-content"></div></section>`;
+  loadLeaderboard(main.querySelector('#leaderboard-content'));
+}
+async function loadLeaderboard(container) {
+  const account = user;
+  const isCurrent = () => user === account && route() === 'leaderboard' && container.isConnected;
+  container.innerHTML = loading('Loading chapter points…', true);
+  try {
+    const { mountLeaderboard } = await import('/leaderboard-ui.mjs');
+    if (isCurrent()) await mountLeaderboard(container, { api, esc, loading, isCurrent });
+  } catch (error) {
+    if (isCurrent()) container.innerHTML = `<p class="error">${esc(error.message)}</p><button class="button ghost" type="button">Try again</button>`;
+    container.querySelector('button')?.addEventListener('click', () => loadLeaderboard(container));
+  }
+}
+async function loadLeaderHonor(container) {
+  const account = user;
+  const isCurrent = () => user === account && account.role === 'member' && route() === 'overview' && container.isConnected;
+  try {
+    const { mountLeaderHonor } = await import('/leaderboard-ui.mjs');
+    if (isCurrent()) await mountLeaderHonor(container, { api, esc, isCurrent });
+  } catch { /* The overview remains usable if optional recognition is unavailable. */ }
 }
 function filters() {
   return `<div class="filters" aria-label="Filter submissions">${["all", "pending", "approved", "denied"].map((f) => `<button class="filter ${f === filter ? "active" : ""}" data-action="filter" data-value="${f}" aria-pressed="${f === filter}">${f === "all" ? "All submissions" : f === "pending" ? "Pending review" : f[0].toUpperCase() + f.slice(1)} <span>(${submissions.filter((s) => f === "all" || s.status === f).length})</span></button>`).join("")}</div>`;
@@ -223,10 +252,10 @@ function queue() {
       "Approve or deny fictional claims and inspect point totals.",
       "",
     ) +
-    `<div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting your review</b>${new Set(pending.map((s) => s.owner)).size} members with pending claims</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${approved.reduce((n, s) => n + s.awarded, 0)} points awarded</span></div><div class="mini-stat"><strong>${roster.filter((m) => m.approved < m.checkpoint).length}</strong><span><b>Below next checkpoint</b>October 10 · no automatic sanctions</span></div></div><div class="notice info"><strong>One review updates the member’s record.</strong> Approve a claim to award points, or deny it with a reason. Members see your decision and note.</div>${filters()}<section class="panel recent"><div class="section-heading"><h2>${filter === "pending" ? "PENDING SUBMISSIONS" : "SUBMISSION REGISTER"}</h2><span class="muted">Fall 2026</span></div>${rows(
+    `<div class="stats-row chair-stats"><div class="mini-stat"><strong>${pending.length}</strong><span><b>Awaiting your review</b>${new Set(pending.map((s) => s.owner)).size} members with pending claims</span></div><div class="mini-stat"><strong>${approved.length}</strong><span><b>Approved this semester</b>${money(approved.reduce((n, s) => n + s.awarded, 0))} points awarded</span></div><div class="mini-stat"><strong>${roster.filter((m) => m.approved < m.checkpoint).length}</strong><span><b>Below next checkpoint</b>October 10 · no automatic sanctions</span></div></div><div class="notice info"><strong>One review updates the member’s record.</strong> Approve a claim to award points, or deny it with a reason. Members see your decision and note.</div>${filters()}<section class="panel recent"><div class="section-heading"><h2>${filter === "pending" ? "PENDING SUBMISSIONS" : "SUBMISSION REGISTER"}</h2><span class="muted">Fall 2026</span></div>${rows(
       submissions.filter((s) => filter === "all" || s.status === filter),
       true,
-    )}</section><p class="bottom-note">${shield()}This fictional account shows the Scholarship Chair review workflow.</p><p class="footnote">*Estimated points. Fractional estimates require an explicit whole-point decision and explanation.</p>`;
+    )}</section><p class="bottom-note">${shield()}This fictional account shows the Scholarship Chair review workflow.</p><p class="footnote">*Estimated points. Decimal estimates can be awarded as shown. Explain only a changed award or denial.</p>`;
 }
 function membersPage() {
   main.innerHTML =
@@ -235,14 +264,14 @@ function membersPage() {
       "KNOW WHO NEEDS SUPPORT.",
       "Chair view · individual points and checkpoint progress.",
     ) +
-    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>Oct 10 target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>Fictional member</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${Math.max(0, m.checkpoint - m.approved)} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Manage member</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. This proof of concept does not determine disciplinary outcomes.</div>`;
+    `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Member</th><th>Tier</th><th>Credits</th><th>Approved / goal</th><th>Pending</th><th>Oct 10 target</th><th>Manage</th></tr></thead><tbody>${roster.map((m) => `<tr><td><div class="table-person"><span class="avatar">${m.initials}</span><div><strong>${esc(m.name)}</strong><small>Fictional member</small></div></div></td><td>Tier ${m.tier}</td><td>${m.credits} · ${money(m.multiplier)}×</td><td><strong>${m.approved} / ${m.goal}</strong><div class="member-progress"><span style="width:${Math.min(100, (m.approved / m.goal) * 100)}%"></span></div></td><td>${m.pending}</td><td><span class="status ${m.approved >= m.checkpoint ? "approved" : "pending"}">${money(Math.max(0, m.checkpoint - m.approved))} points to go</span></td><td><button class="table-link" data-action="edit-academic-settings" data-id="${esc(m.id)}" aria-label="Manage ${esc(m.name)}">Manage member</button><br><button class="table-link" data-action="adjust-points" data-id="${esc(m.id)}" aria-label="Adjust points for ${esc(m.name)}">Adjust points</button></td></tr>`).join("")}</tbody></table></div></section><div class="notice" style="margin-top:24px">Point totals are separate from required study-night attendance. This proof of concept does not determine disciplinary outcomes.</div>`;
 }
 function editAcademicSettings(member) {
   if (user?.role !== "chair") return;
   openModal(
     "MANAGE MEMBER",
     `Manage ${esc(member.name)}. Tier changes update point targets; previously awarded points stay unchanged.`,
-    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"${member.creditsManaged ? " readonly" : ""}>${member.creditsManaged ? '<small>Total from approved classes. Review class changes in the Classes tab.</small>' : '<small>Existing total is replaced by the sum of approved class hours when the first class is approved.</small>'}</div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
+    `<form id="academic-settings-form"><div class="form-grid"><div class="field"><label for="academic-tier">Assigned tier</label><select id="academic-tier" name="tier">${[1, 2, 3, 4, 5].map((tier) => `<option value="${tier}"${member.tier === tier ? " selected" : ""}>Tier ${tier} · ${rules.checkpoints.at(-1).targets[tier - 1]}-point goal</option>`).join("")}</select></div><div class="field"><label for="academic-credits">Enrolled credits</label><input id="academic-credits" name="credits" type="number" min="0" max="30" step="any" required value="${esc(member.credits)}"${member.creditsManaged ? " readonly" : ""}>${member.creditsManaged ? '<small>Full semester load. Use Manage credits to update it.</small>' : '<small>Existing total is replaced by the sum of approved class hours when the first class is approved.</small>'}</div></div><p><button type="button" class="table-link" data-action="adjust-points" data-id="${esc(member.id)}">Adjust approved points</button></p><p class="footnote">Use the page-5 GPA ranges: 3.50+ Tier 1, 3.00–3.49 Tier 2, 2.70–2.99 Tier 3, 2.50–2.69 Tier 4, below 2.50 Tier 5. New members use Tier 1.</p><div id="form-error" role="alert"></div><div class="modal-actions"><button class="button ghost" type="button" data-action="close">Cancel</button><button class="button gold" type="submit">Save changes</button></div></form>`,
   );
   $("#academic-settings-form").onsubmit = async (event) => {
     event.preventDefault();
@@ -322,7 +351,7 @@ function earnPage() {
       "Base points from your chapter plan. Approved credit-load multipliers apply.",
       user.role === "chair" ? '<button class="button ghost" data-action="manage-point-categories">Manage point categories</button><button class="button gold" data-action="edit-checkpoint-quotas">Edit checkpoint quotas</button>' : "",
     ) +
-    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. Never claim one activity twice.</div><div class="rules-grid">${activeActivities().map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${esc(a.points)} <small>PTS</small></span></div><p>Per ${esc(a.mode === "hourly" ? "hour" : a.unit)}. ${esc(a.proof)}</p>${categoryHint(a) ? `<p class="category-rule-hint">${esc(categoryHint(a))}</p>` : ""}</article>`).join("") || '<p class="empty">No point categories are available right now.</p>'}</div><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. The plan prohibits fractional points without specifying rounding. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
+    `<div class="notice"><strong>Submit within 14 days.</strong> Include credible evidence. Never claim one activity twice.</div><div class="rules-grid">${activeActivities().map((a) => `<article class="rule-card"><div class="section-heading"><h3>${esc(a.name.toUpperCase())}</h3><span class="rule-points">${esc(a.points)} <small>PTS</small></span></div><p>Per ${esc(a.mode === "hourly" ? "hour" : a.unit)}. ${esc(a.proof)}</p>${categoryHint(a) ? `<p class="category-rule-hint">${esc(categoryHint(a))}</p>` : ""}</article>`).join("") || '<p class="empty">No point categories are available right now.</p>'}</div><div class="notice" style="margin-top:24px"><strong>Policy decisions still needed</strong><p>The chapter uses the page-5 GPA ranges: Tier 3 begins at 2.70, and Tier 4 covers 2.50–2.69. Awards accept up to two decimal places, including credit-load multipliers. This demo uses chair-assigned tiers and requires a note for any adjusted award.</p><p>Weeks run Monday–Sunday for the demo. Only explicit study categories share the study cap; assignment claim dates use the date entered. The chair must confirm these conventions and the end-of-semester closing date before launch.</p></div>`;
 }
 async function syllabusReviewPage() {
   if (user.role !== "chair") return;
@@ -455,6 +484,7 @@ function render() {
       submissions: submissionPage,
       queue,
       members: membersPage,
+      leaderboard: leaderboardPage,
       earn: earnPage,
       canvas: canvasPage,
       faq: faqPage,
@@ -709,7 +739,7 @@ async function detail(id) {
     openModal(
       canReview ? "REVIEW SUBMISSION" : "SUBMISSION DETAILS",
       `${esc(s.id)} · ${esc(s.memberName)}`,
-      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, 2026</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}${a.grade || s.syllabus ? `<section id="submission-syllabus">${loading("Loading syllabus reference…", true)}</section>` : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>Fictional activity record</strong><small>Generated demo evidence · no real student file</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="1" ${Number.isInteger(s.estimate) ? `value="${s.estimate}"` : 'placeholder="Enter a whole-point award"'}><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. ${Number.isInteger(s.estimate) ? "Explain any adjustment." : "Rounding is undefined in the plan. Record a whole-point decision and explain it."}</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
+      `<div class="section-heading"><h3>${esc(s.title)}</h3>${status(s.status)}</div><dl class="details"><div><dt>Activity</dt><dd>${esc(a.name)}</dd></div><div><dt>Course</dt><dd>${esc(s.course)}</dd></div><div><dt>Activity date</dt><dd>${date(s.date)}, 2026</dd></div><div><dt>${s.status === "approved" ? "Awarded points" : "Estimated points"}</dt><dd>${s.status === "approved" ? s.awarded : money(s.estimate)}${s.status === "pending" ? " · not yet awarded" : ""}</dd></div>${s.grade !== null ? `<div><dt>Grade</dt><dd>${s.grade}%</dd></div>` : ""}${a.hours ? `<div><dt>Hours</dt><dd>${s.quantity}</dd></div>` : ""}</dl>${s.source === "canvas-sample" ? '<div class="notice info"><strong>Canvas sample import</strong> Assignment category was selected by the member. Verify its individual course weight before approving.</div>' : ""}${a.grade || s.syllabus ? `<section id="submission-syllabus">${loading("Loading syllabus reference…", true)}</section>` : ""}<h3>SUPPORTING EVIDENCE</h3><div class="sample-file"><span class="file-symbol">▤</span><div><strong>Fictional activity record</strong><small>Generated demo evidence · no real student file</small></div><button class="table-link" style="margin-left:auto" data-action="evidence" data-id="${s.id}">Open</button></div><div id="evidence-preview"></div><p class="footnote" style="margin-top:12px">Required: ${esc(a.proof)}</p>${s.note ? `<div class="review-note"><strong>Member note</strong><br>${esc(s.note)}</div>` : ""}${canReview ? `<form id="review-form" data-id="${s.id}"><div class="subtle-rule"></div><div class="field"><label for="award">Points to award</label><input id="award" name="points" type="number" min="0" max="10000" step="0.01" inputmode="decimal" required value="${s.estimate}"><small>Base ${money(s.base)} × credit multiplier = ${money(s.estimate)} estimated. Decimals are accepted. No adjustment note is needed when awarding this amount.</small></div><div class="field"><label for="review-note">Review note</label><textarea id="review-note" name="note" maxlength="1000" placeholder="Required for a denial or point adjustment. Visible to the member."></textarea></div><div id="form-error" role="alert"></div><div class="modal-actions"><button type="submit" name="decision" value="denied" formnovalidate class="button danger">Deny submission</button><button type="submit" name="decision" value="approved" class="button gold">Approve & award points</button></div></form>` : `${s.reviewNote ? `<div class="review-note" style="margin-top:18px"><strong>Chair’s note</strong><br>${esc(s.reviewNote)}</div>` : ""}<div class="history">${s.history.map((h) => `<p><strong>${esc(h.event)}</strong><small>${new Date(h.at).toLocaleString()}${h.by ? " · " + esc(h.by) : ""}</small></p>`).join("")}</div><div class="modal-actions"><button class="button ghost" data-action="close">Close</button></div>`}`,
     );
     if (canReview) $("#review-form").addEventListener("submit", review);
     evidence(id);
@@ -909,6 +939,17 @@ modal.addEventListener("click", (e) => {
   if (e.target === modal) { const box = modal.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) modal.close(); }
 });
 async function init() {
+  document.body.classList.add('portal-loading');
+  const workspace = document.querySelector('.workspace');
+  workspace.inert = true;
+  workspace.setAttribute('aria-busy', 'true');
+  const startupReady = window.atoLoading.minimumStartup();
+  const reveal = async () => {
+    await startupReady;
+    document.body.classList.remove('portal-loading');
+    workspace.inert = false;
+    workspace.setAttribute('aria-busy', 'false');
+  };
   try {
     const requested = location.pathname.startsWith("/demo/")
       ? demoLogin
@@ -938,9 +979,10 @@ async function init() {
     categoryHint = categoryUI.categoryHint;
     rules = nextRules;
     filter = user.role === "chair" ? "pending" : "all";
-    await refresh();
+    await refresh(reveal);
     registerTools();
   } catch (err) {
+    await reveal();
     main.innerHTML =
       heading(
         "DEMO SERVICE",

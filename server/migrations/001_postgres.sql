@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS scholarship_private.integrations (workspace TEXT NOT 
 CREATE TABLE IF NOT EXISTS scholarship_private.canvas_generations (workspace TEXT NOT NULL, member_id TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY(workspace,member_id));
 CREATE TABLE IF NOT EXISTS scholarship_private.canvas_leases (workspace TEXT NOT NULL, member_id TEXT NOT NULL, owner TEXT NOT NULL, expires BIGINT NOT NULL, PRIMARY KEY(workspace,member_id));
 CREATE TABLE IF NOT EXISTS scholarship_private.audit (id BIGSERIAL PRIMARY KEY, workspace TEXT NOT NULL, at TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS identities_member ON scholarship_private.identities(workspace,member_id,provider);
+CREATE INDEX IF NOT EXISTS uploads_owner ON scholarship_private.uploads(workspace,owner);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON scholarship_private.sessions(expires);
 CREATE INDEX IF NOT EXISTS audit_workspace ON scholarship_private.audit(workspace,id);
 -- The portal uses the owning postgres connection; browser roles have no policies.

@@ -19,5 +19,8 @@
     "jose": "^6.1.0",
     "pg": "^8.23.0"
   },
-  "packageManager": "pnpm@11.19.0"
+  "packageManager": "pnpm@11.19.0",
+  "devDependencies": {
+    "happy-dom": "21.0.4"
+  }
 }

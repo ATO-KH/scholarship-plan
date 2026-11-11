@@ -12,7 +12,7 @@ export async function uploadImage(file, api, config) {
     const url = new URL(uploadUrl);
     if (url.protocol !== "https:" || url.username || url.password) throw Error("Upload destination unavailable.");
     const response = await fetch(url.href, { method: "PUT", credentials: "omit", redirect: "error", headers: { "Content-Type": file.type, "x-upsert": "false" }, body: file, signal: AbortSignal.timeout(90000) });
-    if (!response.ok) throw Error("Image upload failed. Please try again.");
+    if (!response.ok) throw Error("File upload failed. Please try again.");
     const result = await api(`/api/uploads/${encodeURIComponent(id)}/complete`, { method: "POST", body: {} });
     return result.upload.id;
   }
