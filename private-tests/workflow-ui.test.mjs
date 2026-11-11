@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { Window } from 'happy-dom';
 import { mountCoursePicker, mountProfile } from '../web/profile-ui.mjs';
 import { mountSyllabusQueue } from '../web/syllabus-ui.mjs';
+import { mountCreditLoad } from '../web/credit-load-ui.mjs';
 
 const source = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
 const extract = (start, end) => {
@@ -233,6 +234,25 @@ test('chair detail places evidence and the decision together and focuses the new
   assert.equal(w.$('[name="reviewNext"]').checked, true);
 });
 
+test('Chair review pre-fills decimal awards and submits the exact amount without a note', async t => {
+  const { w } = fixture(t); w.user.role = 'chair';
+  const item = { id: 'decimal', owner: 'member', memberName: 'Member', activity: 'minor', title: 'Quiz', status: 'pending', course: 'Calculus', date: '2026-11-09', estimate: 5.75, base: 5, grade: 97, evidenceId: 'proof', reviewVersion: 'v1' };
+  let submitted;
+  w.api = async (path, options) => {
+    if (!options) return { submission: item };
+    submitted = options.body;
+    return { submission: { ...item, status: 'approved', awarded: options.body.points }, points: { approved: 5.75, pending: 0 } };
+  };
+  await w.detail('decimal');
+  const form = w.$('#review-form');
+  assert.equal(form.elements.points.value, '5.75');
+  assert.equal(form.elements.points.step, '0.01');
+  assert.doesNotMatch(form.textContent, /whole.point|Rounding is undefined/);
+  form.elements.reviewNext.checked = false;
+  await w.review({ preventDefault() {}, target: form, submitter: { value: 'approved' } });
+  assert.equal(submitted.points, 5.75); assert.equal(submitted.note, '');
+});
+
 test('chair review saves once and advances within the selected member queue without reloading the list', async t => {
   const { w } = fixture(t), review = chairReview(w), saved = deferred(), opened = [];
   w.save = async (path, body) => { assert.equal(body.version, 'current-version'); return saved.promise; };
@@ -293,6 +313,57 @@ test('class review search and status switches filter loaded results without repe
   assert.equal(container.querySelectorAll('details').length, 1);
   assert.match(container.querySelector('summary').textContent, /Chemistry/);
   assert.equal(requests, 1);
+});
+
+test('pending Classes view keeps full-load confirmation available after all class decisions are done', async t => {
+  const { w } = fixture(t), container = w.document.createElement('section'); w.document.body.append(container);
+  const load = { confirmed: false, credits: null, approvedCredits: 3, multiplier: 1, version: 'load-v1' };
+  const item = { id: 'done', owner: 'member', classId: 'class', memberName: 'Member One', className: 'Calculus', credits: 3, approvedCredits: 3, status: 'approved', version: 'class-v1', creditLoad: load };
+  let result, writes = 0;
+  const api = async (path, options) => {
+    if (!options) return { syllabi: [item] };
+    writes++;
+    assert.equal(path, '/api/roster/member/credit-load');
+    assert.equal(options.body.credits, 15);
+    const creditLoad = { ...load, credits: 15, confirmed: true, version: 'load-v2' };
+    return { creditLoad, classReviews: { owner: 'member', syllabi: [{ ...item, creditLoad }], removals: [] }, member: { id: 'member', creditLoad }, pendingEstimates: [] };
+  };
+  await mountSyllabusQueue(container, { api, esc, loading: String, isCurrent: () => true, onReviewed: value => { result = value; } });
+  const form = container.querySelector('.credit-load-form');
+  assert.ok(form, 'Finishing the class queue must not hide the separate semester confirmation.');
+  form.elements.credits.step = 'any'; form.elements.credits.value = '15'; form.elements.confirm.checked = true;
+  await form.onsubmit({ preventDefault() {} });
+  assert.equal(writes, 1); assert.equal(result.creditLoad.confirmed, true);
+  assert.equal(container.querySelector('.credit-load-form'), null);
+  assert.match(container.querySelector('.class-review-result').textContent, /confirmed/);
+});
+
+test('Manage credits refreshes semester confirmation after a batch without reopening a closed modal', async t => {
+  const { w } = fixture(t);
+  w.user = { id: 'chair', role: 'chair' };
+  w.rosterAccounts = [{ id: 'member', name: 'Member One' }];
+  w.route = () => 'roster'; w.renderRosterMembers = () => {};
+  w.mountCreditLoad = mountCreditLoad;
+  let queue;
+  w.mountSyllabusQueue = async (container, options) => { queue = options; };
+  w.eval(extract('function applyClassReview(', '\nasync function syllabusReviewPage('));
+  w.eval(extract('async function manageMemberCredits(', '\nasync function loadSubmissionSyllabus(')
+    .replace("import('/credit-load-ui.mjs')", 'Promise.resolve({ mountCreditLoad: window.mountCreditLoad })')
+    .replace("import('/syllabus-ui.mjs')", 'Promise.resolve({ mountSyllabusQueue: window.mountSyllabusQueue })'));
+  const load = { confirmed: false, credits: null, approvedCredits: 0, multiplier: 1, version: 'load-v1' };
+  w.api = async () => ({ creditLoad: load });
+  await w.manageMemberCredits('member');
+  assert.equal(queue.showCreditLoad, false);
+  const result = { approved: 2, results: [{ member: { id: 'member', creditLoad: { ...load, approvedCredits: 6, version: 'load-v2' } } }] };
+  await queue.onReviewed(result);
+  assert.match(w.$('#member-semester-load').textContent, /6 hours approved/);
+  assert.equal(w.$('.credit-load-form').dataset.version, 'load-v2');
+  assert.equal(w.rosterAccounts[0].creditLoad.approvedCredits, 6);
+  w.modal.close(); w.$('#modal-content').replaceChildren();
+  result.results[0].member.creditLoad = { ...load, approvedCredits: 9, version: 'load-v3' };
+  await queue.onReviewed(result);
+  assert.equal(w.$('#member-semester-load'), null);
+  assert.equal(w.rosterAccounts[0].creditLoad.approvedCredits, 9);
 });
 
 test('class decisions preserve the search and open the next pending class after saving', async t => {

@@ -123,40 +123,15 @@ test("denial needs reason and no points are awarded", async () => {
   assert.equal(result.status, 200);
   assert.equal(result.points.approved, 18);
 });
-test("fractional estimate needs whole point award and explicit explanation", async () => {
+test("fractional estimates allow exact awards without a note", async () => {
   const c = client();
-  await c("/api/demo/session", { persona: "chair" });
-  assert.equal(
-    (
-      await c("/api/submissions/S-2001/review", {
-        decision: "approved",
-        points: 5.75,
-        note: "test",
-      })
-    ).status,
-    422,
-  );
-  assert.equal(
-    (
-      await c("/api/submissions/S-2001/review", {
-        decision: "approved",
-        points: 6,
-        note: "",
-      })
-    ).status,
-    422,
-  );
-  assert.equal(
-    (
-      await c("/api/submissions/S-2001/review", {
-        decision: "approved",
-        points: 6,
-        note: "Demo rounding decision only; policy is unresolved.",
-      })
-    ).status,
-    200,
-  );
+  await c('/api/demo/session', { persona: 'chair' });
+  const path = '/api/submissions/S-2001/review';
+  assert.equal((await c(path, { decision: 'approved', points: 5.751, note: '' })).status, 422);
+  assert.equal((await c(path, { decision: 'approved', points: 6, note: '' })).status, 422);
+  assert.equal((await c(path, { decision: 'approved', points: 5.75, note: '' })).status, 200);
 });
+
 test("separate demo sessions do not share mutations", async () => {
   const a = client(),
     b = client();

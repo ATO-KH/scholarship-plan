@@ -1,11 +1,12 @@
-import { pointAdjustmentView, applyPointAdjustment } from "../point-adjustment-data.mjs";
+import { creditLoadView, confirmCreditLoad, refreshCreditLoadEstimates } from '../credit-load-data.mjs';
+import { pointAdjustmentView, applyPointAdjustment, validPoints, roundPoints } from "../point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../category-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../checkpoint-data.mjs";
 import { creditSummary } from "../credit-data.mjs";
 import { profileView } from "../profile-data.mjs";
 import { leaderboardView } from "../leaderboard-data.mjs";
-import { SYLLABUS_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../syllabus-files.mjs';
-import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
+import { SYLLABUS_UPLOAD_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../syllabus-files.mjs';
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../syllabus-data.mjs";
 // GitHub Pages demonstration only. Requests are simulated in this browser.
 // Only sessionStorage contains fictional data; no server or persistent database is used.
 import {
@@ -43,7 +44,7 @@ async function sandboxSyllabusFile(file) {
   const message = `Choose ${SYLLABUS_TYPES_LABEL} up to 1 MB for the sandbox.`;
   if (!file || typeof file.name !== "string" || !file.name.trim() || file.name.length > 200 ||
       typeof file.dataUrl !== "string" || file.dataUrl.length > 1400000 ||
-      !SYLLABUS_MIME_TYPES.includes(file.mime) ||
+      !SYLLABUS_UPLOAD_MIME_TYPES.includes(file.mime) ||
       !Number.isInteger(file.size) || file.size <= 0 || file.size > 1048576) fail(422, message);
   const match = file.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/);
   if (!match || match[1] !== file.mime) fail(422, message);
@@ -58,7 +59,7 @@ function quotaMember(state, member) {
   member = { ...member, tier: state.tierOverrides?.[member.id] ?? member.tier };
   const { checkpoints } = checkpointQuotaView(state);
   const checkpoint = checkpoints.find(entry => entry.date >= TODAY) || checkpoints.at(-1);
-  return { ...member, creditsManaged: creditsManaged(state, member.id), credits: state.creditOverrides?.[member.id] ?? member.credits,
+  return { ...member, creditLoad: creditLoadView(state, member.id), creditsManaged: creditsManaged(state, member.id), credits: state.creditOverrides?.[member.id] ?? member.credits,
     goal: checkpoints.at(-1).targets[member.tier - 1],
     checkpoint: checkpoint.targets[member.tier - 1], checkpointDate: checkpoint.date };
 }
@@ -113,7 +114,7 @@ async function handleRequest(req, path) {
         "The demo account changed in another tab. Refresh before continuing.",
       );
     const sessionMembers = members.map(member => quotaMember(session.data, member));
-    const state = session.data,
+    const state = refreshCreditLoadEstimates(session.data),
       user = sessionMembers.find((m) => m.id === session.persona);
     const chair = () => {
       if (user.role !== "chair")
@@ -262,7 +263,7 @@ async function handleRequest(req, path) {
         course.archived = true;
         state.creditOverrides ||= {};
         state.creditOverrides[course.owner] = approvedClassCredits(state, course.owner);
-        refreshPendingCreditEstimates(state, course.owner, multiplier({ credits: state.creditOverrides[course.owner] }));
+        refreshCreditLoadEstimates(state, course.owner);
       }
       delete course.pendingRemoval;
       Object.assign(course, { version: crypto.randomUUID(), updatedAt: new Date().toISOString(), removalReview: { decision: input.decision, note, reviewer: user.name, reviewedAt: new Date().toISOString() } });
@@ -282,7 +283,7 @@ async function handleRequest(req, path) {
       state.creditOverrides ||= {};
       for (const [owner, credits] of owners) {
         state.creditOverrides[owner] = credits;
-        refreshPendingCreditEstimates(state, owner, multiplier({ credits }));
+        refreshCreditLoadEstimates(state, owner);
       }
       await save(session);
       return json({ approved: ids.length, results: [...owners.keys()].map(owner => classReviewResult(state, sessionMembers.find(row => row.id === owner))) });
@@ -300,7 +301,7 @@ async function handleRequest(req, path) {
         if (total !== null) {
           state.creditOverrides ||= {};
           state.creditOverrides[item.owner] = total;
-          refreshPendingCreditEstimates(state, item.owner, multiplier({ credits: total }));
+          refreshCreditLoadEstimates(state, item.owner);
         }
         await save(session);
         const target = sessionMembers.find(row => row.id === item.owner);
@@ -330,6 +331,17 @@ async function handleRequest(req, path) {
         weekConvention: "Monday–Sunday (demo assumption)",
         checkpoints: checkpointQuotaView(state).checkpoints,
       });
+    const creditLoadRoute = path.match(/^\/api\/roster\/([^/]+)\/credit-load$/);
+    if (creditLoadRoute && ["GET", "POST"].includes(req.method)) {
+      chair();
+      const target = sessionMembers.find(member => member.id === creditLoadRoute[1] && member.role === "member");
+      if (!target) fail(404, "Member not found.");
+      if (req.method === "POST") {
+        confirmCreditLoad(state, target.id, input, { reviewer: user.name, at: new Date().toISOString(), newVersion: () => crypto.randomUUID() });
+        await save(session);
+      }
+      return json({ creditLoad: creditLoadView(state, target.id), ...classReviewResult(state, target) });
+    }
     const academicRoute = path.match(/^\/api\/roster\/([^/]+)\/academic-settings$/);
     if (academicRoute && req.method === "POST") {
       chair();
@@ -343,7 +355,7 @@ async function handleRequest(req, path) {
       state.creditOverrides ||= {};
       state.tierOverrides[target.id] = input.tier;
       state.creditOverrides[target.id] = input.credits;
-      refreshPendingCreditEstimates(state, target.id, multiplier({ credits: input.credits }));
+      refreshCreditLoadEstimates(state, target.id);
       await save(session);
       return json({ member: quotaMember(state, target) });
     }
@@ -534,9 +546,9 @@ async function handleRequest(req, path) {
           fail(422, "Review note must be under 1,000 characters.");
         if (
           input.decision === "approved" &&
-          (!Number.isInteger(points) || points < 0 || points > 10000)
+          !validPoints(points)
         )
-          fail(422, "Award a whole number from 0 to 10,000.");
+          fail(422, "Award 0 to 10,000 points, with up to two decimal places.");
         if (
           (correction || input.decision === "denied" || points !== item.estimate) &&
           note.length < 5
@@ -544,7 +556,7 @@ async function handleRequest(req, path) {
           fail(422, "Explain the denial or point adjustment.");
         const before = { status: item.status, awarded: item.awarded, note: item.reviewNote || "", reviewer: item.reviewer || null, at: item.reviewedAt || null };
         item.status = input.decision;
-        item.awarded = input.decision === "approved" ? points : 0;
+        item.awarded = input.decision === "approved" ? roundPoints(points) : 0;
         item.reviewNote = note;
         item.reviewer = user.name;
         item.reviewedAt = new Date().toISOString();

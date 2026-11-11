@@ -1,3 +1,4 @@
+import { validPoints, roundPoints } from '../web/point-adjustment-data.mjs';
 import http from "node:http";
 import { canvasAssignments, sampleAssignments } from "./canvas-sample.mjs";
 import { readFile, mkdir } from "node:fs/promises";
@@ -173,7 +174,7 @@ const server = http.createServer(async (req, res) => {
         weeklyStudyHours: 5,
         weeklyMinorAssignments: 3,
         weekConvention: "Monday–Sunday (demo assumption)",
-        rounding: "Chair must enter whole points and explain any difference.",
+        rounding: "Awards support up to two decimal places. Matching the estimate needs no adjustment note.",
         tierSource: "Page 5 GPA ranges; Chair assigns tiers. New members use Tier 1.",
         checkpoints: [
           { date: "2026-09-12", targets: [10, 14, 18, 23, 30] },
@@ -366,16 +367,16 @@ const server = http.createServer(async (req, res) => {
         const points = input.points;
         if (
           input.decision === "approved" &&
-          (!Number.isInteger(points) || points < 0 || points > 100)
+          (!validPoints(points) || points > 100)
         )
-          fail(422, "Award a whole number of points from 0 to 100.");
+          fail(422, "Award 0 to 100 points, with up to two decimal places.");
         if (
           (input.decision === "denied" || points !== item.estimate) &&
           note.length < 5
         )
           fail(422, "Explain the denial or point adjustment in a review note.");
         item.status = input.decision;
-        item.awarded = input.decision === "approved" ? points : 0;
+        item.awarded = input.decision === "approved" ? roundPoints(points) : 0;
         item.reviewNote = note;
         item.reviewedAt = new Date().toISOString();
         item.reviewer = user.name;

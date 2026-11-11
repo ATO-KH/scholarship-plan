@@ -1,3 +1,5 @@
+import { approvedClassCredits, creditLoadView } from './credit-load-data.mjs';
+export { approvedClassCredits } from './credit-load-data.mjs';
 const fail = (message, status = 422) => { throw Object.assign(Error(message), { status }); };
 export function classInput(input) {
   if (!input || typeof input.name !== "string") fail("Enter a class name or course code.");
@@ -12,11 +14,6 @@ export function classCredits(input) {
   return value;
 }
 export const creditsManaged = (state, owner) => state.classCreditsManaged?.[owner] === true;
-export function approvedClassCredits(state, owner, replacement = null) {
-  const total = (state.classRecords || []).filter(row => row.owner === owner && !row.archived)
-    .reduce((sum, row) => sum + Math.round((replacement?.classId === row.id ? replacement.credits : row.approvedCredits ?? 0) * 100), 0) / 100;
-  return total;
-}
 export function approveClassCredits(state, course, credits) {
   classCredits({ credits });
   const total = approvedClassCredits(state, course.owner, { classId: course.id, credits });
@@ -83,13 +80,13 @@ export function applySyllabusBatch(state, input, options) {
 }
 
 export function ownerClassReviews(state, owner, accountCredits, memberName) {
-  return { owner,
+  return { owner, creditLoad: creditLoadView(state, owner),
     syllabi: (state.syllabi || []).filter(row => row.owner === owner).map(row => ({ ...syllabusView(state, row, accountCredits), memberName })).filter(row => row.current),
     removals: (state.classRecords || []).filter(row => row.owner === owner && !row.archived && row.pendingRemoval)
       .map(row => ({ ...removalView(state, row, accountCredits), memberName })) };
 }
 export function removalView(state, course, accountCredits) {
-  return { classId: course.id, className: course.name, owner: course.owner,
+  return { classId: course.id, className: course.name, owner: course.owner, creditLoad: creditLoadView(state, course.owner),
     version: course.pendingRemoval.version, credits: course.approvedCredits, status: "pending",
     currentAccountCredits: creditsManaged(state, course.owner) ? accountCredits : null,
     projectedAccountCredits: approvedClassCredits(state, course.owner, { classId: course.id, credits: 0 }) };
@@ -97,7 +94,7 @@ export function removalView(state, course, accountCredits) {
 export function syllabusView(state, item, accountCredits = null) {
   if (!item) return null;
   const course = (state.classRecords || []).find(row => row.id === item.classId && row.owner === item.owner);
-  return { id: item.id, classId: item.classId, className: item.className, owner: item.owner,
+  return { id: item.id, classId: item.classId, className: item.className, owner: item.owner, creditLoad: creditLoadView(state, item.owner),
     status: item.status, version: item.version, credits: item.credits ?? null,
     approvedCredits: course?.approvedCredits ?? null, removalPending: !!course?.pendingRemoval,
     currentAccountCredits: creditsManaged(state, item.owner) ? accountCredits : null, approvedAccountCredits: approvedClassCredits(state, item.owner),
@@ -119,7 +116,7 @@ export function classView(state, owner, accountCredits = null) {
   for (const name of state.memberProfiles?.[owner]?.courses || []) if (!known.has(name.toLowerCase())) {
     classes.push({ id: null, name, credits: null, approvedCredits: null, removalPending: false, removalVersion: null, syllabusId: null, status: "missing", version: state.memberProfiles?.[owner]?.version || "initial", fileName: "", reviewNote: "" });
   }
-  return { classes, approvedCredits: approvedClassCredits(state, owner), accountCredits, creditsManaged: creditsManaged(state, owner), version: state.memberProfiles?.[owner]?.version || "initial" };
+  return { classes, creditLoad: creditLoadView(state, owner), approvedCredits: approvedClassCredits(state, owner), accountCredits, creditsManaged: creditsManaged(state, owner), version: state.memberProfiles?.[owner]?.version || "initial" };
 }
 export function assignmentClass(state, owner, activity, input) {
   if (!activity?.grade) return {};

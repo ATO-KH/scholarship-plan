@@ -1,3 +1,4 @@
+import { mountCreditLoad } from './credit-load-ui.mjs';
 import { mountFilePreview } from './file-preview-ui.mjs';
 
 export function mountSyllabusPreview(container, id, { api, loading, isCurrent = () => container.isConnected }) {
@@ -7,11 +8,11 @@ export function mountSyllabusPreview(container, id, { api, loading, isCurrent = 
 }
 
 const queueRevisions = new WeakMap();
-export async function mountSyllabusQueue(container, { api, esc, loading, isCurrent, selectedFilter = 'pending', search = '', ownerFilter = '', openNext = false, onReviewed = () => {} }) {
+export async function mountSyllabusQueue(container, { api, esc, loading, isCurrent, selectedFilter = 'pending', search = '', ownerFilter = '', openNext = false, showCreditLoad = true, onReviewed = () => {} }) {
   const revision = (queueRevisions.get(container) || 0) + 1;
   queueRevisions.set(container, revision);
   const valid = () => isCurrent() && queueRevisions.get(container) === revision;
-  const reload = () => mountSyllabusQueue(container, { api, esc, loading, isCurrent, selectedFilter, search, ownerFilter, onReviewed, openNext });
+  const reload = () => mountSyllabusQueue(container, { api, esc, loading, isCurrent, selectedFilter, search, ownerFilter, onReviewed, openNext, showCreditLoad });
   let syllabi, removals;
   try { ({ syllabi, removals = [] } = await api('/api/syllabi')); }
   catch (error) {
@@ -24,7 +25,7 @@ export async function mountSyllabusQueue(container, { api, esc, loading, isCurre
   if (!valid()) return;
   const toItems = (classes, requests) => [...requests.map(item => ({ ...item, kind: 'removal', status: 'pending' })), ...classes];
   let items = toItems(syllabi, removals), saving = false, nextOwner = '';
-  const drafts = new Map(), selected = new Map();
+  const drafts = new Map(), selected = new Map(), loadDrafts = new Map();
   container.innerHTML = `<div class="section-heading"><h2>${ownerFilter ? 'Member classes & credits' : 'Class reviews'}</h2><button class="button ghost small" data-refresh-classes type="button">Refresh</button></div><p class="muted">Approve the syllabus and hours together. Open an approved or denied class to correct a decision or its hours. Corrections require a reason and keep the review history. Select up to 20 reviewed classes to approve together.</p><div class="invitation-filters"><div class="field"><label for="class-review-search">Search member or class</label><input id="class-review-search" type="search" autocomplete="off" value="${esc(search)}" placeholder="Search classes"></div><div class="field syllabus-filter"><label for="syllabus-status">Status</label><select id="syllabus-status">${['pending', 'approved', 'denied', 'all'].map(value => `<option value="${value}"${value === selectedFilter ? ' selected' : ''}>${value === 'all' ? 'All classes' : value[0].toUpperCase() + value.slice(1)}</option>`).join('')}</select></div></div><div class="class-batch-bar" hidden><span data-class-selected role="status"></span><button class="button ghost small" data-clear-classes type="button">Clear selection</button><button class="button gold" data-review-classes type="button">Review selected approvals</button></div><div class="class-batch-confirm" hidden></div><p class="class-review-result" role="status" aria-live="polite"></p><p class="class-review-count footnote" role="status"></p><div class="syllabus-queue"></div>`;
   container.querySelector('[data-refresh-classes]').onclick = reload;
   container.querySelector('select').onchange = event => { selectedFilter = event.target.value; renderRows(); };
@@ -33,6 +34,10 @@ export async function mountSyllabusQueue(container, { api, esc, loading, isCurre
   const batchBar = container.querySelector('.class-batch-bar'), batchPanel = container.querySelector('.class-batch-confirm');
   const draftKey = item => `${item.kind || 'syllabus'}:${item.id || item.classId}`;
   function captureDrafts() {
+    for (const group of list.querySelectorAll('[data-class-owner]')) {
+      const form = group.querySelector('.credit-load-form');
+      if (form) loadDrafts.set(group.dataset.classOwner, { version: form.dataset.version, credits: form.elements.credits.value });
+    }
     for (const row of list.querySelectorAll('[data-draft-key]')) {
       const form = row.querySelector('form');
       if (form) drafts.set(row.dataset.draftKey, { version: row.dataset.version, credits: form.querySelector('[name="credits"]')?.value,
@@ -117,13 +122,35 @@ export async function mountSyllabusQueue(container, { api, esc, loading, isCurre
       if (!groups.has(key)) groups.set(key, { name: item.memberName || 'Former member', items: [] });
       groups.get(key).items.push(item);
     }
+    if (showCreditLoad && selectedFilter === 'pending') for (const item of items) {
+      if (item.creditLoad && !item.creditLoad.confirmed && !groups.has(item.owner) && (!ownerFilter || item.owner === ownerFilter) && (!query || `${item.className} ${item.memberName}`.toLocaleLowerCase().includes(query)))
+        groups.set(item.owner, { name: item.memberName, items: [], creditLoad: item.creditLoad });
+    }
     for (const [owner, group] of [...groups].sort((a, b) => a[1].name.localeCompare(b[1].name))) {
       const section = document.createElement('section'); section.className = 'class-member-group'; section.dataset.classOwner = owner;
       const selectable = group.items.filter(item => item.kind !== 'removal' && item.status === 'pending' && !item.removalPending);
       const allSelected = selectable.length > 0 && selectable.every(item => selected.has(item.id));
       const creditTotal = group.items.find(item => Number.isFinite(item.approvedAccountCredits))?.approvedAccountCredits;
-      section.innerHTML = `<div class="class-member-heading"><div><h3>${esc(group.name)}</h3><p>${group.items.length} class ${group.items.length === 1 ? 'request' : 'requests'}${Number.isFinite(creditTotal) ? ` · ${esc(creditTotal)} approved hours` : ''}</p></div>${selectable.length ? `<button class="button ghost small" type="button" data-select-member-classes>${allSelected ? 'Clear this member' : `Select ${selectable.length} pending ${selectable.length === 1 ? 'class' : 'classes'}`}</button>` : ''}</div><div class="class-member-cards"></div>`;
+      section.innerHTML = `<div class="class-member-heading"><div><h3>${esc(group.name)}</h3><p>${group.items.length} class ${group.items.length === 1 ? 'request' : 'requests'}${Number.isFinite(creditTotal) ? ` · ${esc(creditTotal)} approved hours` : ''}</p></div>${selectable.length ? `<button class="button ghost small" type="button" data-select-member-classes>${allSelected ? 'Clear this member' : `Select ${selectable.length} pending ${selectable.length === 1 ? 'class' : 'classes'}`}</button>` : ''}</div><div class="member-credit-load"></div><div class="class-member-cards"></div>`;
       list.append(section);
+      const load = group.creditLoad || group.items[0]?.creditLoad;
+      if (showCreditLoad && load) mountCreditLoad(section.querySelector('.member-credit-load'), { owner, view: load, api, esc, loading,
+        isCurrent: () => valid() && section.isConnected, draft: loadDrafts.get(owner),
+        onBusy: value => {
+          saving = value;
+          for (const control of container.querySelectorAll('button,input,select,textarea')) {
+            if (value) { control.dataset.loadWasDisabled = String(control.disabled); control.disabled = true; }
+            else if (control.dataset.loadWasDisabled !== undefined) { control.disabled = control.dataset.loadWasDisabled === 'true'; delete control.dataset.loadWasDisabled; }
+          }
+        },
+        onSaved: result => {
+          loadDrafts.delete(owner);
+          const updated = result.classReviews;
+          items = [...items.filter(item => item.owner !== owner), ...toItems(updated.syllabi, updated.removals)];
+          renderRows();
+          container.querySelector('.class-review-result').textContent = 'Full semester credit load confirmed. Pending point estimates updated.';
+          return onReviewed(result);
+        } });
       const memberSelection = section.querySelector('[data-select-member-classes]');
       if (memberSelection) memberSelection.onclick = () => {
         if (saving) return;
@@ -141,7 +168,7 @@ export async function mountSyllabusQueue(container, { api, esc, loading, isCurre
         const draft = savedDraft?.version === item.version ? savedDraft : null;
         const hours = Number.isFinite(item.credits) ? `${item.credits} credit hours` : 'Credit hours not yet supplied';
         const reviewable = removal || !item.removalPending;
-        row.innerHTML = `<summary><span><strong>${esc(item.className)}${removal ? ' · Removal request' : ''}</strong><small>${esc(item.memberName)} · ${esc(hours)}</small></span><span class="status ${esc(item.status)}">${esc(pending ? 'Awaiting review' : item.status)}</span></summary><div class="syllabus-review-content">${removal ? '<p>Approve to remove this class and its approved hours. Existing assignments keep their original syllabus reference.</p>' : `<p><strong>${esc(hours)}</strong>${Number.isFinite(item.approvedCredits) ? ` · ${esc(item.approvedCredits)} hours currently counted` : ' · No approved hours counted'}</p><div class="syllabus-preview"></div>`}${item.removalPending ? '<p class="notice">Review the pending removal request before changing this class.</p>' : ''}${item.reviewNote ? `<p class="review-note">${esc(item.reviewNote)}</p>` : ''}${item.history?.length ? `<details class="class-review-history"><summary>Decision history (${item.history.length})</summary>${item.history.map(entry => `<p><strong>${entry.correction ? 'Correction' : 'Review'} · ${esc(entry.status)} · ${esc(entry.approvedCredits ?? 0)} approved hours</strong><small>${esc(entry.reviewer)} · ${esc(new Date(entry.at).toLocaleString())}</small>${entry.correction ? `<small>Previously ${esc(entry.before.status)} · ${esc(entry.before.approvedCredits ?? 0)} approved hours</small>` : ''}${esc(entry.note || '')}</p>`).join('')}</details>` : ''}${reviewable ? `${correction ? '<button class="button ghost" data-correct-class type="button">Correct decision / hours</button>' : ''}<form class="syllabus-review-form"${correction ? ' hidden' : ''}>${correction ? '<p class="notice info">This replaces the current decision. Denying an approved class removes its approved hours. Pending point estimates update; previously awarded points stay as recorded.</p>' : ''}${!removal ? `<div class="field"><label>Credit hours to approve<input type="number" name="credits" min="0" max="30" step="0.01" required value="${Number.isFinite(item.credits) ? esc(item.credits) : ''}"></label></div>` : ''}<p class="class-credit-change"></p><div class="field"><label>${correction ? 'Reason for correction' : 'Review note'}<textarea name="note" maxlength="1000" placeholder="${correction ? 'Required for every correction' : 'Required for a denial or changed hours'}"></textarea></label></div>${pending && !removal ? `<label class="class-select"><input type="checkbox" data-select-class ${selected.has(item.id) ? 'checked' : ''}> Select for batch approval</label>` : ''}<div class="syllabus-feedback" role="status"></div><div class="modal-actions"><button class="button danger" type="submit" name="decision" value="denied" formnovalidate>${removal ? 'Keep class' : correction ? 'Save denial' : 'Deny class'}</button><button class="button gold" type="submit" name="decision" value="approved">${removal ? 'Approve removal' : correction ? 'Save approval and hours' : 'Approve class and hours'}</button></div></form>` : ''}</div>`;
+        row.innerHTML = `<summary><span><strong>${esc(item.className)}${removal ? ' · Removal request' : ''}</strong><small>${esc(item.memberName)} · ${esc(hours)}</small></span><span class="status ${esc(item.status)}">${esc(pending ? 'Awaiting review' : item.status)}</span></summary><div class="syllabus-review-content">${removal ? '<p>Approve to remove this class and its approved hours. Existing assignments keep their original syllabus reference.</p>' : `<p><strong>${esc(hours)}</strong>${Number.isFinite(item.approvedCredits) ? ` · ${esc(item.approvedCredits)} hours currently counted` : ' · No approved hours counted'}</p><div class="syllabus-preview"></div>`}${item.removalPending ? '<p class="notice">Review the pending removal request before changing this class.</p>' : ''}${item.reviewNote ? `<p class="review-note">${esc(item.reviewNote)}</p>` : ''}${item.history?.length ? `<details class="class-review-history"><summary>Decision history (${item.history.length})</summary>${item.history.map(entry => `<p><strong>${entry.correction ? 'Correction' : 'Review'} · ${esc(entry.status)} · ${esc(entry.approvedCredits ?? 0)} approved hours</strong><small>${esc(entry.reviewer)} · ${esc(new Date(entry.at).toLocaleString())}</small>${entry.correction ? `<small>Previously ${esc(entry.before.status)} · ${esc(entry.before.approvedCredits ?? 0)} approved hours</small>` : ''}${esc(entry.note || '')}</p>`).join('')}</details>` : ''}${reviewable ? `${correction ? '<button class="button ghost" data-correct-class type="button">Correct decision / hours</button>' : ''}<form class="syllabus-review-form"${correction ? ' hidden' : ''}>${correction ? '<p class="notice info">This replaces the current decision. Denying an approved class removes its approved hours. The full semester credit load is confirmed separately; previously awarded points stay as recorded.</p>' : ''}${!removal ? `<div class="field"><label>Credit hours to approve<input type="number" name="credits" min="0" max="30" step="0.01" required value="${Number.isFinite(item.credits) ? esc(item.credits) : ''}"></label></div>` : ''}<p class="class-credit-change"></p><div class="field"><label>${correction ? 'Reason for correction' : 'Review note'}<textarea name="note" maxlength="1000" placeholder="${correction ? 'Required for every correction' : 'Required for a denial or changed hours'}"></textarea></label></div>${pending && !removal ? `<label class="class-select"><input type="checkbox" data-select-class ${selected.has(item.id) ? 'checked' : ''}> Select for batch approval</label>` : ''}<div class="syllabus-feedback" role="status"></div><div class="modal-actions"><button class="button danger" type="submit" name="decision" value="denied" formnovalidate>${removal ? 'Keep class' : correction ? 'Save denial' : 'Deny class'}</button><button class="button gold" type="submit" name="decision" value="approved">${removal ? 'Approve removal' : correction ? 'Save approval and hours' : 'Approve class and hours'}</button></div></form>` : ''}</div>`;
         cards.append(row);
         row.ontoggle = () => {
           if (!removal && row.open && !row.dataset.loaded) { row.dataset.loaded = 'true'; mountSyllabusPreview(row.querySelector('.syllabus-preview'), item.id, { api, loading, isCurrent: () => valid() && row.isConnected }); }
@@ -164,7 +191,7 @@ export async function mountSyllabusQueue(container, { api, esc, loading, isCurre
           const total = projectedTotal(), value = creditValue();
           const invalid = !removal && (value === null || !Number.isFinite(value) || value < 0 || value > 30 || Math.abs(value * 100 - Math.round(value * 100)) > 1e-8);
           form.querySelector('[value="approved"]').disabled = invalid || total > 30;
-          form.querySelector('.class-credit-change').textContent = total > 30 ? 'This would exceed the 30-hour account limit. Correct the hours before approving.' : Number.isFinite(total) ? `Account hours: ${item.currentAccountCredits ?? 'N/A'} → ${total} if approved.` : 'Enter the credit hours shown in the syllabus.';
+          form.querySelector('.class-credit-change').textContent = total > 30 ? 'This would exceed the 30-hour account limit. Correct the hours before approving.' : Number.isFinite(total) ? `Approved class hours: ${item.currentAccountCredits ?? 'N/A'} → ${total} if approved.` : 'Enter the credit hours shown in the syllabus.';
         };
         if (creditInput) creditInput.oninput = updateHours;
         updateHours();

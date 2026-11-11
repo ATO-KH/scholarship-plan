@@ -10,14 +10,15 @@ export const SYLLABUS_FORMATS = Object.freeze([
   { mime: 'image/jpeg', extensions: ['jpg', 'jpeg'], label: 'JPEG image' },
 ]);
 export const SYLLABUS_MIME_TYPES = Object.freeze(SYLLABUS_FORMATS.map(format => format.mime));
-export const SYLLABUS_ACCEPT = SYLLABUS_FORMATS.flatMap(format => [...format.extensions.map(extension => `.${extension}`), format.mime]).join(',');
-export const SYLLABUS_TYPES_LABEL = 'PDF, Word (.docx or .doc), ODT, RTF, TXT, PNG, or JPEG';
+export const SYLLABUS_UPLOAD_MIME_TYPES = EVIDENCE_MIME_TYPES;
+export const SYLLABUS_ACCEPT = SYLLABUS_FORMATS.filter(format => SYLLABUS_UPLOAD_MIME_TYPES.includes(format.mime)).flatMap(format => [...format.extensions.map(extension => `.${extension}`), format.mime]).join(',');
+export const SYLLABUS_TYPES_LABEL = 'PDF, PNG, or JPEG';
 
 // Some browsers report Word files as ZIP or omit MIME altogether. The server
 // checks the actual bytes; this only gives uploads a consistent Content-Type.
 export function syllabusMime(file) {
   const extension = file?.name?.split('.').at(-1)?.toLowerCase();
-  return SYLLABUS_FORMATS.find(format => format.extensions.includes(extension))?.mime || '';
+  return SYLLABUS_FORMATS.find(format => SYLLABUS_UPLOAD_MIME_TYPES.includes(format.mime) && format.extensions.includes(extension))?.mime || '';
 }
 
 const starts = (bytes, signature) => bytes.length >= signature.length && signature.every((byte, index) => bytes[index] === byte);

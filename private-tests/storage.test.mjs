@@ -104,13 +104,14 @@ test('browser upload grant is restricted to one quarantine path and denies overw
   await rejects(createUploadGrant({ path: finalPath, env, fetchImpl: p.fetchImpl }), 'STORAGE_PATH', 422);
 });
 
-test('syllabus formats can be enabled without interrupting existing private storage', async () => {
+test('expanded legacy storage remains readable while new document grants are refused', async () => {
   const expanded = { ...bucket, allowed_mime_types: [...SYLLABUS_MIME_TYPES] };
   const p = provider(() => json({ url: `${uploadRoute}?token=temporary-upload-token` }), expanded);
   assert.deepEqual((await verifyStorageConfiguration({ env, fetchImpl: p.fetchImpl })).mimeTypes, SYLLABUS_MIME_TYPES);
-  await createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: p.fetchImpl });
+  await createUploadGrant({ path, mime: 'application/pdf', env, fetchImpl: p.fetchImpl });
+  await rejects(createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: p.fetchImpl }), 'STORAGE_FILE_TYPE', 422);
   const old = provider(() => assert.fail('unsupported format cannot receive a grant'));
-  await rejects(createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: old.fetchImpl }), 'STORAGE_FILE_TYPE', 503);
+  await rejects(createUploadGrant({ path, mime: syllabusFixtures[0].mime, env, fetchImpl: old.fetchImpl }), 'STORAGE_FILE_TYPE', 422);
 });
 
 test('direct syllabus finalization verifies document bytes and preserves their exact format', async () => {

@@ -164,7 +164,8 @@ test('a review must use the latest credit-load estimate shown to the chair', asy
   const old = (await app.api(path)).value.submission;
   const decision = { decision: 'approved', points: Math.floor(old.estimate), note: 'Reviewed against evidence.' };
   assert.equal((await app.api(path + '/review', decision)).status, 409, 'old clients must reopen the current review');
-  assert.equal((await app.api('/api/roster/alex/academic-settings', { tier: 2, credits: 3 })).status, 200);
+  const load = (await app.api('/api/roster/alex/credit-load')).value.creditLoad;
+  assert.equal((await app.api('/api/roster/alex/credit-load', { credits: 3, version: load.version })).status, 200);
   const current = (await app.api(path)).value.submission;
   assert.notEqual(current.estimate, old.estimate);
   assert.notEqual(current.reviewVersion, old.reviewVersion);

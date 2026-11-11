@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { validFileBytes, syllabusMime } from '../web/syllabus-files.mjs';
 import { syllabusFixtures, documentArchive, wordParts, legacyWord } from './syllabus-fixtures.mjs';
 
-test('syllabus documents validate their contents and normalize missing or generic browser MIME types', async () => {
+test('historical document files retain validation while new selection only accepts previewable formats', async () => {
   for (const file of syllabusFixtures) {
     assert.equal(await validFileBytes(file.bytes, file.mime), true, file.name);
-    for (const type of ['', 'application/octet-stream', 'application/zip']) assert.equal(syllabusMime({ name: file.name.toUpperCase(), type }), file.mime);
+    for (const type of ['', 'application/octet-stream', 'application/zip']) assert.equal(syllabusMime({ name: file.name.toUpperCase(), type }), '');
   }
   assert.equal(await validFileBytes(documentArchive(wordParts, { compressed: false }), syllabusFixtures[0].mime), true);
   assert.equal(await validFileBytes(Buffer.concat([Buffer.from([255,254]), Buffer.from('Syllabus – schedule', 'utf16le')]), 'text/plain'), true);
+  assert.equal(syllabusMime({ name: 'syllabus.PDF', type: '' }), 'application/pdf');
   assert.equal(syllabusMime({ name: 'syllabus.docm', type: syllabusFixtures[0].mime }), '');
 });
 

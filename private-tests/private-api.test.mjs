@@ -1,3 +1,4 @@
+import { creditLoadScenario } from './credit-load-scenario.mjs';
 import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { leaderboardScenario } from './leaderboard-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
@@ -653,34 +654,22 @@ test("denial requires an explanation and contributes zero approved points", asyn
   assert.match(item.reviewNote, /does not show a grade/);
 });
 
-test("fractional estimates require whole points and a chair explanation", async () => {
+test("fractional estimates can be approved directly without an adjustment note", async () => {
   const c = client();
-  await c.send("/api/demo/session", { persona: "chair" });
-  const path = "/api/submissions/S-2001/review";
-  assert.equal(
-    (
-      await c.send(path, {
-        decision: "approved",
-        points: 5.75,
-        note: "Explanation",
-      })
-    ).status,
-    422,
-  );
-  assert.equal(
-    (await c.send(path, { decision: "approved", points: 6, note: "" })).status,
-    422,
-  );
-  assert.equal(
-    (
-      await c.send(path, {
-        decision: "approved",
-        points: 6,
-        note: "Demonstration decision; chapter rounding rule is unresolved.",
-      })
-    ).status,
-    200,
-  );
+  await c.send('/api/demo/session', { persona: 'chair' });
+  const path = '/api/submissions/S-2001/review';
+  assert.equal((await c.send(path, { decision: 'approved', points: 5.751, note: '' })).status, 422);
+  assert.equal((await c.send(path, { decision: 'approved', points: 5, note: '' })).status, 422);
+  const saved = await c.send(path, { decision: 'approved', points: 5.75, note: '' });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.submission.awarded, 5.75);
+});
+
+test('Chair confirms full loads separately from class approval and can award decimals', async () => {
+  const c = client();
+  await c.send('/api/demo/session', { persona: 'alex' });
+  const upload = await c.send('/api/uploads', { name: 'syllabus.pdf', mime: 'application/pdf', base64: pdf.toString('base64') });
+  await creditLoadScenario((path, body) => c.send(path, body), { evidenceId: upload.upload.id });
 });
 
 test("claim validation rejects expired and duplicate work and enforces weekly study and minor-assignment caps", async () => {
@@ -804,29 +793,13 @@ test("independent demo browsers cannot observe one another's mutations or upload
   );
 });
 
-test('document syllabi upload, attach to classes and download privately without broadening assignment evidence', async () => {
+test('new syllabus uploads reject Word and other formats that require an external document app', async () => {
   const c = client();
   await c.send('/api/demo/session', { persona: 'alex' });
   for (const file of syllabusFixtures) {
     const uploaded = await c.send('/api/uploads', { name: file.name, mime: file.mime, base64: file.bytes.toString('base64') });
-    assert.equal(uploaded.status, 201, JSON.stringify(uploaded));
-    const created = await c.send('/api/classes', { name: `Syllabus ${file.name}`, credits: 3, evidenceId: uploaded.upload.id });
-    assert.equal(created.status, 201, JSON.stringify(created));
-    const path = `/api/uploads/${uploaded.upload.id}/preview`;
-    const download = await c.send(path);
-    assert.equal(download.headers.get('content-type'), file.mime);
-    assert.match(download.headers.get('content-disposition'), /^attachment;/);
-    assert.deepEqual(download.bytes, file.bytes);
-    const submission = await c.send('/api/submissions', { ...claim, activity: 'office', evidenceId: uploaded.upload.id });
-    assert.equal(submission.status, 422);
-    assert.match(submission.error, /Assignment evidence/);
-    await c.send('/api/demo/session', { persona: 'jordan' });
-    assert.equal((await c.send(path)).status, 404);
-    await c.send('/api/demo/session', { persona: 'chair' });
-    const evidence = await c.send(`/api/syllabi/${created.class.syllabusId}/evidence`);
-    assert.equal(evidence.status, 200); assert.equal(evidence.mime, file.mime);
-    assert.equal((await c.send(path)).status, 200);
-    await c.send('/api/demo/session', { persona: 'alex' });
+    assert.equal(uploaded.status, 422, file.name);
+    assert.match(uploaded.error, /PDF.*PNG.*JPEG/);
   }
 });
 
@@ -1091,7 +1064,7 @@ test("Chair point adjustments preserve submissions, isolate members and reject s
   const change = { version: initial.version, total: initial.approved + 20, reason: "20 points earned before rollout" };
   assert.equal((await c.send(path, change, { "X-CSRF-Token": "wrong" })).status, 403);
   assert.equal((await c.send(path, change, { Origin: "https://other.example" })).status, 403);
-  for (const total of [-1, 0.5, 10001, "20"]) assert.equal((await c.send(path, { ...change, total })).status, 422);
+  for (const total of [-1, 0.005, 10001, "20"]) assert.equal((await c.send(path, { ...change, total })).status, 422);
   assert.equal((await c.send(path, { ...change, reason: " " })).status, 422);
   const concurrent = await Promise.all([c.send(path, change), c.send(path, change)]);
   assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 409]);

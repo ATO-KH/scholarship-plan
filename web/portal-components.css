@@ -491,3 +491,9 @@ body:not(.portal-loading):not(.signing-in) > .workspace { animation: portal-arri
   font: 500 20px var(--display);
   letter-spacing: .03em;
 }
+
+.credit-load-panel { margin: 12px 0; padding: 16px; border: 1px solid var(--line); background: var(--white); }
+.credit-load-panel > summary { cursor: pointer; line-height: 1.5; }
+.credit-load-panel .field { max-width: 360px; }
+.credit-load-panel p { overflow-wrap: anywhere; }
+.credit-load-panel form > button { min-height: 44px; }

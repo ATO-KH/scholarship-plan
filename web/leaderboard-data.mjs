@@ -1,3 +1,4 @@
+import { roundPoints } from './point-adjustment-data.mjs';
 // Chapter-visible data only. Never return member records or submission details.
 export function leaderboardView(state, members, currentId) {
   const entries = new Map(members
@@ -6,11 +7,11 @@ export function leaderboardView(state, members, currentId) {
   // Count awards once, including Chair adjustments, without recalculating historical scores.
   for (const item of state.submissions || []) {
     const entry = entries.get(item.owner);
-    if (entry && item.status === 'approved') entry.points += item.awarded;
+    if (entry && item.status === 'approved') entry.points = roundPoints(entry.points + item.awarded);
   }
   for (const item of state.pointAdjustments || []) {
     const entry = entries.get(item.owner);
-    if (entry) entry.points += item.delta;
+    if (entry) entry.points = roundPoints(entry.points + item.delta);
   }
   const ordered = [...entries.values()].sort((a, b) => b.points - a.points || a.name.localeCompare(b.name, 'en'));
   let place = 0;

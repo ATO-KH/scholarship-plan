@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, mediaMime, validFileBytes } from '../web/syllabus-files.mjs';
+import { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, SYLLABUS_UPLOAD_MIME_TYPES, mediaMime, validFileBytes } from '../web/syllabus-files.mjs';
 export { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES } from '../web/syllabus-files.mjs';
 
 export const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
@@ -171,6 +171,8 @@ function signedURL(ctx, raw, route) {
 export async function createUploadGrant(options) {
   const ctx = context(options);
   const path = objectPath(options.path, 'quarantine');
+  if (options.mime && !SYLLABUS_UPLOAD_MIME_TYPES.includes(options.mime))
+    fail('STORAGE_FILE_TYPE', 422, 'Upload a PDF, PNG or JPEG. Export Word documents as PDF first.');
   const bucket = await assertPrivateBucket(ctx);
   if (options.mime && !bucket.mimeTypes.includes(options.mime))
     fail('STORAGE_FILE_TYPE', 503, 'This file format is not enabled in storage yet. Please try again shortly.');

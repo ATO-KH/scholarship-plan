@@ -31,6 +31,8 @@ async function fixture(t, files = [local]) {
   await f.db.prepare('UPDATE chapters SET data=? WHERE workspace=?').run(JSON.stringify({
     submissions: [{ id: 'S-sensitive', owner: 'member', grade: 97, reviewNote: 'private academic comment' }],
     semester: { name: 'Fall 2026' }, semesterGeneration: 'old-generation',
+    creditLoads: { member: { credits: 12, version: 'confirmed-load' } },
+    creditLoadHistory: [{ owner: 'member', credits: 12 }],
     pointAdjustments: [{ id: 'adjustment', owner: 'member', delta: 20, reason: 'private academic comment' }],
     profilePictures: { alex: 'test-upload' },
     creditRequests: [{ id: 'test-request', owner: 'alex', credits: 12, status: 'pending' }],
@@ -139,6 +141,8 @@ test('start atomically removes academic access, preserves accounts/security audi
   assert.ok(audit.some(item => item.action === 'semester.reset.start'));
   assert.ok(!JSON.stringify(audit).includes('private academic comment'));
   assert.equal((await f.state()).pointAdjustments, undefined);
+  assert.equal((await f.state()).creditLoads, undefined);
+  assert.equal((await f.state()).creditLoadHistory, undefined);
   assert.equal(state.classRecords, undefined);
   assert.equal(state.syllabi, undefined);
   assert.throws(() => assertAcademicWritesAllowed(state), error => error.status === 423);

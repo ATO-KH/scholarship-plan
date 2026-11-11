@@ -1,17 +1,18 @@
+import { creditLoadView, confirmCreditLoad, refreshCreditLoadEstimates } from '../web/credit-load-data.mjs';
 import { correctInvitationEmail, emailCorrectionVersion } from './roster-emails.mjs';
-import { EVIDENCE_MIME_TYPES, SYLLABUS_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../web/syllabus-files.mjs';
+import { EVIDENCE_MIME_TYPES, SYLLABUS_UPLOAD_MIME_TYPES, SYLLABUS_TYPES_LABEL, validFileBytes } from '../web/syllabus-files.mjs';
 import { rosterDirectory, rosterEmails } from './roster-directory.mjs';
 import { authMutationVersion, assertAuthMutationVersion, beginAuthMutation, finishAuthMutation } from "./auth-mutation.mjs";
 import { cleanupExpiredAuth } from "./auth-cleanup.mjs";
 import { submissionPage, submissionReviewVersion } from "./submission-list.mjs";
 import { pilotEligible } from "./pilot-access.mjs";
 import { invitationView, invitationList, invitationVersion, observeInvitationAccount, runInvitation, ROSTER_INVITATION_DEFAULTS, INVITATION_LIFETIME_SECONDS } from "./invitations.mjs";
-import { pointAdjustmentView, applyPointAdjustment } from "../web/point-adjustment-data.mjs";
+import { pointAdjustmentView, applyPointAdjustment, validPoints, roundPoints } from "../web/point-adjustment-data.mjs";
 import { categoriesFor, categoryView, applyCategoryChange, categoryForSubmission } from "../web/category-data.mjs";
 import { creditSummary } from "../web/credit-data.mjs";
 import { profileView } from "../web/profile-data.mjs";
 import { leaderboardView } from "../web/leaderboard-data.mjs";
-import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, refreshPendingCreditEstimates, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
+import { classView, classInput, classCredits, creditsManaged, approvedClassCredits, applySyllabusDecision, applySyllabusBatch, ownerClassReviews, removalView, syllabusView, assignmentClass, submissionSyllabus } from "../web/syllabus-data.mjs";
 import { checkpointQuotaView, validateCheckpointQuotas } from "../web/checkpoint-data.mjs";
 import http from "node:http";
 import { readFile, writeFile, mkdir, unlink, access } from "node:fs/promises";
@@ -422,7 +423,7 @@ async function member(workspace, id, state) {
   const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return { ...memberView(row, checkpoint, schedule.at(-1)), creditsManaged: creditsManaged(state, row.id) };
+  return { ...memberView(row, checkpoint, schedule.at(-1)), creditLoad: creditLoadView(state, row.id), creditsManaged: creditsManaged(state, row.id) };
 }
 async function listMembers(workspace, state) {
   const rows = await db
@@ -433,12 +434,12 @@ async function listMembers(workspace, state) {
   const schedule = semesterCheckpoints(state);
   const checkpoint =
     schedule.find((c) => c.date >= policyDay()) || schedule.at(-1);
-  return rows.map((row) => ({ ...memberView(row, checkpoint, schedule.at(-1)), creditsManaged: creditsManaged(state, row.id) }));
+  return rows.map((row) => ({ ...memberView(row, checkpoint, schedule.at(-1)), creditLoad: creditLoadView(state, row.id), creditsManaged: creditsManaged(state, row.id) }));
 }
 function classReviewResult(state, target) {
   return {
     classReviews: ownerClassReviews(state, target.id, target.credits, target.name),
-    member: { ...target, creditsManaged: creditsManaged(state, target.id), ...totals(state, target, policyDay()) },
+    member: { ...target, creditLoad: creditLoadView(state, target.id), creditsManaged: creditsManaged(state, target.id), ...totals(state, target, policyDay()) },
     pendingEstimates: state.submissions.filter(row => row.owner === target.id && row.status === 'pending').map(row => ({ id: row.id, estimate: row.estimate })),
   };
 }
@@ -536,13 +537,13 @@ async function clearAuthAttempts(kind, identifier) {
     .run(sha(`${kind}:${identifier.trim().toLowerCase()}`));
 }
 async function stateOf(workspace) {
-  return JSON.parse(
+  return refreshCreditLoadEstimates(JSON.parse(
     (
       await db
         .prepare("SELECT data FROM chapters WHERE workspace=?")
         .get(workspace)
     ).data,
-  );
+  ));
 }
 async function currentSession(req) {
   const raw = getCookie(req, sessionCookie);
@@ -787,7 +788,7 @@ async function validUpload(input) {
       : "";
   if (!name || name.length > 150)
     fail(422, "Choose a file name of at most 150 characters.");
-  if (!SYLLABUS_MIME_TYPES.includes(input.mime))
+  if (!SYLLABUS_UPLOAD_MIME_TYPES.includes(input.mime))
     fail(422, `Choose ${SYLLABUS_TYPES_LABEL}.`);
   if (typeof input.base64 !== "string" || input.base64.length % 4 !== 0)
     fail(422, "The file encoding is invalid.");
@@ -1830,7 +1831,7 @@ const server = http.createServer(async (req, res) => {
           weeklyMinorAssignments: categoriesFor(state).find(category => category.id === "minor")?.weeklyLimit ?? null,
           weekConvention:
             "Monday–Sunday, America/New_York (portal convention; policy must confirm)",
-          rounding: "Chair must enter whole points and explain any difference.",
+          rounding: "Awards support up to two decimal places. Matching the calculated award needs no adjustment note.",
           tierSource:
             "Page 5 GPA ranges; Chair assigns tiers. New members use Tier 1.",
           checkpoints: semesterCheckpoints(state),
@@ -1930,7 +1931,7 @@ const server = http.createServer(async (req, res) => {
         const updated = await mutate(session, user, async state => {
           academicGuard(state, generation);
           const upload = await getUpload(input.evidenceId, session, user, true);
-          if (!SYLLABUS_MIME_TYPES.includes(upload.mime)) fail(422, `Upload ${SYLLABUS_TYPES_LABEL} as your syllabus.`);
+          if (!SYLLABUS_UPLOAD_MIME_TYPES.includes(upload.mime)) fail(422, `Upload ${SYLLABUS_TYPES_LABEL} as your syllabus.`);
           state.classRecords ||= [];
           state.syllabi ||= [];
           let course = input.classId && state.classRecords.find(row => row.id === input.classId && row.owner === user.id && !row.archived);
@@ -2011,7 +2012,7 @@ const server = http.createServer(async (req, res) => {
             course.archived = true;
             const total = approvedClassCredits(state, course.owner);
             await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(total, session.workspace, course.owner);
-            refreshPendingCreditEstimates(state, course.owner, multiplier({ credits: total }));
+            refreshCreditLoadEstimates(state, course.owner);
           }
           delete course.pendingRemoval;
           Object.assign(course, { version: randomUUID(), updatedAt: now(), removalReview: { decision: input.decision, note, reviewer: user.name, reviewedAt: now() } });
@@ -2045,7 +2046,7 @@ const server = http.createServer(async (req, res) => {
             const target = members.get(owner);
             if (!target?.active || target.role !== 'member') fail(409, 'A selected member is no longer active. No approvals were saved.');
             await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(credits, session.workspace, owner);
-            refreshPendingCreditEstimates(state, owner, multiplier({ credits }));
+            refreshCreditLoadEstimates(state, owner);
             results.push(classReviewResult(state, { ...target, credits }));
           }
           for (const id of ids) await audit(session.workspace, user.name, 'syllabus.review', id, JSON.stringify(state.syllabi.find(row => row.id === id).history.at(-1)));
@@ -2076,7 +2077,7 @@ const server = http.createServer(async (req, res) => {
             const { total } = applySyllabusDecision(current, syllabus, course, input, { correction, reviewer: user.name, at: now(), newVersion: randomUUID });
             if (total !== null) {
               await db.prepare("UPDATE members SET credits=? WHERE workspace=? AND id=? AND role='member' AND active=1").run(total, session.workspace, course.owner);
-              refreshPendingCreditEstimates(current, course.owner, multiplier({ credits: total }));
+              refreshCreditLoadEstimates(current, course.owner);
             }
             const credits = total ?? target.credits;
             await audit(session.workspace, user.name, correction ? "syllabus.correct" : "syllabus.review", syllabus.id,
@@ -2412,7 +2413,7 @@ const server = http.createServer(async (req, res) => {
         if (
           !name ||
           name.length > 150 ||
-          !SYLLABUS_MIME_TYPES.includes(
+          !SYLLABUS_UPLOAD_MIME_TYPES.includes(
             input.mime,
           ) ||
           !Number.isInteger(input.size) ||
@@ -2488,6 +2489,7 @@ const server = http.createServer(async (req, res) => {
           if (!found || found.backend !== "supabase")
             fail(404, "Evidence upload not found.");
           if (found.status === "ready") return found;
+          if (!SYLLABUS_UPLOAD_MIME_TYPES.includes(found.mime)) fail(422, "Upload the syllabus as a PDF, PNG or JPEG so it can be reviewed in the portal.");
           if (
             found.status !== "pending" ||
             Date.now() - Date.parse(found.created_at) > 2 * 60 * 60 * 1000
@@ -3014,11 +3016,31 @@ const server = http.createServer(async (req, res) => {
             .run(details.name, details.tier, details.credits, session.workspace, target.id);
           if (record) Object.assign(record, { name: details.name, badge: details.badge, alias, tier: details.tier, credits: details.credits, updatedAt: now() });
           if (state.tierAssignments) delete state.tierAssignments[target.email];
-          if (target.credits !== details.credits) refreshPendingCreditEstimates(state, target.id, multiplier({ credits: details.credits }));
+          if (target.credits !== details.credits) refreshCreditLoadEstimates(state, target.id);
           await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
           await audit(session.workspace, user.name, "roster.account_settings", target.id,
             `Account details updated without email; tier ${target.tier} to ${details.tier}; credits ${target.credits} to ${details.credits}`);
           return await accountSettingsView(session.workspace, await member(session.workspace, target.id), state);
+        });
+        return json(res, 200, result);
+      }
+      const creditLoadRoute = path.match(/^\/api\/roster\/([^/]+)\/credit-load$/);
+      if (creditLoadRoute && ["GET", "POST"].includes(req.method)) {
+        chair(user);
+        const view = async state => {
+          const target = await member(session.workspace, creditLoadRoute[1], state);
+          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+          return { creditLoad: creditLoadView(state, target.id), ...classReviewResult(state, target) };
+        };
+        if (req.method === "GET") return json(res, 200, await view(await stateOf(session.workspace)));
+        const result = await mutate(session, user, async state => {
+          academicGuard(state, requestGeneration);
+          const target = await member(session.workspace, creditLoadRoute[1], state);
+          if (!target?.active || target.role !== "member") fail(404, "Active member not found.");
+          const before = creditLoadView(state, target.id);
+          const after = confirmCreditLoad(state, target.id, input, { reviewer: user.name, at: now(), newVersion: randomUUID });
+          await audit(session.workspace, user.name, "credits.confirm_load", target.id, JSON.stringify({ before, after }));
+          return view(state);
         });
         return json(res, 200, result);
       }
@@ -3047,7 +3069,7 @@ const server = http.createServer(async (req, res) => {
           await db.prepare(
             "UPDATE members SET tier=?, credits=? WHERE workspace=? AND id=? AND role='member' AND active=1",
           ).run(input.tier, input.credits, session.workspace, target.id);
-          refreshPendingCreditEstimates(state, target.id, multiplier({ credits: input.credits }));
+          refreshCreditLoadEstimates(state, target.id);
           await db.prepare("UPDATE chapters SET data=? WHERE workspace=?").run(JSON.stringify(state), session.workspace);
           await audit(session.workspace, user.name, "roster.academic_settings", target.id,
             `tier ${target.tier} to ${input.tier}; credits ${target.credits} to ${input.credits}`);
@@ -3257,11 +3279,9 @@ const server = http.createServer(async (req, res) => {
               fail(422, "Keep the review note under 1,000 characters.");
             if (
               input.decision === "approved" &&
-              (!Number.isInteger(input.points) ||
-                input.points < 0 ||
-                input.points > 10000)
+              !validPoints(input.points)
             )
-              fail(422, "Award a whole number of points from 0 to 10,000.");
+              fail(422, "Award 0 to 10,000 points, with up to two decimal places.");
             if (
               (correction || input.decision === "denied" || input.points !== item.estimate) &&
               note.length < 5
@@ -3272,7 +3292,7 @@ const server = http.createServer(async (req, res) => {
               );
             const before = { status: item.status, awarded: item.awarded, note: item.reviewNote || "", reviewer: item.reviewer || null, at: item.reviewedAt || null };
             item.status = input.decision;
-            item.awarded = input.decision === "approved" ? input.points : 0;
+            item.awarded = input.decision === "approved" ? roundPoints(input.points) : 0;
             item.reviewNote = note;
             item.reviewedAt = now();
             item.reviewer = user.name;
@@ -3397,6 +3417,8 @@ const server = http.createServer(async (req, res) => {
       "/syllabus-data.mjs": "syllabus-data.mjs",
       "/syllabus-ui.mjs": "syllabus-ui.mjs",
       "/syllabus-files.mjs": "syllabus-files.mjs",
+      "/credit-load-data.mjs": "credit-load-data.mjs",
+      "/credit-load-ui.mjs": "credit-load-ui.mjs",
       "/roster-ui.mjs": "roster-ui.mjs",
       "/file-preview-ui.mjs": "file-preview-ui.mjs",
       "/profile-ui.mjs": "profile-ui.mjs",

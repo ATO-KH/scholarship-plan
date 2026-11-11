@@ -1,3 +1,4 @@
+import { creditLoadScenario } from './credit-load-scenario.mjs';
 import { leaderboardScenario } from './leaderboard-scenario.mjs';
 import { reviewCorrectionsScenario } from './review-corrections-scenario.mjs';
 import { classCreditsScenario } from "./class-credits-scenario.mjs";
@@ -23,15 +24,16 @@ async function withSandbox(run) {
   try { await run(call, store); } finally { globalThis.sessionStorage = originalStorage; }
 }
 
-test('sandbox accepts the same syllabus document formats with private downloadable originals', () => withSandbox(async call => {
+test('sandbox rejects new document syllabi that cannot be previewed in the portal', () => withSandbox(async call => {
   await call('/api/demo/session', { persona: 'test1' });
   for (const fixture of syllabusFixtures) {
     const file = { name: fixture.name, mime: fixture.mime, size: fixture.bytes.length, dataUrl: `data:${fixture.mime};base64,${fixture.bytes.toString('base64')}` };
-    const created = await call('/api/classes', { name: `Syllabus ${fixture.name}`, credits: 3, file });
-    assert.equal(created.status, 201, JSON.stringify(created));
-    const evidence = await call(`/api/syllabi/${created.class.syllabusId}/evidence`);
-    assert.equal(evidence.mime, fixture.mime); assert.equal(evidence.previewUrl, file.dataUrl);
+    assert.equal((await call('/api/classes', { name: `Syllabus ${fixture.name}`, credits: 3, file })).status, 422);
   }
+}));
+
+test('sandbox separates class approvals from full-load confirmation and supports decimal awards', () => withSandbox(async call => {
+  await creditLoadScenario(call, { file }, 'test1');
 }));
 
 test('sandbox classes require verified syllabus files and are private to their member', () => withSandbox(async call => {

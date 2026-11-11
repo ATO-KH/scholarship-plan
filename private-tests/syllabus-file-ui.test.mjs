@@ -14,28 +14,21 @@ function fixture(t) {
   return { w, container };
 }
 
-test('class form normalizes generic document MIME types and completes upload before submitting the class', async t => {
+test('class form rejects Word and non-previewable files before starting an upload', async t => {
   const { w, container } = fixture(t);
   for (const file of syllabusFixtures) {
-    const requests = [], transfers = [];
-    globalThis.fetch = async (url, options) => { transfers.push(options); return new Response('{}'); };
-    const api = async (path, options) => {
-      requests.push({ path, body: options?.body });
-      if (path === '/api/uploads/init') return { id: 'fictional-upload', uploadUrl: 'https://storage.example.test/temporary' };
-      if (path.endsWith('/complete')) return { upload: { id: 'fictional-upload' } };
-      return { classes: [] };
-    };
-    await mountProfile(container, { api, esc: String, loading: String, isCurrent: () => true, config: { uploadMode: 'direct' } });
+    const writes = [];
+    const api = async (path, options) => { if (options) writes.push(path); return { classes: [] }; };
+    await mountProfile(container, { api, esc: String, loading: String, isCurrent: () => true });
     container.querySelector('#add-class').click();
     container.querySelector('#class-name').value = 'Fictional course';
     container.querySelector('#class-credits').value = '3';
     const input = container.querySelector('#class-syllabus');
+    assert.doesNotMatch(input.accept, /docx|msword|rtf|odt|txt/);
     Object.defineProperty(input, 'files', { value: [new w.File([file.bytes], file.name, { type: 'application/octet-stream' })] });
     await container.querySelector('form').onsubmit({ preventDefault() {} });
-    assert.equal(requests.find(call => call.path === '/api/uploads/init').body.mime, file.mime);
-    assert.equal(transfers[0].headers['Content-Type'], file.mime);
-    assert.equal(transfers[0].body.type, file.mime);
-    assert.equal(requests.find(call => call.path === '/api/classes' && call.body).body.evidenceId, 'fictional-upload');
+    assert.deepEqual(writes, []);
+    assert.match(container.querySelector('.profile-feedback').textContent, /PDF.*PNG.*JPEG/);
   }
 });
 

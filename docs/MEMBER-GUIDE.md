@@ -25,7 +25,7 @@ Use the email on your chapter account, your assigned portal ID, or a badge numbe
 
 Add the class, its credit hours and its syllabus in **My classes**. The Scholarship Chair must approve the syllabus before you can submit a major, minor, lab or other graded assignment for that class. Replacing a syllabus starts a new review.
 
-Syllabi can be PDF, Word (.docx or .doc), ODT, RTF, TXT, PNG, or JPEG files, up to 5 MB. PDFs and images open inside the portal. For other documents, select **Download syllabus** to open the file in your document app. The syllabus is available only to you and the Chair.
+New syllabi must be PDF, PNG, or JPEG files, up to 5 MB, so the Chair can preview them inside the portal. Export Word and other text documents as PDF first. Existing document uploads remain available privately to their owner and the Chair.
 
 **Can I finish a submission later?**
 
@@ -37,11 +37,11 @@ Follow the instructions shown for your selected activity. Make the relevant assi
 
 **How do my credit hours change?**
 
-Starting credit hours display **N/A — awaiting class approval**. Enter hours when adding each class. Only Chair-approved class hours count toward your displayed account total; an approved total of zero displays **0**. Pending replacements or a denied replacement keep previously approved hours. The Chair can correct an approval or its hours; revoking an approved class removes its hours. Removing an approved class also needs Chair approval. If your account already has an older manually entered total, the first class-hours approval replaces it with the sum of approved classes.
+Starting credit hours display **N/A — awaiting class approval**. Enter hours when adding each class. Only Chair-approved class hours count toward your displayed account total; an approved total of zero displays **0**. Pending replacements or a denied replacement keep previously approved hours. The Chair can correct an approval or its hours; revoking an approved class removes its hours. Removing an approved class also needs Chair approval. This class subtotal is separate from your full semester credit load. Your multiplier stays at 1× until the Chair confirms the full semester schedule in Classes or Manage credits. Later confirmation updates pending estimates; existing awards remain recorded. Tell the Chair when your enrolled schedule changes.
 
 **Why aren't pending points in my approved total?**
 
-Pending points are estimates until the Chair reviews the submission. Only approved points count toward your goal. Denied submissions do not add points; open the submission to read the reason.
+Pending points are estimates until the Chair reviews the submission. Awards can include up to two decimal places, such as 5.75. Only approved points count toward your goal. Denied submissions do not add points; open the submission to read the reason.
 
 **Who can see my files and points?**
 
@@ -62,7 +62,8 @@ The public test sandbox uses temporary records in that browser tab. It does not 
 
 ## Chair shortcuts
 
-- **Roster → Members**: search by name, email or sign-in ID. Use **Adjust points** for an audited manual balance adjustment, **Manage credits** for that member's classes, and **Account settings** for their name, badge or tier.
+- **Roster → Members**: search by name, email or sign-in ID. Use **Adjust points** for an audited manual balance adjustment, **Manage credits** to confirm the full semester credit load and review that member's classes, and **Account settings** for their name, badge or tier.
+- **Classes → Semester credit load**: enter the member’s complete enrolled hours and confirm that you checked the full schedule. Approving one class does not establish the member’s semester load.
 - **Review queue**: filter to Approved or Denied, open a submission and choose **Correct decision / points**. Enter the new award or denial and a reason. This replaces the previous award; the history keeps both decisions.
 - **Classes**: requests are grouped by member. Select that member's pending classes, or choose individual classes, then **Review selected approvals** to approve up to 20 together. Check each syllabus and its hours first; confirmation includes selections hidden by a search or filter. A stale decision or invalid total saves none of the batch. Unsaved hours and notes survive filtering and other class saves while this screen stays open. Single approvals continue with the same member's next pending class.
 - **Class corrections**: use Approved, Denied or All classes to find an earlier decision, then **Correct decision / hours**. Every correction needs a reason. Class-hour changes recalculate pending point estimates; previous assignment awards stay as recorded.
